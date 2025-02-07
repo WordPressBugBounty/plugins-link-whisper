@@ -12,6 +12,7 @@ class Wpil_Model_Suggestion
     public $anchor = '';
     public $sentence_with_anchor = '';
     public $original_sentence_with_anchor = '';
+    public $sentence_src_with_anchor = null;
     public $post_score = 0;
     public $anchor_score = 0;
     public $total_score = 0;

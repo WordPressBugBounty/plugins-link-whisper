@@ -983,6 +983,13 @@
 				if(tinyMCEVisible){
 					var element = $("#content_ifr").contents().find('*:contains("' + sentence + '"):last');
 
+					// if we couldn't pull the sentence
+					if(element.length < 1){
+						// try pulling the suggested link
+						var element = $("#content_ifr").contents().find('*:contains("' + anchorText + '"):last');
+						sentence = anchorText;
+					}
+
 					// if we have the element that contains the sentence
 					if(element.length){
 						// obtain the element's inner html
@@ -998,13 +1005,26 @@
 						// remove the custom tags to create a text node with no tags
 						$(newElement).contents().unwrap();
 						// find the new text node
+						var found = false;
 						$(element).contents().each(function(index, node){
 							if($(node).text() === anchorText){
 								SelectText(node);
 								scrollVisualModeToStartElement(window.tinymce.get( 'content' ), element);
 								$("#content_ifr").focus();
+								found = true;
 							}
 						});
+
+						if(!found){
+							$(element).contents().each(function(index, node){
+								if($(node).text().indexOf(anchorText) > 0){
+									var start = $(element[0]).text().indexOf(anchorText, $(element[0]).text().indexOf(sentence));
+									node.setSelectionRange(start, start + anchorText.length);
+									scrollVisualModeToStartElement(window.tinymce.get( 'content' ), element);
+									$("#content_ifr").focus();
+								}
+							});
+						}
 					}
 					
 				}else{
