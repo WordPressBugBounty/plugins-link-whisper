@@ -1358,10 +1358,6 @@ class Wpil_Suggestion
                     $words[$word][] = $p;
                 }
             }
-/* TODO: Remove if no timeouts are reported by version 0.8.0
-            if ($key % 100 == 0 && microtime(true) - $start > 20) {
-                break;
-            }*/
         }
 
         return $words;
