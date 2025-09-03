@@ -176,4 +176,49 @@ class Wpil_Editor_Elementor
 
         return false;
     }
+
+
+    public static function getSupportedModules(){
+        // if:
+            if( !defined('ELEMENTOR_VERSION') || // if Elementor is not active
+            !class_exists('\Elementor\Plugin') || // or the plugin main class isn't active
+            !isset(\Elementor\Plugin::$instance) || empty(\Elementor\Plugin::$instance)) // or we have don't have an instance
+        {
+            // there's no such thing as Elementor
+            return array();
+        }
+
+        $modules = array();
+
+        // try very carefully to get the list of available Elementor modules
+        try {
+            // first do the direct approach
+            $things = \Elementor\Plugin::$instance->widgets_manager->get_widget_types_config();
+        } catch (\Throwable $th) {
+            // if that didn't work
+            $things = array();
+            try {
+                // move up one placce and get the widget type list
+                $types = \Elementor\Plugin::$instance->widgets_manager->get_widget_types();
+                // then go over them
+                foreach ( $types as $widget_key => $widget ) {
+                    // and try to get the config for the widgetse without casuing an error
+                    try{
+                        $things[ $widget_key ] = $widget->get_config();
+                    } catch (\Throwable $th) {
+                    }
+                }
+            } catch (\Throwable $th) {
+            }
+        }
+        
+        foreach($things as $thing){
+            if(empty($thing['title'])){
+                continue;
+            }
+            $modules[$thing['name']] = $thing['title'];
+        }
+
+        return $modules;
+    }
 }

@@ -20,6 +20,7 @@ class Wpil_Model_Post
     public $editor = null;
     public $acf_content = null;
     public $nonce = null;
+    public $meta_data = array();
 
     public $is_seo_title = null;
 
@@ -31,20 +32,119 @@ class Wpil_Model_Post
 
     function getTitle($ignore_seo = false)
     {
-        if (empty($this->title)) {
-            // otherwise, get the standard title
-            if ($this->type == 'term') {
-                $term = get_term($this->id);
-                if (!empty($term) && !isset($term->errors)) {
-                    $this->title = $term->name;
+        if (empty($this->title) || ($ignore_seo && $this->is_seo_title)) {
+            // if the user wants to use the post's SEO title
+            if(get_option('wpil_use_seo_titles', false) && !$ignore_seo){
+                $this->title = $this->getSEOTitle();
+            }else{
+                // otherwise, get the standard title
+                if ($this->type == 'term') {
+                    $term = get_term($this->id);
+                    if (!empty($term) && !isset($term->errors)) {
+                        $this->title = $term->name;
+                    }
+                    unset($term);
+                } elseif ($this->type == 'post') {
+                    $this->title = get_the_title($this->id);
                 }
-                unset($term);
-            } elseif ($this->type == 'post') {
-                $this->title = get_the_title($this->id);
             }
         }
 
         return $this->title;
+    }
+
+    function getSEOTitle(){
+        $title = '';
+
+        // if yoast is active
+        if(defined('WPSEO_VERSION')){
+            // get the data object
+            if($this->type === 'post'){
+                $obj = get_post($this->id);
+            }else{
+                $obj = get_term($this->id);
+            }
+
+            if(empty($obj) || is_a($obj, 'WP_Error')){
+                return $title;
+            }
+
+            if($this->type === 'post'){
+                $obj = get_post($this->id);
+            }else{
+                $obj = get_term($this->id);
+            }
+
+            if($this->type === 'post'){
+                // try gettting it's SEO title replace string directly
+                $replace_string = WPSEO_Meta::get_value( 'title', $this->id );
+            }else{
+                // try gettting it's SEO title replace string directly
+                $replace_string = WPSEO_Taxonomy_Meta::get_term_meta($this->id, $obj->taxonomy, 'title');
+            }
+
+            // if that didn't work, get the default string
+            if(empty($replace_string)){
+                if($this->type === 'post'){
+                    // try gettting it's SEO title replace string directly
+                    $replace_string = WPSEO_Options::get( 'title-' . $obj->post_type, '' );
+                }else{
+                    // try gettting it's SEO title replace string directly
+                    $replace_string = WPSEO_Options::get( 'title-tax-' . $obj->taxonomy, '' );
+                }
+            }
+
+            // setup the var replacer
+            $replacer = new WPSEO_Replace_Vars;
+
+            // get the title by replacing the values
+            $title = $replacer->replace($replace_string, $obj);
+
+        }elseif(defined('AIOSEO_VERSION')){ // AIOSEO is active
+            if($this->type === 'post'){
+                $Title_Getter = new AIOSEO\Plugin\Common\Meta\Title;
+                $title = $Title_Getter->getTitle(get_post($this->id));
+
+            }else{
+                // term titles are only available in the Premium version of AIOSEO, and we're only supporting Free at the moment
+            }
+        }elseif(defined('RANK_MATH_VERSION') && class_exists('RankMath')){
+            // make sure the replace variables are set
+            if(RankMath::get()->__isset('variables')){
+                RankMath::get()->__get('variables')->setup();
+            }
+
+            if($this->type === 'post'){
+                $title = RankMath\Post::get_meta('title', $this->id);
+                if('' === $title){
+                    $post = get_post($this->id);
+                    if(!empty($post)){
+                        $title = RankMath\Paper\Paper::get_from_options("pt_{$post->post_type}_title", $post, '%title% %sep% %sitename%');
+                    }
+                }
+            }else{
+                $term = get_term($this->id);
+                $title = RankMath\Term::get_meta('title', $term, $term->taxonomy); // todo add a check to make sure the class exists
+                if('' === $title){
+                    $title = RankMath\Paper\Paper::get_from_options("tax_{$term->taxonomy}_title", $term);
+                }
+            }
+        }
+
+        // if we couldn't get the SEO title, get the WP title
+        if(empty(trim($title))){
+            if ($this->type == 'term') {
+                $term = get_term($this->id);
+                if (!empty($term) && !isset($term->errors)) {
+                    $title = $term->name;
+                }
+                unset($term);
+            } elseif ($this->type == 'post') {
+                $title = get_the_title($this->id);
+            }
+        }
+
+        return $title;
     }
 
     function getLinks()
@@ -89,13 +189,14 @@ class Wpil_Model_Post
     /**
      * Gets the view link for the current post
      **/
-    function getViewLink($override_ugly = false){
+    function getViewLink($override_ugly = false, $force_ugly = false){
+        $forceHTTPS = Wpil_Settings::forceHTTPS();
 
         if ($this->type == 'term') {
             $term = get_term($this->id);
             if (!empty($term) && !isset($term->errors)) {
-                // if the user wants to use "Ugly" permalinks in the reports
-                if(!$override_ugly && defined('WPIL_LOADING_REPORT') && !empty(WPIL_LOADING_REPORT) && Wpil_Settings::use_ugly_permalinks()){
+                // if we need "Ugly" permalinks or the user wants to use "Ugly" permalinks in the reports
+                if($force_ugly || !$override_ugly && defined('WPIL_LOADING_REPORT') && !empty(WPIL_LOADING_REPORT) && Wpil_Settings::use_ugly_permalinks()){
                     // build the ugly link
                     $home = get_home_url();
                     if(empty(trim(rtrim($home, '/')))){
@@ -126,6 +227,11 @@ class Wpil_Model_Post
                     $view_link = $woo_link_manage->rewrite_terms($view_link, $term, $term->taxonomy);
                 }
 
+                // if the user wants to force the links to be https, update any http links
+                if($forceHTTPS){
+                    $view_link = str_replace('http:', 'https:', $view_link);
+                }
+
                 // check to make sure that the admin url isn't being appended to links
                 // if there's more than one protocol and the admin slug is present
                 if(count(explode('http', $view_link)) > 1 && false !== strpos($view_link, 'wp-admin')){
@@ -145,8 +251,8 @@ class Wpil_Model_Post
                 $yoast_pc->register_hooks();
             }
 
-            // if the user wants to use "Ugly" permalinks in the reports
-            if(!$override_ugly && defined('WPIL_LOADING_REPORT') && !empty(WPIL_LOADING_REPORT) && Wpil_Settings::use_ugly_permalinks()){
+            // if we need "Ugly" permalinks or the user wants to use "Ugly" permalinks in the reports
+            if($force_ugly || !$override_ugly && defined('WPIL_LOADING_REPORT') && !empty(WPIL_LOADING_REPORT) && Wpil_Settings::use_ugly_permalinks()){
                 // build the ugly link
                 $home = get_home_url();
                 if(empty(trim(rtrim($home, '/')))){
@@ -193,6 +299,11 @@ class Wpil_Model_Post
                     $woo_link_manage = new BeRocketLinkManager;
                     $view_link = $woo_link_manage->rewrite_products($view_link, get_post($this->id));
                 }
+            }
+
+            // if the user wants to force the links to be https, update any http links
+            if($forceHTTPS){
+                $view_link = str_replace('http:', 'https:', $view_link);
             }
 
             // check to make sure that the admin url isn't being appended to links
@@ -245,12 +356,11 @@ class Wpil_Model_Post
         if (empty($this->content)) {
             if ($this->type == 'term') {
                 $content = term_description($this->id);
-                $content .= $this->getAdvancedCustomFields();
+                $content .= $this->getAdvancedCustomFields($remove_unprocessable);
                 $content .= $this->getMetaContent();
                 $this->editor = 'wordpress';
             } else {
                 $content = '';
-
                 // if the Thrive plugin is active
                 if(defined('TVE_PLUGIN_FILE') || defined('TVE_EDITOR_URL')){
                     $thrive_active = get_post_meta($this->id, 'tcb_editor_enabled', true);
@@ -315,6 +425,13 @@ class Wpil_Model_Post
                     }
                 }
 
+                // if WP Recipe is active and we're REALLY sure that this is a recipe
+                if(defined('WPRM_POST_TYPE') && in_array('wprm_recipe', Wpil_Settings::getPostTypes()) && 'wprm_recipe' === get_post_type($this->id)){
+                    // get the recipe content
+                    $content = Wpil_Editor_WPRecipe::getPostContent($this->id);
+                    $this->editor = !empty($content) ? 'wp-recipe': null;
+                }
+
                 // Beaver Builder is active and this is a BB post
                 if( defined('FL_BUILDER_VERSION') && 
                     class_exists('FLBuilder') && 
@@ -353,7 +470,7 @@ class Wpil_Model_Post
                     $content = (!empty($item) && isset($item->post_content) && !empty($item->post_content)) ? $item->post_content: "";
                     $content .= $this->getAddonContent();
                     $content .= $this->maybeGetExcerpt();
-                    $content .= $this->getAdvancedCustomFields();
+                    $content .= $this->getAdvancedCustomFields($remove_unprocessable);
                     $content .= $this->getMetaContent();
                     $this->editor = !empty($content) ? 'wordpress': null;
 
@@ -424,13 +541,52 @@ class Wpil_Model_Post
     function removeUnprocessableBlocks($content){
 
         $constants = apply_filters('wpil_filter_unprocessable_block_constants', array(
-            'WPRM_POST_TYPE'
+            'WPRM_POST_TYPE',
+            'WPSEO_VERSION',
+            'RANK_MATH_VERSION',
+            'WPZOOM_RCB_PLUGIN_FILE',
+            'UAGB_VER'
         ));
+
+        $classes = apply_filters('wpil_filter_unprocessable_block_classes', array(
+            'LazyBlocks'
+        ));
+
 
         // if WordPress Recipe Maker is active and there's a recipe block in the content
         if(in_array('WPRM_POST_TYPE', $constants) && false !== strpos($content, '<!--WPRM Recipe')){
             //Remove WPRM plugin content
             $content = preg_replace('#(?<=<!--WPRM Recipe)(.*?)(?=<!--End WPRM Recipe-->)#ms', '', $content);
+        }
+
+        // if Yoast is active and there's a Yoast block in the content
+        if(in_array('WPSEO_VERSION', $constants) && false !== strpos($content, '<!-- wp:yoast/')){
+            // remove the Yoast blocks since adding links to them breaks them...
+            $content = preg_replace('#(?<=<!-- wp:yoast/)(.*?)(?=<!-- /wp:yoast/)#ms', '', $content);
+        }
+
+        // if Rank Math is active and there's a Rank Math block in the content
+        if(in_array('RANK_MATH_VERSION', $constants) && false !== strpos($content, '<!-- wp:rank-math/')){
+            // remove the Rank Math blocks since adding links to them breaks them...
+            $content = preg_replace('#(?<=<!-- wp:rank-math/)(.*?)(?=<!-- /wp:rank-math/)#ms', '', $content);
+        }
+
+        // if WP Zoom Recipes is active and there's a recipe block in the content
+        if(in_array('WPZOOM_RCB_PLUGIN_FILE', $constants) && false !== strpos($content, '<!-- wp:wpzoom-recipe-card/')){
+            // remove Zoom Recipe blocks since adding links to them breaks them...
+            $content = preg_replace('#(?<=<!-- wp:wpzoom-recipe-card/block-recipe-card )(.*?)(?=/-->)#ms', '', $content);
+        }
+
+        // if Ultimate Gutenberg Blocks (Now Spectra) is active and a schema block is present
+        if(in_array('WPZOOM_RCB_PLUGIN_FILE', $constants) && false !== strpos($content, '<!-- wp:uagb/') && false !== strpos($content, 'enableSchemaSupport')){
+            // remove the Spectra blocks since adding links to them will probably see the links stuffed in the schema code, breaking it...
+            $content = preg_replace('#<!-- wp:uagb\/[a-z]*? ({(?:[^{}]|(?1))*\}) -->#ms', '', $content);
+        }
+
+        // if LazyBlocks is active and there's a LazyBlocks block in the content
+        if(in_array('LazyBlocks', $classes) && class_exists('LazyBlocks') && false !== strpos($content, '<!-- wp:lazyblock/')){
+            // remove the LazyBlocks blocks since adding links to them breaks them...
+            $content = preg_replace('#(?<=<!-- wp:lazyblock/)(.*?)(?=/-->)#ms', '', $content);
         }
 
         // if there are simple JSON data blocks in the content
@@ -559,6 +715,14 @@ class Wpil_Model_Post
             }
 
             // TODO: Get the Elementor content!
+
+            // if WP Recipe is active and we're REALLY sure that this is a recipe
+            if(defined('WPRM_POST_TYPE') && in_array('wprm_recipe', Wpil_Settings::getPostTypes()) && 'post' === $this->type && 'wprm_recipe' === get_post_type($this->id)){
+                // get the recipe content
+                $content = Wpil_Editor_WPRecipe::getPostContent($this->id); // using standard content method here too because of subfield nesting. 
+
+                $this->editor = !empty($content) ? 'wp-recipe': null;
+            }
 
             if(empty($content)){
                 $data = $wpdb->get_results($wpdb->prepare("SELECT `post_content`, `post_excerpt`, `post_type` FROM {$wpdb->posts} WHERE `ID` = %d", $this->id));
@@ -807,7 +971,7 @@ class Wpil_Model_Post
      *
      * @return string
      */
-    function getAdvancedCustomFields()
+    function getAdvancedCustomFields($remove_unprocessable = true)
     {
         $content = '';
 
@@ -815,7 +979,12 @@ class Wpil_Model_Post
             return $content;
         }
 
-        if(!is_null($this->acf_content)){
+        $reference_fields = array();
+        if(!$remove_unprocessable){
+            $reference_fields = Wpil_Settings::getPostReferenceFields();
+        }
+
+        if(!is_null($this->acf_content) && (!$remove_unprocessable || empty($reference_fields))){
             return $this->acf_content;
         }
 
@@ -824,6 +993,14 @@ class Wpil_Model_Post
                 if ($c = get_post_meta($this->id, $field, true)) {
                     if(is_array($c)){
                         continue;
+                    }
+
+                    // if the field is recognized as a post referencing one
+                    if(!empty($reference_fields) && is_numeric($c) && !empty(Wpil_Toolbox::wildcard_field_check($field, $reference_fields))){
+                        // create a new post object
+                        $other_post = new Wpil_Model_Post(intval($c));
+                        // and pull the fields from that post so we can read their content
+                        $c = $other_post->getAdvancedCustomFields(false); // specifying false to avoid any possible infinite loops!
                     }
 
                     $content .= "\n" . $c;
@@ -836,9 +1013,21 @@ class Wpil_Model_Post
                         continue;
                     }
 
+                    // if the field is recognized as a post referencing one
+                    if(!empty($reference_fields) && is_numeric($c) && !empty(Wpil_Toolbox::wildcard_field_check($field, $reference_fields))){
+                        // create a new post object
+                        $other_post = new Wpil_Model_Post(intval($c));
+                        // and pull the fields from that post so we can read their content
+                        $c = $other_post->getAdvancedCustomFields(false); // specifying false to avoid any possible infinite loops!
+                    }
+
                     $content .= "\n" . $c;
                 }
             }
+        }
+
+        if(!$remove_unprocessable && !empty($reference_fields)){
+            return $content;
         }
 
         // set the post's acf content in case we need it later
@@ -974,14 +1163,120 @@ class Wpil_Model_Post
      */
     function getLinksData($key, $count = false)
     {
+        global $wpdb;
+        $link_table = $wpdb->prefix . 'wpil_report_links';
         if (!$count) {
             $key .= '_data';
         }
 
-        if ($this->type == 'term') {
-            $links = Wpil_Toolbox::get_encoded_term_meta($this->id, $key, true); // The get_encoded meta functions are normal data safe
-        } else {
-            $links = Wpil_Toolbox::get_encoded_post_meta($this->id, $key, true); // The get_encoded meta functions are normal data safe
+        // if we're optimizing for speed and we're not currently running a link scan
+        if(Wpil_Settings::use_link_table_for_data() && !defined('WPIL_RUNNING_LINK_SCAN')){
+
+            if(!array_key_exists($key, $this->meta_data)){
+                $results = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$link_table} WHERE ((`post_id` = %d AND `post_type` = %s) OR (`target_id` = %d AND `target_type` = %s)) AND `has_links` = 1", $this->id, $this->type, $this->id, $this->type));
+                $meta = array(
+                    'wpil_links_inbound_internal_count'         => 0,
+                    'wpil_links_inbound_internal_count_data'    => array(),
+                    'wpil_links_outbound_internal_count'        => 0,
+                    'wpil_links_outbound_internal_count_data'   => array(),
+                    'wpil_links_outbound_external_count'        => 0,
+                    'wpil_links_outbound_external_count_data'   => array(),
+                    'wpil_sync_report2_time'                    => date('c') // NOTE: The sync_time isn't saved in the report table because we've only needed it for a few reference cases in support, and will probably be removed in the future. Currently setting it to now for compatibility reasons
+                );
+                foreach($results as $dat){
+                    if($dat->internal){
+                        // if the link is inbound internal
+                        if(!empty($dat->target_id) && (int)$dat->target_id === (int)$this->id && $dat->target_type === $this->type){
+                            $meta['wpil_links_inbound_internal_count']++;
+                            $meta['wpil_links_inbound_internal_count_data'][] = new Wpil_Model_Link([
+                                'url' => $dat->raw_url,
+                                'host' => $dat->host,
+                                'internal' => false,
+                                'post' => new Wpil_Model_Post($dat->post_id, $dat->post_type),
+                                'anchor' => !empty($dat->anchor) ? $dat->anchor : '',
+                                'link_whisper_created' => (isset($dat->link_whisper_created) && !empty($dat->link_whisper_created)) ? 1: 0,
+                                'is_autolink' => (isset($dat->is_autolink) && !empty($dat->is_autolink)) ? 1: 0,
+                                'tracking_id' => (isset($dat->tracking_id) && !empty($dat->tracking_id)) ? $dat->tracking_id: 0,
+                                'module_link' => (isset($dat->module_link) && !empty($dat->module_link)) ? $dat->module_link: 0,
+                                'link_context' => (isset($dat->link_context) && !empty($dat->link_context)) ? $dat->link_context: 0,
+                                'ai_relation_score' => (isset($dat->ai_relation_score) && !empty($dat->ai_relation_score)) ? $dat->ai_relation_score: 0,
+                                'target_id' => (isset($dat->target_id) && !empty($dat->target_id)) ? $dat->target_id: 0,
+                                'target_id' => (isset($dat->target_type) && !empty($dat->target_type)) ? $dat->target_type: 0,
+                            ]);
+                        }else{
+                            $meta['wpil_links_outbound_internal_count']++;
+                            $meta['wpil_links_outbound_internal_count_data'][] = new Wpil_Model_Link([
+                                'url' => $dat->raw_url,
+                                'host' => $dat->host,
+                                'internal' => false,
+                                'post' => new Wpil_Model_Post($this->id, $this->type),
+                                'anchor' => !empty($dat->anchor) ? $dat->anchor : '',
+                                'link_whisper_created' => (isset($dat->link_whisper_created) && !empty($dat->link_whisper_created)) ? 1: 0,
+                                'is_autolink' => (isset($dat->is_autolink) && !empty($dat->is_autolink)) ? 1: 0,
+                                'tracking_id' => (isset($dat->tracking_id) && !empty($dat->tracking_id)) ? $dat->tracking_id: 0,
+                                'module_link' => (isset($dat->module_link) && !empty($dat->module_link)) ? $dat->module_link: 0,
+                                'link_context' => (isset($dat->link_context) && !empty($dat->link_context)) ? $dat->link_context: 0,
+                                'ai_relation_score' => (isset($dat->ai_relation_score) && !empty($dat->ai_relation_score)) ? $dat->ai_relation_score: 0,
+                                'target_id' => (isset($dat->target_id) && !empty($dat->target_id)) ? $dat->target_id: 0,
+                                'target_id' => (isset($dat->target_type) && !empty($dat->target_type)) ? $dat->target_type: 0,
+                            ]);
+                        }
+                    }else{
+                        $meta['wpil_links_outbound_external_count']++;
+                        $meta['wpil_links_outbound_external_count_data'][] = new Wpil_Model_Link([
+                            'url' => $dat->raw_url,
+                            'host' => $dat->host,
+                            'internal' => false,
+                            'post' => new Wpil_Model_Post($dat->post_id, $dat->post_type),
+                            'anchor' => !empty($dat->anchor) ? $dat->anchor : '',
+                            'link_whisper_created' => (isset($dat->link_whisper_created) && !empty($dat->link_whisper_created)) ? 1: 0,
+                            'is_autolink' => (isset($dat->is_autolink) && !empty($dat->is_autolink)) ? 1: 0,
+                            'tracking_id' => (isset($dat->tracking_id) && !empty($dat->tracking_id)) ? $dat->tracking_id: 0,
+                            'module_link' => (isset($dat->module_link) && !empty($dat->module_link)) ? $dat->module_link: 0,
+                            'link_context' => (isset($dat->link_context) && !empty($dat->link_context)) ? $dat->link_context: 0,
+                            'target_id' => (isset($dat->target_id) && !empty($dat->target_id)) ? $dat->target_id: 0,
+                            'target_id' => (isset($dat->target_type) && !empty($dat->target_type)) ? $dat->target_type: 0,
+                        ]);
+                    }
+                }
+/*
+                if($this->type === 'post'){
+                    $insert_query = "INSERT INTO {$wpdb->postmeta} (post_id, meta_key, meta_value) VALUES ";
+                }else{
+                    $insert_query = "INSERT INTO {$wpdb->termmeta} (term_id, meta_key, meta_value) VALUES ";
+                }
+                
+                $insert_data = array();
+                $place_holders = array();
+                foreach($meta as $meta_key => $meta_value){
+                    if(false !== strpos($meta_key, '_count_data')){
+                        $meta_value = Wpil_Toolbox::compress($meta_value);
+                    }
+        
+                    array_push(
+                        $insert_data,
+                        $this->id,
+                        $meta_key,
+                        $meta_value
+                    );
+                    $place_holders [] = "('%d', '%s', '%s')";
+                }
+
+                $insert_query .= implode(', ', $place_holders);
+                $insert_query = $wpdb->prepare($insert_query, $insert_data);
+                $inserted = $wpdb->query($insert_query);*/
+                //$links = $meta[$key];
+                $this->meta_data = $meta;
+            }
+                
+            $links = $this->meta_data[$key];
+
+        }else{
+            if ($this->type == 'term') {
+                $links = Wpil_Toolbox::get_encoded_term_meta($this->id, $key, true); // The get_encoded meta functions are normal data safe
+            } else {
+                $links = Wpil_Toolbox::get_encoded_post_meta($this->id, $key, true); // The get_encoded meta functions are normal data safe
+            }
         }
 
         if (empty($links)) {
@@ -1117,6 +1412,58 @@ class Wpil_Model_Post
     }
 
     /**
+     * Gets the organic traffic for the current post.
+     **/
+    function get_organic_traffic(){
+        if(is_null($this->organic_traffic)){
+            $keywords = Wpil_TargetKeyword::get_post_keywords_by_type($this->id, $this->type, 'gsc-keyword', false);
+
+            if(empty($keywords) || !is_array($keywords)){
+                $this->organic_traffic = (object) array(
+                    'clicks' => 0, 
+                    'impressions' => 0,
+                    'ctr' => 0,
+                    'position' => 0
+                );
+                return $this->organic_traffic;
+            }
+
+            $position = 0;
+            $clickes = 0;
+            $impressions = 0;
+            $ctr = 0;
+            foreach($keywords as $keyword){
+                if(!empty($keyword->clicks)){
+                    $clickes += $keyword->clicks;
+                }
+
+                if(!empty($keyword->impressions)){
+                    $impressions += $keyword->impressions;
+                }
+
+                $position += floatval($keyword->position);
+            }
+
+            if($position > 0){
+                $position = round($position/count($keywords), 2);
+            }
+
+            if(!empty($clickes) && !empty($impressions)){
+                $ctr = round($clickes/$impressions, 2);
+            }
+
+            $this->organic_traffic = (object) array(
+                'clicks' => $clickes, 
+                'impressions' => $impressions,
+                'ctr' => $ctr,
+                'position' => $position
+            );
+        }
+
+        return $this->organic_traffic;
+    }
+
+    /**
      * Gets the editor that the post uses to make the content.
      * (As near as we can tell when we set the content)
      * @return string|bool Returns the editor's name or false if we haven't pulled content yet
@@ -1200,4 +1547,31 @@ class Wpil_Model_Post
         }
         return false;
     }
+
+    /**
+     * Gets the PostID that we use for identifying if a "post" is a post or a term, as well as supplying it's id
+     **/
+    function get_pid(){
+        if(empty($this->type) || empty($this->id)){
+            return false;
+        }
+        return $this->type . '_' . $this->id;
+    }
+
+    /**
+     * Gets the post's publish date
+     * Terms just list "unknown" since they don't have time data
+     **/
+    function get_post_date(){
+        $date = 'Unknown';
+        if($this->type === 'post' && !empty($this->id)){
+            $post_date = get_the_date(str_replace('F', 'M', get_option('date_format', 'F d, Y')), $this->id);
+
+            if(!empty($post_date)){
+                $date = $post_date;
+            }
+        }
+        return $date;
+    }
+
 }

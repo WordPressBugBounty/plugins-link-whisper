@@ -64,6 +64,33 @@ class Wpil_Word
     }
 
     /**
+     * Check if keyword is part of word
+     *
+     * @param $sentence
+     * @param $keyword
+     * @param $pos
+     * @return bool
+     */
+    public static function isPartOfWord($sentence, $keyword, $pos)
+    {
+        $endings = array_merge(Wpil_Word::$endings, ['', ' ', '>', '<', ' ', '-', urldecode('%C2%A0')]); // '%C2%A0' === nbsp
+        if ($pos >= 1) {
+            $char_prev = Wpil_Word::onlyText(trim(mb_substr($sentence, $pos - 1, 1)));
+        } else {
+            $char_prev = '';
+        }
+        $char_next = Wpil_Word::onlyText(trim(mb_substr($sentence, $pos + mb_strlen($keyword), 1)));
+
+        if (in_array($char_prev, $endings) && in_array($char_next, $endings) || 
+            (WPIL_CURRENT_LANGUAGE === 'english' && self::isAsianText($char_prev, $char_next, $keyword))) 
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Removes the ending punctuation from the supplied text
      **/
     public static function removeEndings($text, $endings = array()){
@@ -396,6 +423,43 @@ class Wpil_Word
         }
 
         return $text;
+    }
+
+    /**
+     * Checks to see if the current text is Asian language text.
+     **/
+    public static function isAsianText($char_prev, $char_next, $keyword){
+        $string = $char_prev . $keyword . $char_next;
+
+        // if it's Japanese
+        if($count = preg_match_all('/[\x{4E00}-\x{9FBF}\x{3040}-\x{309F}\x{30A0}-\x{30FF}。、]/u', $string)){
+            $char_count = mb_strlen($string);
+
+            // if all the chars are Japanese
+            if($count === $char_count){
+                return true;
+            }elseif($char_count > $count && $char_count > 0 && $count > 0){
+                // check to see if the majority of the text is Japanese
+                $difference = $count/$char_count;
+
+                // if it's over 60% Japanese
+                if($difference > 0.6000){
+                    return true;
+                }
+
+                // if the keyword isn't over 60% Japanese
+                // check the character before and after the keyword to see if they are Japanese
+                $edge_count = preg_match_all('/[\x{4E00}-\x{9FBF}\x{3040}-\x{309F}\x{30A0}-\x{30FF}。、]/u', ($char_prev . $char_next));
+
+                // if they are
+                if($edge_count === count(array_filter([$char_prev, $char_next]))){
+                    // we're probably in a sentence that is overall Japanese
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /** 

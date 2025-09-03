@@ -1,5 +1,7 @@
 <?php
 
+use function LWVendor\mb_str_split;
+
 /**
  * Work with suggestions
  */
@@ -9,6 +11,17 @@ class Wpil_Suggestion
     public static $max_anchor_length = 0;
     public static $min_anchor_length = 0;
     public static $keyword_dummy_index = 0;
+    public static $ai_suggestion_threashold = null;
+
+    public static $post_word_cache = array();
+    public static $phrase_id_cache = array();
+
+    public static $ai_suggestion_refresh_time = 1741219200; // TODO: Make setting to allow users to force a refresh of the data on a schedule
+
+    function __construct()
+    {
+        self::$ai_suggestion_threashold = Wpil_Settings::get_ai_suggestion_relatedness_threshold();
+    }
 
     /**
      * Gets the suggestions for the current post/cat on ajax call.
@@ -39,6 +52,12 @@ class Wpil_Suggestion
         // Remove any hooks that may interfere with AJAX requests
         Wpil_Base::remove_problem_hooks();
 
+        // check if we'll be doing AI scoring of the suggestions
+        $ai_scoring_active = Wpil_Settings::get_ai_suggestion_score_active();
+
+        // check if the user wants to use ai powerd suggestions
+        $ai_powered = Wpil_Settings::get_use_ai_suggestions();
+
         if(!empty($term_id)){
             $post = new Wpil_Model_Post($term_id, 'term');
         }else{
@@ -50,11 +69,11 @@ class Wpil_Suggestion
             $count = intval($_POST['count']);
         }
 
-        $batch_size = Wpil_Settings::getProcessingBatchSize();
-
-        if(empty($count)){
+        if(empty($count) && !empty(get_option('wpil_make_suggestion_filtering_persistent', false))){
             Wpil_Settings::update_suggestion_filters();
         }
+
+        $batch_size = Wpil_Settings::getProcessingBatchSize();
 
         if(isset($_POST['type']) && 'outbound_suggestions' === $_POST['type']){
             // get the total number of posts that we'll be going through
@@ -64,17 +83,69 @@ class Wpil_Suggestion
                 $post_count = intval($_POST['post_count']);
             }
 
-            $phrase_array = array();
-            while(!Wpil_Base::overTimeLimit(15, 45) && (($count - 1) * $batch_size) < $post_count){
+            if($ai_powered){
+                // check to see if the post content has changed since we last did this
+                if(Wpil_AI::sentence_post_id_changed($post)){
+                    // if it has, clear the data
+                    Wpil_AI::clear_ai_suggestion_data($post);
+                }else{
+                    // also remove any data that's older than the refresh date
+                    Wpil_AI::clear_ai_suggestion_data($post, self::$ai_suggestion_refresh_time);
+                }
 
+                // make sure that the database doens't have too much embedding data stored
+                Wpil_AI::housekeep_phrase_embedding_data();
+
+                $calculated = Wpil_AI::has_calculated_phrase_embeddings($post);
+                $embedding_data = Wpil_AI::get_single_post_embedding_data($post);
+                $standard_args = array('status' => 'no_suggestions', 'post_count' => $post_count, 'batch_size' => $batch_size, 'count' => $count, 'message' => '', 'ai_score' => $ai_scoring_active);
+
+                self::send_quota_limited_message($embedding_data); // TODO: turn into exit data handler!
+                // see if we have the embedding data for this post
+                if(!$calculated && empty($embedding_data)){
+                    // if we don't, get it from OAI
+                    $post_data = Wpil_AI::live_query_single_post_embedding_data($post);
+                    self::send_quota_limited_message($embedding_data);
+                    // if we were successful
+                    if(!empty($post_data)){
+                        // save the data
+                        Wpil_AI::save_single_post_embedding_data($post, $post_data);
+                        self::send_quota_limited_message($embedding_data);
+                        // and exit so we can restart the loop now that we have the data
+                        $standard_args['message'] = __('Using AI to evaluate post content', 'wpil');
+                        wp_send_json($standard_args);
+                    }
+                }
+
+                // if the AI calculations haven't completed
+                if(!$calculated && !empty($embedding_data)){
+                    // run the calculations
+                    $calculations = Wpil_AI::stepped_calculate_phrase_embeddings($post, true); // TODO: Handle cases where the result is empty
+                    $message = sprintf(__('Calculating post relationships... %s calculated so far', 'wpil'), $calculations);
+                    wp_send_json(array('status' => 'no_suggestions', 'post_count' => $post_count, 'batch_size' => $batch_size, 'count' => $count, 'message' => $message, 'ai_score' => $ai_scoring_active));
+                }
+            }
+
+            $phrase_array = array();
+            while(!Wpil_Base::overTimeLimit(15, 45) && ($count * $batch_size) < $post_count){
                 // get the phrases for this batch of posts
-                $phrases = self::getPostSuggestions($post, null, false, null, $count, $key);
+                if($ai_powered){
+                    $phrases = self::getAIPostSuggestions($post, null, false, null, $count, $key);
+                    self::send_quota_limited_message($embedding_data);
+                    if(is_string($phrases)){
+                        break;
+                    }
+
+                }else{
+                    $phrases = self::getPostSuggestions($post, null, false, null, $count, $key);
+                }
 
                 if(!empty($phrases)){
                     $phrase_array[] = $phrases;
                 }
 
                 $count++;
+                break;
             }
 
             $status = 'no_suggestions';
@@ -101,10 +172,26 @@ class Wpil_Suggestion
                 $status = 'has_suggestions';
             }
 
+            $finish = false;
             $num = ($batch_size * $count < $post_count) ? $batch_size * $count : $post_count;
-            $message = sprintf(__('Processing Link Suggestions: %d of %d processed', 'wpil'), $num, $post_count);
+            if((!empty($phrases) && $phrases === 'hold_position')){
+                $doing_cooldown = get_transient('wpil_chat_gpt_api_waiter');
+                if((empty($doing_cooldown) || $doing_cooldown < time()) && !Wpil_AI::is_rate_limited()){
+                    $message = __('Using AI to build anchors...', 'wpil');
+                }else{
+                    $message = __('ChatGPT Request Limit Reached for the Hour, Using Alternate Method to build anchors...', 'wpil');
+                }
+            }elseif(!empty($phrases) && $phrases === 'no_data'){
+                $message = __('No Processable Content Found, Exiting Suggestions...', 'wpil');
+                $finish = true;
+            }elseif(!empty($phrases) && $phrases === 'no_posts'){
+                $message = __('No Viable Posts Found, Finishing Up!', 'wpil');
+                $finish = true;
+            }else{
+                $message = sprintf(__('Processing Link Suggestions: %d of %d processed', 'wpil'), $num, $post_count);
+            }
 
-            wp_send_json(array('status' => $status, 'post_count' => $post_count, 'batch_size' => $batch_size, 'count' => $count, 'message' => $message));
+            wp_send_json(array('status' => $status, 'post_count' => $post_count, 'batch_size' => $batch_size, 'count' => $count, 'message' => $message, 'ai_score' => $ai_scoring_active, 'finish' => $finish));
 
         }else{
             wp_send_json(array(
@@ -113,6 +200,22 @@ class Wpil_Suggestion
                     'text'  => __('The data is incomplete for processing the request, please reload the page and try again.', 'wpil'),
                 )
             ));
+        }
+    }
+
+    /**
+     * Outputs a Rate Limited message to the user if the OpenAI API gives us an "insufficent_quota" error.
+     * So far, that just means that the wallet has been exhausted.
+     * 
+     * @param array $args The normal variables that are outputted when doing suggestion ajax calls
+     **/
+    public static function send_quota_limited_message($args){
+        $exceeded_quota = Wpil_AI::is_insufficient_quota();
+
+        if($exceeded_quota){
+            $args['message'] = __('The funds on the OpenAI account have been exhausted, please add more to continue.', 'wpil');
+            $args['finish'] = true;
+            wp_send_json($args);
         }
     }
 
@@ -202,7 +305,7 @@ class Wpil_Suggestion
 
             foreach($phrase_groups as $type => $phrases){
                 if (!empty($phrase_groups[$type])) {
-                    $phrase_groups[$type] = self::deleteWeakPhrases(array_filter($phrase_groups[$type]));
+                    //$phrase_groups[$type] = self::deleteWeakPhrases(array_filter($phrase_groups[$type]));
                     $phrase_groups[$type] = self::addAnchors($phrase_groups[$type], true);
 
                     // if the user is limiting the number of suggestions to display
@@ -291,6 +394,9 @@ class Wpil_Suggestion
             $selected_post_types = self::getSuggestionPostTypes();
             $post_types = Wpil_Settings::getPostTypeLabels(Wpil_Settings::getPostTypes());
             $filter_time_format = Wpil_Toolbox::convert_date_format_from_js();
+            //$ai_relatedness_threshold = Wpil_Settings::get_suggestion_filter('ai_relatedness_threshold');
+            $ai_relatedness_threshold = Wpil_Settings::get_ai_suggestion_relatedness_threshold();
+            $ai_use_ai_suggestions = Wpil_Settings::get_use_ai_suggestions();
             include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/linking_data_list_v2.php';
             // clear the suggestion cache now that we're done with it
             self::clearSuggestionProcessingCache($process_key, $post->id);
@@ -435,8 +541,10 @@ class Wpil_Suggestion
      */
     public static function getPostSuggestions($post, $target = null, $all = false, $keyword = null, $count = null, $process_key = 0)
     {
+        $ignored_words = Wpil_Settings::getIgnoreWords();
         $stemmed_ignore_words = Wpil_Settings::getStemmedIgnoreWords();
         $is_outbound = (empty($target)) ? true: false;
+        $use_slug = Wpil_Settings::use_post_slug_for_suggestions();
 
         if ($target) {
             $internal_links = Wpil_Post::getLinkedPostIDs($target, false);
@@ -545,6 +653,7 @@ class Wpil_Suggestion
 
                         $suggestions[$key] = [
                             'post' => $suggestion_post,
+                            'target_post' => (!empty($target)) ? $target: null,
                             'post_score' => $same_category ? .5 : 0,
                             'words' => []
                         ];
@@ -558,17 +667,220 @@ class Wpil_Suggestion
                 }
             }
 
+            // if there are target keywords
+            if(!empty($target_keywords)){
+
+                $stemmed_phrase = Wpil_Word::getStemmedSentence($phrase->text);
+                $normalized = Wpil_Word::getStemmedSentence(Wpil_Word::remove_accents($stemmed_phrase), true);
+
+                foreach($target_keywords as $target_keyword){
+                    // skip the keyword if it's only 2 chars long
+                    if(3 > strlen($target_keyword->keywords)){
+                        continue;
+                    }
+
+                    // if the keyword is in the phrase
+                    $in_unstemmed = false !== strpos(Wpil_Word::strtolower($phrase->text), Wpil_Word::strtolower($target_keyword->keywords)); // the keyword exists in an unstemmed version
+                    $in_stemmed = false !== strpos($stemmed_phrase, $target_keyword->stemmed); // if the keyword can be found after stemming it, and the stemmed version isn't an ignored word
+                    $in_normalized = false;
+
+                    // check for accent-normalized matches
+                    if(!$in_unstemmed && !$in_stemmed){
+                        $in_normalized = !empty($normalized) && false !== strpos($normalized, $target_keyword->normalized); // if the keyword can be found after normalizing AND stemming it, and this version isn't an ignored word
+                    }
+
+                    if($in_unstemmed || $in_stemmed || ($in_normalized && !empty($normalized))) 
+                    {
+                        // do an additional check to make sure the stemmed keyword isn't a partial match of a different word. //EX: TK of "shoe" would be found in "shoestring" and would trip the above check
+                        if($in_unstemmed && !$in_stemmed){
+                            $pos = Wpil_Word::mb_strpos(Wpil_Word::strtolower($phrase->text), Wpil_Word::strtolower($target_keyword->keywords));
+                            if(Wpil_Word::isPartOfWord(Wpil_Word::strtolower($phrase->text), Wpil_Word::strtolower($target_keyword->keywords), $pos)){ // TODO: Create a general isPartOfWord function in a toolbox class so we don't have to go reaching across classes for methods
+                                continue;
+                            }
+                        }
+
+                        if($in_stemmed){
+                            $pos = Wpil_Word::mb_strpos($stemmed_phrase, $target_keyword->stemmed);
+                            if(Wpil_Word::isPartOfWord($stemmed_phrase, $target_keyword->stemmed, $pos)){ // TODO: Create a general isPartOfWord function in a toolbox class so we don't have to go reaching across classes for methods
+                                continue;
+                            }
+                        }
+
+                        if($in_normalized){
+                            $pos = Wpil_Word::mb_strpos($normalized, $target_keyword->normalized);
+                            if(Wpil_Word::isPartOfWord($normalized, $target_keyword->normalized, $pos)){ // TODO: Create a general isPartOfWord function in a toolbox class so we don't have to go reaching across classes for methods
+                                continue;
+                            }
+                        }
+
+                        // if we're doing outbound suggestion matching
+                        if(empty($target)){
+                            $key = $target_keyword->post_type == 'term' ? 'cat' . $target_keyword->post_id : $target_keyword->post_id;
+                            $link_post = new Wpil_Model_Post($target_keyword->post_id, $target_keyword->post_type);
+                        }else{
+                            $key = $post->type == 'term' ? 'cat' . $post->id : $post->id;
+                            $link_post = $post;
+                        }
+                        if ( in_array($key, $used_posts) ) {
+                            break;
+                        }
+
+                        // if this keyword has already been used
+                        if((!empty($suggestions[$key]['used_keywords']) && !empty($target_keyword->keyword_index) && isset($suggestions[$key]['used_keywords'][$target_keyword->keyword_index]))){
+                            // skip to the next one
+                            continue;
+                        }
+
+                        //create new suggestion
+                        if (!isset($suggestions[$key])) {
+
+                            //check if post have same category with main post
+                            $same_category = false;
+                            if ($link_post->type == 'post' && in_array($link_post->id, $category_posts)) {
+                                $same_category = true;
+                            }
+
+                            // unset the suggestions post content if it's set
+                            if(isset($link_post->content)){
+                                $link_post->content = null;
+                            }
+
+                            $suggestions[$key] = [
+                                'post' => $link_post,
+                                'target_post' => (!empty($target)) ? $target: null,
+                                'post_score' => $same_category ? .5 : 0,
+                                'words' => [],
+                                'matched_target_keywords' => array()
+                            ];
+                        }
+
+                        // add the target keyword to the suggestion's data
+                        $suggestions[$key]['matched_target_keywords'][] = $target_keyword;
+
+                        // if the sentence had to be normalized to match the keywords
+                        if($in_normalized){
+                            // pull the "keywords" from the original string so that we can manufacture an accent-correct link
+
+                            // to do this, we'll slice the string on where the keyword is found
+                            $before_words = mb_substr($normalized, 0, Wpil_Word::mb_strpos($normalized, $target_keyword->normalized));
+                            // count the number of words
+                            $before_words = count(explode(' ', $before_words));
+                            // if it's more than 0, reduce by 1 to accomodate slice()
+                            $before_words = ($before_words > 0 ) ? $before_words - 1: $before_words;
+                            // now we'll blow up the starting string
+                            $bits = explode(' ', $stemmed_phrase);
+                            // remove the starting words
+                            $bits = array_slice($bits, $before_words);
+                            // finally, remove the words that go into the target keyword
+                            $key_words = array_slice($bits, 0, $target_keyword->word_count);
+                        }else{
+                            $key_words = explode(' ', $target_keyword->stemmed);
+                        }
+
+                        foreach($key_words as $word){
+                            //add new word to suggestion if it hasn't already been listed and the user isn't searching for keywords
+                            if (!in_array($word, $suggestions[$key]['words']) && empty($_REQUEST['keywords'])) {
+                                if(!self::isAsianText()){
+                                    $suggestions[$key]['words'][] = $word;
+                                }else{
+                                    $suggestions[$key]['words'][] = mb_str_split($word);
+                                }
+
+                                $suggestions[$key]['post_score'] += 30; // add more points since this is for a target keyword
+                                $suggestions[$key]['passed_target_keywords'] = true;
+                            }elseif(!isset($suggestions[$key]['passed_target_keywords'])){
+                                $suggestions[$key]['post_score'] += 20; // add more points since this is for a target keyword
+                                $suggestions[$key]['passed_target_keywords'] = true;
+                            }
+
+                            if(isset($target_keyword->keyword_index) && !empty($target_keyword->keyword_index)){
+                                $suggestions[$key]['used_keywords'][$target_keyword->keyword_index] = true;
+                            }
+                            
+                        }
+                    }
+                }
+            }
+
+            /** Performs a word-by-word keyword match. So if a "Keyword" contains text like "best business site", it will check for matches to "best", "business", and "site". Rather than seeing if the text contains "best business site" specifically. **//*
+            // create the target keyword suggestions
+            foreach ($uniq_word_list as $word) {
+                if(!isset($target_keywords[$word])){
+                    continue;
+                }
+
+                foreach($target_keywords[$word] as $key_id => $kwrd){
+                    $key = $post->type == 'term' ? 'cat' . $post->id : $post->id;
+                    if (in_array($key, $used_posts)) {
+                        continue;
+                    }
+
+                    //create new suggestion
+                    if (!isset($suggestions[$key])) {
+
+                        //check if post have same category with main post
+                        $same_category = false;
+                        if ($post->type == 'post' && in_array($post->id, $category_posts)) {
+                            $same_category = true;
+                        }
+
+                        // unset the suggestions post content if it's set
+                        if(isset($post->content)){
+                            $post->content = null;
+                        }
+
+                        $suggestions[$key] = [
+                            'post' => $post,
+                            'target_post' => (!empty($target)) ? $target: null,
+                            'post_score' => $same_category ? .5 : 0,
+                            'words' => []
+                        ];
+                    }
+
+                    //add new word to suggestion
+                    if (!in_array($word, $suggestions[$key]['words'])) {
+                        $suggestions[$key]['words'][] = $word;
+                        $suggestions[$key]['post_score'] += 3; // add more points since this is for a target keyword
+                        $suggestions[$key]['passed_target_keywords'] = true;
+                    }elseif(!isset($suggestions[$key]['passed_target_keywords'])){
+                        $suggestions[$key]['post_score'] += 2; // add more points since this is for a target keyword
+                        $suggestions[$key]['passed_target_keywords'] = true;
+                    }
+
+                    // award more points if the suggestion has an exact match with the keywords
+                    if($kwrd->word_count > 1 && false !== strpos(Wpil_Word::getStemmedSentence($phrase->text), $kwrd->stemmed)){
+                        $suggestions[$key]['post_score'] += 1000;
+                    }
+                }
+            }*/
+
             //check if suggestion has at least 2 words & is less than 10 words long, and then calculate count of close words
             foreach ($suggestions as $key => $suggestion) {
-                if ((!empty($_REQUEST['keywords']) && count($suggestion['words']) != count(array_unique(explode(' ', $keyword))))
-                    || (empty($_REQUEST['keywords']) && count($suggestion['words']) < 2)
+                if ((!empty($_REQUEST['keywords']) && count($suggestion['words']) != count(array_unique(explode(' ', $keyword)))) // if the user is searching for keywords and the current suggestion does not contain all of them OR
+                    || (    empty($_REQUEST['keywords']) && // the user is not searching for keywords
+                            count($suggestion['words']) < 2 && // there are less than 2 words here
+                                (   !isset($suggestion['passed_target_keywords']) || // there are not target keywords OR
+                                    isset($suggestion['passed_target_keywords']) && !empty(Wpil_Settings::get_use_anchor_limit_tk_matches()) // there are target keywords, but we're applying the anchor lenght limits to them
+                                )
+                        ) 
                 ) {
                     unset ($suggestions[$key]);
                     continue;
                 }
 
+                if(Wpil_Base::overTimeLimit(8)){
+                    break;
+                }
+
                 // get the suggestion's current length
                 $suggestion['length'] = self::getSuggestionAnchorLength($phrase, $suggestion['words']);
+
+                // if the suggestion isn't long enough and the anchor hasn't passed the target keyword check
+                if($suggestion['length'] < self::get_min_anchor_length() && (!isset($suggestion['passed_target_keywords']) || isset($suggestion['passed_target_keywords']) && !empty(Wpil_Settings::get_use_anchor_limit_tk_matches()))){
+                    // remove it and continue to the next
+                    unset ($suggestions[$key]);
+                    continue;
+                }
 
                 // if the suggested anchor is longer than 10 words
                 if(self::get_max_anchor_length() < $suggestion['length']){
@@ -589,7 +901,12 @@ class Wpil_Suggestion
 
                 sort($suggestion['words']);
 
-                $title_words = $suggestion['post']->getTitle();
+                if($use_slug){
+                    $title_words = $suggestion['post']->getSlugWords();
+                }else{
+                    $title_words = $suggestion['post']->getTitle();
+                }
+
                 $close_words = self::getMaxCloseWords($suggestion['words'], $title_words);
 
                 if ($close_words > 1) {
@@ -604,6 +921,7 @@ class Wpil_Suggestion
                 }
                 $suggestion['total_score'] = $suggestion['anchor_score'] + $suggestion['post_score'];
                 $search_target = ($is_outbound) ? $post: $target;
+                $suggestion['ai_relatedness_calculation'] = Wpil_AI::get_post_relationship_score($search_target, $suggestion['post']);
 
                 $phrase->suggestions[$key] = new Wpil_Model_Suggestion($suggestion);
             }
@@ -658,6 +976,1514 @@ class Wpil_Suggestion
                     }
                 } else {
                     if (!$all) {
+                        $phrase->suggestions = array_slice($phrase->suggestions, 0, 10);
+                    }else{
+                        $phrase->suggestions = array_values($phrase->suggestions);
+                    }
+                }
+            }
+        }
+
+        $phrases = self::deleteWeakPhrases($phrases);
+
+        return $phrases;
+    }
+
+    /**
+     * Get link suggestions for the post.
+     * Now with "AI" searching!
+     *
+     * @param $post_id
+     * @param $ui
+     * @param null $target_post_id
+     * @return array|mixed
+     */
+    public static function getAIPostSuggestions($post, $target = null, $all = false, $keyword = null, &$count = null, $process_key = 0)
+    {
+        $ignored_words = Wpil_Settings::getIgnoreWords();
+        $stemmed_ignore_words = Wpil_Settings::getStemmedIgnoreWords();
+        $is_outbound = (empty($target)) ? true: false;
+        $use_slug = Wpil_Settings::use_post_slug_for_suggestions();
+        $postLang = Wpil_Settings::translation_enabled() ? Wpil_Post::getPostLanguageCode($post) : null;
+
+        if($target){
+            $internal_links = Wpil_Post::getLinkedPostIDs($target, false, false);
+        }else{
+            $internal_links = get_transient('wpil_outbound_post_links' . $process_key);
+            if(empty($internal_links)){
+                // if we're preventing twoway linking
+                if(get_option('wpil_prevent_two_way_linking', false)){
+                    // get the inbound && the outbound internal links
+                    $internal_links = Wpil_Post::getLinkedPostIDs($post, false);
+                }else{
+                    $internal_links = Wpil_Report::getOutboundLinks($post);
+                    $internal_links = $internal_links['internal'];
+                }
+                set_transient('wpil_outbound_post_links' . $process_key, Wpil_Toolbox::compress($internal_links), MINUTE_IN_SECONDS * 15);
+            }else{
+                $internal_links = Wpil_Toolbox::decompress($internal_links);
+            }
+        }
+
+        $used_posts = [];
+        foreach($internal_links as $link){
+            if(!empty($link->post)){
+                $used_posts[] = $link->post->type . '_' . $link->post->id;
+            }
+        }
+
+        // get the post's embedding data
+        $post_data = (array)Wpil_AI::get_embedding_calc_phrases($post, true, true);
+        if(empty($post_data)){ //todo: Maybe fall back to the old method with a note saying something like we weren't abnle to get the AI suggestion data or something.
+            return 'no_data';
+        }
+
+        foreach($post_data['calculation'] as $sentence => &$relations){
+            foreach($relations as $pid => $score){
+                // Skip if the score is too low or the post is already linked
+                if($score < self::$ai_suggestion_threashold || in_array($pid, $used_posts)){
+                    unset($relations[$pid]);
+                }
+            }
+
+            if(empty($relations)){
+                unset($post_data['calculation'][$sentence]);
+            }else{
+                // sort the relations 
+                arsort($relations);
+                // and trim out excessive post suggestions
+                $county = 0;
+                foreach($relations as $pid => $score){
+                    if($county > 10 && empty($target)){ // todo: ccalibrate // also todo: make sure that disabling for inbound is a good idea:
+                        unset($relations[$pid]);
+                    }
+                    $county++;
+                }
+            }
+        }
+
+        if(empty($post_data['calculation'])){
+            return 'no_posts';
+        }
+
+        // see if we're on a cooldown for the anchor API
+        $doing_cooldown = get_transient('wpil_chat_gpt_api_waiter');
+
+        // if we're using AI to id sentences
+        $using_ai_anchors = false;
+        if(
+            empty($target) && // if we're not doing inbound suggestions
+            !Wpil_Settings::get_disable_ai_anchor_building() && // if we're building anchors with AI
+            (empty($doing_cooldown) || $doing_cooldown < time())// and we're not currently on an API cooldown
+        ){
+            $new_phrases = array();
+            foreach($post_data['calculation'] as $sentence => $relations){
+                foreach($relations as $pid => $score){
+                    if(!isset($new_phrases[$sentence])){
+                        $new_phrases[$sentence] = array();
+                    }
+                    $bits = explode('_', $pid);
+                    $posty = new Wpil_Model_Post($bits[1], $bits[0]);
+                    $keywords = Wpil_Word::strtolower(implode(',', Wpil_TargetKeyword::get_active_keyword_list($posty->id, $posty->type)));
+                    $new_phrases[$sentence][] = array($pid, $posty->getTitle(true), $keywords);
+                }
+            }
+
+            // set the AI processing flag so that the cron processes know that we're using the API
+            set_transient('wpil_doing_ai_data_download', time(), MINUTE_IN_SECONDS * 3);
+
+            // if we still have processing to do
+            $processing = Wpil_AI::assess_post_sentence_anchors($new_phrases, $post->get_pid());
+
+            // if we've hit the API limit
+            if(Wpil_AI::is_rate_limited()){
+                // set a flag so that we can tell that we need to make up the difference with the keyword selection method
+                set_transient('wpil_chat_gpt_api_waiter', (time() + (int)(10 * MINUTE_IN_SECONDS)));
+            }
+
+            if(empty($processing) && !is_null($processing) && $count < 15){
+                return 'hold_position';
+            }
+            $using_ai_anchors = true;
+        }
+
+        // if we've completed processsing
+        // get the AI suggestions
+        $ai_suggested_sentences = (!empty($target)) ? Wpil_AI::get_ai_post_suggestion_sentences($post): self::get_ai_suggested_sentences($post, $target, $process_key);
+        $using_ai_anchors = !Wpil_Settings::get_disable_ai_anchor_building();
+
+        $processed_sentences = Wpil_AI::get_processed_anchor_sentences($post, true, true);
+
+        //get all possible words from post titles
+        $words_to_posts = self::get_viable_ai_posts($post, $target, $keyword, $post_data['calculation'], $count, $process_key);
+
+        // if this is an inbound suggestion call
+        if(!empty($target)){
+            // get all selected target keywords
+            $target_keywords = self::getPostKeywords($target, $process_key);
+        }else{
+            $post_keywords = self::getPostKeywords($post, $process_key);
+            $target_keywords = self::getOutboundPostKeywords($words_to_posts, $post_keywords);
+            // create a list of more specific keywords to use for overriding the outbound keyword matching limitations
+            $more_specific_keywords = self::getMoreSpecificKeywords($target_keywords, $post_keywords);
+        }
+
+        // remove any keywords that contain ignored words
+        foreach($target_keywords as $ind => $target_keyword){
+            if( in_array($target_keyword->stemmed, $ignored_words, true) || 
+                in_array($target_keyword->normalized, $ignored_words, true))
+            {
+                unset($target_keywords[$ind]);
+            }
+        }
+
+        //get all posts with same category
+        $result = self::getSameCategories($post, $process_key, $is_outbound);
+        $category_posts = [];
+        foreach ($result as $cat) {
+            $category_posts[] = $cat->object_id;
+        }
+
+        // are we scanning sentences based on the full sentence, or just a short slice of it?
+        $full_sentences = ('sentence_text' === self::get_phrase_text_prop());
+
+        // if this is an inbound link scan
+        if(!empty($target)){
+            $phrases = self::getPhrases($post->getContent(), false, array(), false, array(), $full_sentences);
+        }else{
+            // if this is an outbound link scan, get the phrases formatted for outbound use
+            $phrases = self::getOutboundPhrases($post, $process_key, $full_sentences);
+        }
+
+        // get if the user wants to only match on target keywords and isn't searching
+        $only_match_target_keywords = (!empty(get_option('wpil_only_match_target_keywords', false)) && empty($_REQUEST['keywords']));
+
+        //divide text to phrases
+        foreach ($phrases as $key_phrase => $phrase) {
+            // get the sentence's id
+            $phrase_id = md5(self::get_ai_phrase_text($phrase));
+
+            $suggestions = [];
+            if($using_ai_anchors && isset($processed_sentences[$phrase_id]) && !empty($ai_suggested_sentences)){
+
+                // if the sentence isn't in our list, skip to the next one
+                if(!isset($ai_suggested_sentences[$phrase_id])){
+                    unset($phrases[$key_phrase]);
+                    continue;
+                }
+
+                foreach($ai_suggested_sentences[$phrase_id] as $suggestion_data){
+                    $sentence = trim(preg_replace('/\s+/', ' ', $suggestion_data->suggestion_words));
+
+                    // if the ai sentence is inside the actual sentencce
+                    if(false !== strpos($phrase->text, $sentence)){ // TOOD: Account for "only match target keywords" settinf
+                        // add the sentencce words and create the phrase here
+                        $target_post = new Wpil_Model_Post($suggestion_data->target_id, $suggestion_data->target_type);
+
+                        if (is_null($target)) {
+                            $key = $target_post->type == 'term' ? 'cat' . $target_post->id : $target_post->id;
+                        } else {
+                            $key = $post->type == 'term' ? 'cat' . $post->id : $post->id;
+                        }
+
+                        if (in_array($key, $used_posts) || (isset($suggestions[$key]))) {
+                            //continue;
+                        }
+
+                        //check if post have same category with main post
+                        $same_category = false;
+                        if ($suggestion_data->target_type == 'post' && in_array($suggestion_data->target_id, $category_posts)) {
+                            $same_category = true;
+                        }
+
+                        if (!is_null($target)) {
+                            $suggestion_post = $post;
+                        } else {
+                            $suggestion_post = $target_post;
+                        }
+    
+                        // unset the suggestions post content if it's set
+                        if(isset($suggestion_post->content)){
+                            $suggestion_post->content = null;
+                        }
+    
+                        $words = Wpil_Word::getWords($sentence);
+                        $suggestions[$key] = [
+                            'post' => $suggestion_post,
+                            'post_score' => $same_category ? .5 : 0,
+                            'words' => $words,
+                            'post_score' => count($words)
+                        ];
+
+                        continue;
+                    }
+    
+                    $words_uniq = array_map(function($word){ return Wpil_Stemmer::Stem($word); }, array_unique(Wpil_Word::getWords($sentence)));
+                    foreach ($words_uniq as $word) { // takes barely any time
+                        // if we're only matching with target keywords, exit the loop
+                        if($only_match_target_keywords){
+                            break;
+                        }
+    
+                        // copy the current state of the word and restemm it without accents to catch accent trouble
+                        $orig = $word;
+                        $restemm = Wpil_Stemmer::Stem(Wpil_Word::remove_accents($word), true);
+    
+                        if (empty($_REQUEST['keywords']) && (in_array($word, $stemmed_ignore_words) || in_array($restemm, $stemmed_ignore_words))) {
+                            continue;
+                        }
+    
+                        $target_post = new Wpil_Model_Post($suggestion_data->target_id, $suggestion_data->target_type);
+    
+                        if (is_null($target)) {
+                            $key = $target_post->type == 'term' ? 'cat' . $target_post->id : $target_post->id;
+                        } else {
+                            $key = $post->type == 'term' ? 'cat' . $post->id : $post->id;
+                        }
+    
+                        if (in_array($key, $used_posts) || (isset($suggestions[$key]) && isset($suggestions[$key]['words']) && in_array($orig, $suggestions[$key]['words']))) {
+                            continue;
+                        }
+    
+                        //create new suggestion
+                        if (empty($suggestions[$key])) {
+                            //check if post have same category with main post
+                            $same_category = false;
+                            if ($suggestion_data->target_type == 'post' && in_array($suggestion_data->target_id, $category_posts)) {
+                                $same_category = true;
+                            }
+    
+                            if (!is_null($target)) {
+                                $suggestion_post = $post;
+                            } else {
+                                $suggestion_post = $target_post;
+                            }
+    
+                            // unset the suggestions post content if it's set
+                            if(isset($suggestion_post->content)){
+                                $suggestion_post->content = null;
+                            }
+    
+                            $suggestions[$key] = [
+                                'post' => $suggestion_post,
+                                'post_score' => $same_category ? .5 : 0,
+                                'words' => []
+                            ];
+                        }
+    
+                        //add new word to suggestion
+                        if (!in_array($orig, $suggestions[$key]['words'])) {
+                            $suggestions[$key]['words'][] = $orig;
+                            $suggestions[$key]['post_score'] += 1;
+                        }
+                    }
+                }
+            }else{
+
+                if(empty($target)){
+                    // if this is an outbound link search, remove all phrases that contain the target keywords.
+                    $has_keyword = self::checkSentenceForKeywords($phrase->text, $post_keywords, array()/*, $unique_keywords*/, $more_specific_keywords);
+                    if($has_keyword){
+                        unset($phrases[$key_phrase]);
+                        continue;
+                    }
+    
+                    if( !isset($post_data['calculation'][$phrase->sentence_text]) || 
+                        $post_data['calculation'][$phrase->sentence_text] < self::$ai_suggestion_threashold)
+                    {
+                        unset($phrases[$key_phrase]);
+                        continue;
+                    }
+                }
+
+                //get array of unique sentence words cleared from ignore phrases
+                if (!empty($_REQUEST['keywords'])) { // TODO: Make work?
+                    $sentence = trim(preg_replace('/\s+/', ' ', $phrase->text));
+                    $words_uniq = array_map(function($word){ return Wpil_Stemmer::Stem($word); }, array_unique(Wpil_Word::getWords($sentence)));
+                } else {
+                    // if this is an inbound scan
+                    if(!empty($target)){
+                        $text = Wpil_Word::strtolower(Wpil_Word::removeEndings($phrase->text, ['.','!','?','\'',':','"']));
+                        $words_uniq = array_unique(Wpil_Word::cleanFromIgnorePhrases($text));
+                    }else{
+                        // if this is an outbound scan
+                        $words_uniq = $phrase->words_uniq;
+                    }
+                }
+
+                foreach ($words_uniq as $word) { // takes barely any time
+                    // if we're only matching with target keywords, exit the loop
+                    if($only_match_target_keywords){
+                        break;
+                    }
+    
+                    // copy the current state of the word and restemm it without accents to catch accent trouble
+                    $orig = $word;
+                    $restemm = Wpil_Stemmer::Stem(Wpil_Word::remove_accents($word), true);
+
+                    if (empty($_REQUEST['keywords']) && (in_array($word, $stemmed_ignore_words) || in_array($restemm, $stemmed_ignore_words))) {
+                        continue;
+                    }
+    
+                    //skip word if no one post title has this word
+                    if (empty($words_to_posts[$word])) {
+                        // if the de-accented & restemmed version of the word is present
+                        if(isset($words_to_posts[$restemm])){
+                            // set the word to it
+                            $word = $restemm;
+                        }else{
+                            continue;
+                        }
+                    }
+    
+                    //create array with all possible posts for current word
+                    foreach ($words_to_posts[$word] as $p) {
+                        if (is_null($target)) {
+                            $key = $p->type == 'term' ? 'cat' . $p->id : $p->id;
+                        } else {
+                            $key = $post->type == 'term' ? 'cat' . $post->id : $post->id;
+                        }
+    
+                        if (in_array($key, $used_posts) || (isset($suggestions[$key]) && isset($suggestions[$key]['words']) && in_array($orig, $suggestions[$key]['words']))) {
+                            continue;
+                        }
+    
+                        //create new suggestion
+                        if (empty($suggestions[$key])) {
+                            //check if post have same category with main post
+                            $same_category = false;
+                            if ($p->type == 'post' && in_array($p->id, $category_posts)) {
+                                $same_category = true;
+                            }
+    
+                            if (!is_null($target)) {
+                                $suggestion_post = $post;
+                            } else {
+                                $suggestion_post = $p;
+                            }
+    
+                            // unset the suggestions post content if it's set
+                            if(isset($suggestion_post->content)){
+                                $suggestion_post->content = null;
+                            }
+    
+                            $suggestions[$key] = [
+                                'post' => $suggestion_post,
+                                'post_score' => $same_category ? .5 : 0,
+                                'words' => []
+                            ];
+                        }
+    
+                        //add new word to suggestion
+                        if (!in_array($orig, $suggestions[$key]['words'])) {
+                            $suggestions[$key]['words'][] = $orig;
+                            $suggestions[$key]['post_score'] += 1;
+                        }
+                    }
+                }
+            }
+
+
+            // if there are target keywords
+            if(!empty($target_keywords)){
+
+                $stemmed_phrase = Wpil_Word::getStemmedSentence($phrase->text);
+                $normalized = Wpil_Word::getStemmedSentence(Wpil_Word::remove_accents($stemmed_phrase), true);
+
+                foreach($target_keywords as $target_keyword){
+                    // skip the keyword if it's only 2 chars long
+                    if(3 > strlen($target_keyword->keywords)){
+                        continue;
+                    }
+
+                    // if the keyword is in the phrase
+                    $in_unstemmed = false !== strpos(Wpil_Word::strtolower($phrase->text), Wpil_Word::strtolower($target_keyword->keywords)); // the keyword exists in an unstemmed version
+                    $in_stemmed = false !== strpos($stemmed_phrase, $target_keyword->stemmed); // if the keyword can be found after stemming it, and the stemmed version isn't an ignored word
+                    $in_normalized = false;
+
+                    // check for accent-normalized matches
+                    if(!$in_unstemmed && !$in_stemmed){
+                        $in_normalized = !empty($normalized) && false !== strpos($normalized, $target_keyword->normalized); // if the keyword can be found after normalizing AND stemming it, and this version isn't an ignored word
+                    }
+
+                    if($in_unstemmed || $in_stemmed || ($in_normalized && !empty($normalized))) 
+                    {
+                        // do an additional check to make sure the stemmed keyword isn't a partial match of a different word. //EX: TK of "shoe" would be found in "shoestring" and would trip the above check
+                        if($in_unstemmed && !$in_stemmed){
+                            $pos = Wpil_Word::mb_strpos(Wpil_Word::strtolower($phrase->text), Wpil_Word::strtolower($target_keyword->keywords));
+                            if(Wpil_Word::isPartOfWord(Wpil_Word::strtolower($phrase->text), Wpil_Word::strtolower($target_keyword->keywords), $pos)){ // TODO: Create a general isPartOfWord function in a toolbox class so we don't have to go reaching across classes for methods
+                                continue;
+                            }
+                        }
+
+                        if($in_stemmed){
+                            $pos = Wpil_Word::mb_strpos($stemmed_phrase, $target_keyword->stemmed);
+                            if(Wpil_Word::isPartOfWord($stemmed_phrase, $target_keyword->stemmed, $pos)){ // TODO: Create a general isPartOfWord function in a toolbox class so we don't have to go reaching across classes for methods
+                                continue;
+                            }
+                        }
+
+                        if($in_normalized){
+                            $pos = Wpil_Word::mb_strpos($normalized, $target_keyword->normalized);
+                            if(Wpil_Word::isPartOfWord($normalized, $target_keyword->normalized, $pos)){ // TODO: Create a general isPartOfWord function in a toolbox class so we don't have to go reaching across classes for methods
+                                continue;
+                            }
+                        }
+
+                        // if we're doing outbound suggestion matching
+                        if(empty($target)){
+                            $key = $target_keyword->post_type == 'term' ? 'cat' . $target_keyword->post_id : $target_keyword->post_id;
+                            $link_post = new Wpil_Model_Post($target_keyword->post_id, $target_keyword->post_type);
+                        }else{
+                            $key = $post->type == 'term' ? 'cat' . $post->id : $post->id;
+                            $link_post = $post;
+                        }
+                        if ( in_array($key, $used_posts) ) {
+                            break;
+                        }
+
+                        // if this keyword has already been used
+                        if((!empty($suggestions[$key]['used_keywords']) && !empty($target_keyword->keyword_index) && isset($suggestions[$key]['used_keywords'][$target_keyword->keyword_index]))){
+                            // skip to the next one
+                            continue;
+                        }
+
+                        //create new suggestion
+                        if (!isset($suggestions[$key])) {
+
+                            //check if post have same category with main post
+                            $same_category = false;
+                            if ($link_post->type == 'post' && in_array($link_post->id, $category_posts)) {
+                                $same_category = true;
+                            }
+
+                            // unset the suggestions post content if it's set
+                            if(isset($link_post->content)){
+                                $link_post->content = null;
+                            }
+
+                            $suggestions[$key] = [
+                                'post' => $link_post,
+                                'post_score' => $same_category ? .5 : 0,
+                                'words' => [],
+                                'matched_target_keywords' => array()
+                            ];
+                        }
+
+                        // add the target keyword to the suggestion's data
+                        $suggestions[$key]['matched_target_keywords'][] = $target_keyword;
+
+                        // if the sentence had to be normalized to match the keywords
+                        if($in_normalized){
+                            // pull the "keywords" from the original string so that we can manufacture an accent-correct link
+
+                            // to do this, we'll slice the string on where the keyword is found
+                            $before_words = mb_substr($normalized, 0, Wpil_Word::mb_strpos($normalized, $target_keyword->normalized));
+                            // count the number of words
+                            $before_words = count(explode(' ', $before_words));
+                            // if it's more than 0, reduce by 1 to accomodate slice()
+                            $before_words = ($before_words > 0 ) ? $before_words - 1: $before_words;
+                            // now we'll blow up the starting string
+                            $bits = explode(' ', $stemmed_phrase);
+                            // remove the starting words
+                            $bits = array_slice($bits, $before_words);
+                            // finally, remove the words that go into the target keyword
+                            $key_words = array_slice($bits, 0, $target_keyword->word_count);
+                        }else{
+                            $key_words = explode(' ', $target_keyword->stemmed);
+                        }
+
+                        foreach($key_words as $word){
+                            //add new word to suggestion if it hasn't already been listed and the user isn't searching for keywords
+                            if (!in_array($word, $suggestions[$key]['words']) && empty($_REQUEST['keywords'])) {
+                                if(!self::isAsianText()){
+                                    $suggestions[$key]['words'][] = $word;
+                                }else{
+                                    $suggestions[$key]['words'][] = mb_str_split($word);
+                                }
+
+                                $suggestions[$key]['post_score'] += 30; // add more points since this is for a target keyword
+                                $suggestions[$key]['passed_target_keywords'] = true;
+                            }elseif(!isset($suggestions[$key]['passed_target_keywords'])){
+                                $suggestions[$key]['post_score'] += 20; // add more points since this is for a target keyword
+                                $suggestions[$key]['passed_target_keywords'] = true;
+                            }
+
+                            if(isset($target_keyword->keyword_index) && !empty($target_keyword->keyword_index)){
+                                $suggestions[$key]['used_keywords'][$target_keyword->keyword_index] = true;
+                            }
+                            
+                        }
+                    }
+                }
+            }
+
+            //check if suggestion has at least 2 words & is less than 10 words long, and then calculate count of close words
+            foreach ($suggestions as $key => $suggestion) {
+                if ((!empty($_REQUEST['keywords']) && count($suggestion['words']) != count(array_unique(explode(' ', $keyword))))
+                    || (empty($_REQUEST['keywords']) && count($suggestion['words']) < 2 && 
+                        (   !isset($suggestion['passed_target_keywords']) || // there are no target keywords OR
+                            isset($suggestion['passed_target_keywords']) && !empty(Wpil_Settings::get_use_anchor_limit_tk_matches()) // there are target keywords, but we're applying the anchor lenght limits to them
+                        )
+                    )
+                ) {
+                    unset ($suggestions[$key]);
+                    continue;
+                }
+
+				// remove suggestions other than original post's lang
+                if (!empty($postLang) && $postLang !== Wpil_Post::getPostLanguageCode($suggestion['post'])) { // NOTE: Keep an eye on this for speed testing.
+                    unset ($suggestions[$key]);
+                    continue;
+                }
+
+                if(Wpil_Base::overTimeLimit(8)){
+                    break;
+                }
+
+                $search_target = ($is_outbound) ? $suggestion['post']: $target;
+                $pid = $search_target->type . '_' . $search_target->id;
+                $ai_score = isset($post_data['calculation'][self::get_ai_phrase_text($phrase)], $post_data['calculation'][self::get_ai_phrase_text($phrase)][$pid]) ? $post_data['calculation'][self::get_ai_phrase_text($phrase)][$pid]: 0;
+
+                if($ai_score < self::$ai_suggestion_threashold){
+                    unset ($suggestions[$key]);
+                    continue;
+                }
+
+                // get the suggestion's current length
+                $suggestion['length'] = self::getSuggestionAnchorLength($phrase, $suggestion['words']);
+
+                // if the suggested anchor is longer than 10 words
+                if(self::get_max_anchor_length() < $suggestion['length']){
+                    // see if we can trim up the suggestion to get under the limit
+                    $trimmed_suggestion = self::adjustTooLongSuggestion($phrase, $suggestion);
+                    // if we can
+                    if( self::get_max_anchor_length() >= $trimmed_suggestion['length'] && 
+                        count($suggestion['words']) >= 2)
+                    {
+                        // update the suggestion
+                        $suggestion = $trimmed_suggestion;
+                    }else{
+                        // if we can't, remove the suggestion
+                        unset($suggestions[$key]);
+                        continue;
+                    }
+                }
+
+                sort($suggestion['words']);
+
+                $title_words = $suggestion['post']->getTitle();
+                $close_words = self::getMaxCloseWords($suggestion['words'], $title_words);
+
+                if ($close_words > 1) {
+                    $suggestion['post_score'] += $close_words;
+                }
+
+                //calculate anchor score
+                $close_words = self::getMaxCloseWords($suggestion['words'], $phrase->text);
+                $suggestion['anchor_score'] = count($suggestion['words']);
+                if ($close_words > 1) {
+                    $suggestion['anchor_score'] += $close_words * 2;
+                }
+                $suggestion['total_score'] = $suggestion['anchor_score'] + $suggestion['post_score'];
+                $search_target = ($is_outbound) ? $post: $target;
+
+                // currently not used! TODO: use!
+                $suggestion['ai_relatedness_calculation'] = $ai_score;//Wpil_AI::get_post_relationship_score($search_target, $suggestion['post']);
+
+                $phrase->suggestions[$key] = new Wpil_Model_Suggestion($suggestion);
+            }
+
+            if (!count($phrase->suggestions)) {
+                unset($phrases[$key_phrase]);
+                continue;
+            }
+
+            usort($phrase->suggestions, function ($a, $b) {
+                if ($a->total_score == $b->total_score) {
+                    return 0;
+                }
+                return ($a->total_score > $b->total_score) ? -1 : 1;
+            });
+        }
+
+        // if we're processing outbound suggestions
+        if(empty($target) && Wpil_Settings::get_show_top_ai_suggestions()){
+            // remove post suggestions that are for lower scored sentences
+            self::remove_repeating_suggested_posts($phrases); // makes sure that each post is only offered once in the suggestions
+        }
+
+        // if we've done the AI suggestions, we should be able to do this in one pass
+        // for that matter, the keyword-based method should be able to do it too
+        if($using_ai_anchors || !$using_ai_anchors){
+            // so set the count so high that we'll autocomplete the loop
+            $count += 100000;
+        }
+
+        return $phrases;
+    }
+    
+    /**
+     * Removes less related posts from the suggestions so that we're left with ounly the highest scoring ones
+     **/
+    public static function remove_repeating_suggested_posts($phrases = array()){
+        if(empty($phrases)){
+            return array();
+        }
+
+        // id is: phrase_id . _ . post_type
+        $post_index = array();
+        foreach($phrases as $phrase_id => $dat){
+            foreach($dat->suggestions as $suggestion_id => $suggestion){
+                $pid = $suggestion->post->get_pid();
+                if(!isset($post_index[$pid]) || $post_index[$pid]['score'] < $suggestion->ai_relatedness_calculation){
+                    $post_index[$pid] = array(
+                        'phrase_id' => $phrase_id,
+                        'score' => $suggestion->ai_relatedness_calculation,
+                        'suggestion_id' => $suggestion_id
+                    );
+                }
+            }
+        }
+
+        if(!empty($post_index)){
+            foreach($phrases as $phrase_id => $dat){
+                foreach($dat->suggestions as $key => $suggestion){
+                    $pid = $suggestion->post->get_pid();
+                    if($post_index[$pid]['phrase_id'] != $phrase_id){
+                        unset($phrases[$phrase_id]->suggestions[$key]);
+                    }elseif($post_index[$pid]['phrase_id'] == $phrase_id && $post_index[$pid]['suggestion_id'] != $key){
+                        unset($phrases[$phrase_id]->suggestions[$key]);
+                    }
+                }
+
+                if(empty($phrases[$phrase_id]->suggestions)){
+                    unset($phrases[$phrase_id]->suggestions);
+                }
+            }
+        }
+
+        return $phrases;
+    }
+
+    /**
+     * 
+     **/
+    public static function get_phrase_text_prop(){
+        return (1 === 1) ? 'sentence_text': 'text';
+    }
+
+    /**
+     * @param object $phrase_sentences
+     **/
+    public static function get_ai_phrase_text($phrase_sentences = array()){
+        $prop = self::get_phrase_text_prop();
+        if(!empty($phrase_sentences->$prop) && isset($phrase_sentences->$prop)){
+            return $phrase_sentences->$prop;
+        }
+
+        return '';
+    }
+
+    public static function load_post_word_cache($id){
+        global $wpdb;
+        $target_keyword_table = $wpdb->prefix . "wpil_target_keyword_data";
+
+        $words = array();
+        $bits = explode('_', $id);
+
+        if($bits[0] === 'term'){
+            $results = $wpdb->get_results($wpdb->prepare("SELECT a.name, b.keywords FROM {$wpdb->terms} a left join {$target_keyword_table} b on a.term_id = b.post_id AND b.post_type = 'term' WHERE a.ID = %d", $bits[1]));
+        }else{
+            $results = $wpdb->get_results($wpdb->prepare("SELECT a.post_title, b.keywords FROM {$wpdb->posts} a left join {$target_keyword_table} b on a.ID = b.post_id AND b.post_type = 'post' WHERE a.ID = %d", $bits[1]));
+        }
+
+        if(!empty($results)){
+            $words['title_words'] = $results[0]->post_title;
+            $words['keywords'] = array();
+            foreach($results as $dat){
+                if(!isset($words['keywords'][$dat->keywords])){
+                    $kwords = Wpil_Word::strtolower($dat->keywords);
+                    if(!isset($words['keywords'][$kwords])){
+                        $words['keywords'][$kwords] = $kwords;
+                    }
+                }
+            }
+
+            if(!empty($words['keywords'])){
+                $words['keywords'] = array_values($words['keywords']);
+            }
+        }
+
+        return $words;
+    }
+
+    /**
+     * Collect uniques words from all post titles
+     *
+     * @param $post_id
+     * @param null $target
+     * @return array
+     */
+    public static function get_viable_ai_posts($post, $target = null, $keyword = null, $ai_post_relations = array(), $count = null, $process_key = 0)
+    {
+        global $wpdb;
+        $link_report_table = $wpdb->prefix . 'wpil_report_links';
+
+        $ignore_words = Wpil_Settings::getIgnoreWords();
+        $ignore_posts = Wpil_Settings::getAllIgnoredPosts();
+        $ignore_categories_posts = Wpil_Settings::getIgnoreCategoriesPosts();
+        $ignore_numbers = get_option(WPIL_OPTION_IGNORE_NUMBERS, 1);
+        $only_show_cornerstone = (get_option('wpil_link_to_yoast_cornerstone', false) && empty($target));
+        $outbound_selected_posts = Wpil_Settings::getOutboundSuggestionPostIds();
+        $inbound_link_limit = (int)get_option('wpil_max_inbound_links_per_post', 0);
+        $post_embeddings = Wpil_AI::get_embedding_relatedness_data($post->id, $post->type, true);
+        $has_api_key = Wpil_Settings::getOpenAIKey();
+        $relatedness_threshold = Wpil_Settings::get_suggestion_filter('ai_relatedness_threshold');
+        $use_ai_suggestions = !empty(Wpil_Settings::getOpenAIKey()) && !empty(Wpil_AI::get_calculated_embedding_data($post->id, $post->type));//Wpil_Settings::get_use_ai_suggestions();
+
+        $posts = [];
+        if (!is_null($target)) {
+            $posts[] = $target;
+        } else {
+            $limit  = Wpil_Settings::getProcessingBatchSize();
+            $post_ids = get_transient('wpil_title_word_ids_' . $process_key);
+            if(empty($post_ids) && !is_array($post_ids)){
+                //add all posts to array
+                $exclude = self::getTitleQueryExclude($post);
+                $post_types = implode("','", self::getSuggestionPostTypes());
+
+                // get all posts in the same language if translation active
+                $include = "";
+                $check_language_ids = false;
+                $ids = array();
+                if (Wpil_Settings::translation_enabled()) {
+                    $ids = Wpil_Post::getSameLanguagePosts($post->id);
+
+                    if(!empty($ids) && count($ids) < $limit){
+                        $include = " AND ID IN (" . implode(', ', $ids) . ") ";
+                    }elseif(!empty($ids) && count($ids) > $limit){
+                        $check_language_ids = true;
+                    }else{
+                        $include = " AND ID IS NULL ";
+                    }
+                }
+
+                // get the age query if the user is limiting the range for linking
+                $age_string = Wpil_Query::getPostDateQueryLimit();
+
+                $blood_relative = '';
+                if($post->type === 'post' && !empty(Wpil_Settings::get_suggestion_filter('same_parent'))){
+                    $related_ids = Wpil_Toolbox::get_related_post_ids($post);
+                    if(!empty($related_ids)){
+                        $blood_relative = 'AND ID IN (' . implode(',', $related_ids) . ')';
+                    }
+                }
+
+                $user_role_ignore = Wpil_Query::get_ignore_user_role_suggestions_query();
+
+                $statuses_query = Wpil_Query::postStatuses();
+                $post_ids = $wpdb->get_col("SELECT ID FROM {$wpdb->posts} WHERE 1=1 $exclude AND post_type IN ('{$post_types}') $statuses_query {$blood_relative} {$age_string} {$user_role_ignore}" . $include);
+
+/*
+                // if we're checking for semantically related posts
+                if(!empty($has_api_key) && !empty($post_embeddings)){
+                    if(!empty($post_embeddings)){
+                        // get our relatedness threashold
+                        foreach($post_ids as $key => $post_id){
+                            $id = 'post_' . $post_id;
+                            if(isset($post_embeddings[$id]) && $post_embeddings[$id] < $relatedness_threshold){
+                                unset($post_ids[$key]);
+                            }
+                        }
+                    }
+                }*/
+
+                if(!empty($use_ai_suggestions) && !empty($post_embeddings)){
+                    // get our relatedness threashold
+                    foreach($post_ids as $key => $post_id){
+                        $id = 'post_' . $post_id;
+                        if(isset($post_embeddings[$id]) && $post_embeddings[$id] < self::$ai_suggestion_threashold){
+                            unset($post_ids[$key]);
+                        }
+                    }
+                }
+
+                if(!empty($post_ids) && !empty(Wpil_Settings::get_suggestion_filter('link_orphaned'))){
+                    $post_ids = implode(',', $post_ids);
+
+                    if(Wpil_Settings::use_link_table_for_data()){
+                        $post_ids = $wpdb->get_col("SELECT `post_id` as 'ID' FROM {$link_report_table} WHERE `target_id` NOT IN ({$post_ids}) AND `target_type` = 'post'");
+                    }else{
+
+                        $post_ids = $wpdb->get_col("SELECT `post_id` as 'ID' FROM {$wpdb->postmeta} WHERE `post_id` IN ({$post_ids}) AND `meta_key` = 'wpil_links_inbound_internal_count' AND `meta_value` = 0");
+                    }
+                }elseif(!empty($post_ids) && !empty($inbound_link_limit)){
+                    $post_ids = implode(',', $post_ids);
+                    if(Wpil_Settings::use_link_table_for_data()){
+                        $post_ids = $wpdb->get_col("SELECT `post_id` as 'ID' FROM {$link_report_table} WHERE `target_id` IN ({$post_ids}) AND `target_type` = 'post' GROUP BY target_id HAVING COUNT(post_id) < {$inbound_link_limit}");
+                    }else{
+                        $post_ids = $wpdb->get_col("SELECT `post_id` as 'ID' FROM {$wpdb->postmeta} WHERE `post_id` IN ({$post_ids}) AND `meta_key` = 'wpil_links_inbound_internal_count' AND `meta_value` < {$inbound_link_limit}");
+                    }
+                }
+
+                if(empty($post_ids)){
+                    $post_ids = array();
+                }
+
+                // if we have a lot of language ids to check
+                if(!empty($post_ids) && $check_language_ids){
+                    // find all the ids that are in the same language
+                    $post_ids = array_intersect($post_ids, $ids);
+                }
+
+                if(!empty($post_ids) && Wpil_Settings::removeNoindexFromSuggestions()){
+                    $post_ids = Wpil_Query::remove_noindex_ids($post_ids);
+                }
+
+                $ai_ids = array();
+                foreach($ai_post_relations as $sentence => $relations){
+                    foreach($relations as $id => $score){
+                        $ai_ids[$id] = 1;
+                    }
+                }
+
+                if(!empty($ai_ids) && !empty($post_ids)){
+                    foreach($post_ids as $ind => $id){
+                        $pid = 'post_' . $id;
+                        if(!isset($ai_ids[$pid])){
+                            unset($post_ids[$ind]);
+                        }
+                    }
+                }
+
+                // if the user wants to limit the number of posts searched for suggestions
+                $max_count = Wpil_Settings::get_max_suggestion_post_count();
+                if(!empty($max_count) && !empty($post_ids)){
+                    // shuffle the ids so we don't consistently miss posts
+                    shuffle($post_ids);
+                    // obtain the number of posts that the user wants
+                    $post_ids = array_slice($post_ids, 0, $max_count);
+                }
+
+                set_transient('wpil_title_word_ids_' . $process_key, $post_ids, MINUTE_IN_SECONDS * 15);
+            }
+
+            // if we're only supposed to show links to the Yoast cornerstone content
+            if($only_show_cornerstone && !empty($result)){
+                // get the ids from the initial query
+                $ids = array();
+                foreach($result as $item){
+                    $ids[] = $item->ID;
+                }
+
+                // query the meta to see what posts have been set as cornerstone content
+                $result = $wpdb->get_results("SELECT `post_id` AS ID FROM {$wpdb->postmeta} WHERE `post_id` IN (" . implode(', ', $ids) . ") AND `meta_key` = '_yoast_wpseo_is_cornerstone'");
+            }
+
+            // if we're limiting outbound suggestions to specfic posts
+            if(empty($target) && !empty($outbound_selected_posts) && !empty($result)){
+                // get all of the ids that the user wants to make suggestions to
+                $ids = array();
+                foreach($outbound_selected_posts as $selected_post){
+                    if(false !== strpos($selected_post, 'post_')){
+                        $ids[substr($selected_post, 5)] = true;
+                    }
+                }
+
+                // filter out all the items that aren't in the outbound suggestion limits
+                $result_items = array();
+                foreach($result as $item){
+                    if(isset($ids[$item->ID])){
+                        $result_items[] = $item;
+                    }
+                }
+
+                // update the results with the filtered ids
+                $result = $result_items;
+            }
+
+            $posts = [];
+            $process_ids = array_slice($post_ids, 0, $limit);
+
+            if(!empty($process_ids)){
+                $process_ids = implode("', '", $process_ids);
+                $result = $wpdb->get_results("SELECT ID, post_title, post_name FROM {$wpdb->posts} WHERE ID IN ('{$process_ids}')");
+
+                foreach ($result as $item) {
+                    if (!in_array('post_' . $item->ID, $ignore_posts) && !in_array($item->ID, $ignore_categories_posts)) {
+                        $post_obj = new Wpil_Model_Post($item->ID);
+                        $post_obj->title = $item->post_title;
+                        $post_obj->slug = $item->post_name;
+                        $pid = $post_obj->type . '_' . $post_obj->id;
+
+                        $posts[$pid] = $post_obj;
+                    }
+                }
+
+                // remove this batch of post ids from the list and save the list
+                $save_ids = array_slice($post_ids, $limit);
+                set_transient('wpil_title_word_ids_' . $process_key, $save_ids, MINUTE_IN_SECONDS * 15);
+            }
+
+            // if terms are to be scanned, but the user is restricting suggestions by term, don't search for terms to link to. Only search for terms if:
+            if (    !empty(Wpil_Settings::getTermTypes()) && // terms have been selected
+                    empty(Wpil_Settings::get_suggestion_filter('same_category')) && // we're not restricting by category
+                    empty(Wpil_Settings::get_suggestion_filter('same_tag')) && // we're not restricting by tag
+                    empty(Wpil_Settings::get_suggestion_filter('same_parent')) && // we're not restricting to the post's family
+                    empty($only_show_cornerstone)) // the user hasn't set LW to only process cornerstone content
+            {
+                if (is_null($count) || $count == 0) {
+                    //add all categories to array
+                    $exclude = "";
+                    if ($post->type == 'term') {
+                        $exclude = " AND t.term_id != {$post->id} ";
+                    }
+
+                    $taxonomies = Wpil_Settings::getTermTypes();
+                    $result = $wpdb->get_results("SELECT t.term_id FROM {$wpdb->prefix}term_taxonomy tt LEFT JOIN {$wpdb->prefix}terms t ON tt.term_id = t.term_id WHERE tt.taxonomy IN ('" . implode("', '", $taxonomies) . "') $exclude");
+
+                    // if the user only wants to make outbound suggestions to specific categories
+                    if(empty($target) && !empty($outbound_selected_posts) && !empty($result)){
+                        // get all of the ids that the user wants to make suggestions to
+                        $ids = array();
+                        foreach($outbound_selected_posts as $selected_term){
+                            if(false !== strpos($selected_term, 'term_')){
+                                $ids[substr($selected_term, 5)] = true;
+                            }
+                        }
+
+                        foreach($result as $key => $item){
+                            if(!isset($ids[$item->term_id])){
+                                unset($result[$key]);
+                            }
+                        }
+                    }
+
+                    // if we're checking for semantically related posts
+                    /*if($has_api_key){ // todo: make into actual setting
+                        if(!empty($post_embeddings)){
+                            foreach($result as $key => $item){
+                                $id = 'term_' . $item->term_id;
+                                if(isset($post_embeddings[$id]) && $post_embeddings[$id] < $relatedness_threshold){
+                                    unset($result[$key]);
+                                }
+                            }
+                        }
+                    }*/
+
+                    if(!empty($use_ai_suggestions) && !empty($post_embeddings)){
+                        // get our relatedness threashold
+                        foreach($post_ids as $key => $post_id){
+                            foreach($result as $key => $item){
+                                $id = 'term_' . $item->term_id;
+                                if(isset($post_embeddings[$id]) && $post_embeddings[$id] < self::$ai_suggestion_threashold){
+                                    unset($result[$key]);
+                                }
+                            }
+                        }
+                    }
+
+                    $ai_ids = array();
+                    foreach($ai_post_relations as $sentence => $relations){
+                        foreach($relations as $id => $score){
+                            $ai_ids[$id] = 1;
+                        }
+                    }
+
+                    foreach ($result as $term) {
+                        $tid = 'term_' . $term->term_id;
+                        if (!in_array($tid, $ignore_posts) && isset($ai_ids[$tid])) {
+                            $posts[$tid] = new Wpil_Model_Post($term->term_id, 'term');
+                        }
+                    }
+                }
+            }
+        }
+
+        if(false && !empty($target) && $words = get_transient('wpil_inbound_title_words_' . $process_key)){// TODO: Remove at update 2.3.3 if no one complains about slower inbound Internal suggestions // renabling since I think there has been a slowdown for some users. I think that I disabled the check because a user was having issues with the keyword searching not updating. I think that's been fixed now, so it should be safe to set this going again.
+            return $words;
+        }else{
+            // get if the user is only matching with part of the post titles
+            $partial_match = Wpil_Settings::matchPartialTitles();
+            // get if the user wants to use the slug for suggestions instead of the title
+            $use_slug = Wpil_Settings::use_post_slug_for_suggestions();
+
+            $words = [];
+            foreach ($posts as $key => $p) {
+                //get unique words from post title
+                if (!empty($keyword)) { 
+                    $title_words = array_unique(Wpil_Word::getWords($keyword));
+                } else {
+                    if($use_slug){
+                        $title = $p->getSlugWords();
+                    }else{
+                        $title = $p->getTitle();
+                    }
+                    if($partial_match){
+                        $title = self::getPartialTitleWords($title);
+                    }
+
+                    // if these are outbound suggestions
+                    if(empty($target)){
+                        // get any target keywords the post has and add them to the title so we can make outbound matches based on them
+                        $title .= Wpil_TargetKeyword::get_active_keyword_string($p->id, $p->type);
+                    }
+
+                    $title_words = array_map(function($w){ return trim(trim($w, '[]{}\'"()$&|'));}, array_unique(Wpil_Word::getWords($title)));
+                }
+
+                foreach ($title_words as $word) {
+                    $normalized_word = Wpil_Stemmer::Stem(Wpil_Word::remove_accents(Wpil_Word::strtolower($word)), true, true);
+                    $word = Wpil_Stemmer::Stem(Wpil_Word::strtolower($word));
+
+                    //check if word is not a number and is not in the ignore words list
+                    if (!empty($_REQUEST['keywords']) ||
+                        (strlen($word) > 2 && !in_array($word, $ignore_words) && (!$ignore_numbers || !is_numeric(str_replace(['.', ',', '$'], '', $word))))
+                    ) {
+                        $words[$word][] = $p;
+
+                        if(strlen($normalized_word) > 2 && $word !== $normalized_word){
+                            $words[$normalized_word][] = $p;
+                        }
+                    }
+                }
+            }
+
+/*
+            $words = [];
+            foreach($ai_post_relations as $sentence => &$data){
+                foreach($data as $pid => $score){
+                    $words = array();
+                    if(!isset($posts[$pid])){
+                        unset($data[$pid]);
+                    }else{
+                        //get unique words from post title
+                        if (!empty($keyword)) { 
+                            $title_words = array_unique(Wpil_Word::getWords($keyword));
+                        } else {
+                            if($use_slug){
+                                $title = $posts[$pid]->getSlugWords();
+                            }else{
+                                $title = $posts[$pid]->getTitle();
+                            }
+                            if($partial_match){
+                                $title = self::getPartialTitleWords($title);
+                            }
+
+                            // if these are outbound suggestions
+                            if(empty($target)){
+                                // get any target keywords the post has and add them to the title so we can make outbound matches based on them
+                                $title .= Wpil_TargetKeyword::get_active_keyword_string($posts[$pid]->id, $posts[$pid]->type);
+                            }
+
+                            $title_words = array_map(function($w){ return trim(trim($w, '[]{}\'"()$&|'));}, array_unique(Wpil_Word::getWords($title)));
+                        }
+
+                        foreach ($title_words as $word) {
+                            $normalized_word = Wpil_Stemmer::Stem(Wpil_Word::remove_accents(Wpil_Word::strtolower($word)), true, true);
+                            $word = Wpil_Stemmer::Stem(Wpil_Word::strtolower($word));
+
+                            //check if word is not a number and is not in the ignore words list
+                            if (!empty($_REQUEST['keywords']) ||
+                                (strlen($word) > 2 && !in_array($word, $ignore_words) && (!$ignore_numbers || !is_numeric(str_replace(['.', ',', '$'], '', $word))))
+                            ) {
+                                $words[$word] = 1;
+
+                                if(strlen($normalized_word) > 2 && $word !== $normalized_word){
+                                    $words[$normalized_word] = 1;
+                                }
+                            }
+                        }
+                    
+                        $data[$pid] = array(
+                            'ai_score' => $score,
+                            'post' => $posts[$pid],
+                            //'title_words' => $posts[$pid]
+                            'words' => array_keys($words)
+                        );
+                    }
+                }
+
+                if(empty($ai_post_relations[$sentence])){
+                    unset($ai_post_relations[$sentence]);
+                }
+            }*/
+            
+            // save the title words if this is an Inbound Search // TODO: Remove at update 2.3.3 if no one complains about slower inbound Internal suggestions // wish I could remember why I disabled this!
+//            if(!empty($target)){
+//                set_transient('wpil_inbound_title_words_' . $process_key, $words, MINUTE_IN_SECONDS * 15);
+//            }
+        }
+
+        return $words;
+    }
+
+    public static function get_ai_suggested_sentences($post, $target = null, $process_key = 0){
+        global $wpdb;
+        $link_report_table = $wpdb->prefix . 'wpil_report_links';
+        $anchor_table = $wpdb->prefix . 'wpil_ai_suggested_anchors';
+
+        $use_ai_suggestions = !empty(Wpil_Settings::getOpenAIKey()) && !empty(Wpil_AI::get_calculated_embedding_data($post->id, $post->type));//Wpil_Settings::get_use_ai_suggestions();
+        if(empty($post) || !is_a($post, 'Wpil_Model_Post') || !$use_ai_suggestions){
+            return array();
+        }
+
+        $sentences = get_transient('wpil_ai_suggested_sentences' . $process_key);
+        if(!empty($sentences)){
+            return Wpil_Toolbox::json_decompress($sentences, true);
+        }
+
+        $suggestions = array();
+        $ignore_posts = Wpil_Settings::getAllIgnoredPosts();
+        $ignore_categories_posts = Wpil_Settings::getIgnoreCategoriesPosts();
+
+        $only_show_cornerstone = (get_option('wpil_link_to_yoast_cornerstone', false) && empty($target));
+        $outbound_selected_posts = Wpil_Settings::getOutboundSuggestionPostIds();
+        $inbound_link_limit = (int)get_option('wpil_max_inbound_links_per_post', 0);
+        $limit  = Wpil_Settings::getProcessingBatchSize();
+
+        $post_indx = (!empty($target)) ? 'target': 'post';
+        $target_indx = (!empty($target)) ? 'post': 'target';
+        $search_post = (!empty($target)) ? $target: $post;
+        // outbound post -> target
+
+        //add all posts to array
+        $exclude = self::getTitleQueryExclude($search_post);
+        $post_types = implode("','", self::getSuggestionPostTypes());
+
+        // get all posts in the same language if translation active
+        $include = "";
+        $check_language_ids = false;
+        $ids = array();
+        if (Wpil_Settings::translation_enabled()) {
+            $ids = Wpil_Post::getSameLanguagePosts($search_post->id);
+
+            if(!empty($ids) && count($ids) < $limit){
+                $include = " AND ID IN (" . implode(', ', $ids) . ") ";
+            }elseif(!empty($ids) && count($ids) > $limit){
+                $check_language_ids = true;
+            }else{
+                $include = " AND ID IS NULL ";
+            }
+        }
+
+        // get the age query if the user is limiting the range for linking
+        $age_string = Wpil_Query::getPostDateQueryLimit();
+
+        $blood_relative = '';
+        if($post->type === 'post' && !empty(Wpil_Settings::get_suggestion_filter('same_parent'))){
+            $related_ids = Wpil_Toolbox::get_related_post_ids($post);
+            if(!empty($related_ids)){
+                $blood_relative = 'AND ID IN (' . implode(',', $related_ids) . ')';
+            }
+        }
+
+        $user_role_ignore = Wpil_Query::get_ignore_user_role_suggestions_query();
+        $statuses_query = Wpil_Query::postStatuses();
+
+        $post_query = "SELECT ID FROM {$wpdb->posts} WHERE 1=1 $exclude AND post_type IN ('{$post_types}') $statuses_query {$blood_relative} {$age_string} {$user_role_ignore}" . $include;
+        $suggestion_data = $wpdb->get_results($wpdb->prepare("SELECT `post_id`, `post_type`, `sentence_post_id`, `sentence_id`, `suggestion_words`, `notes`, `target_id`, `target_type` FROM {$anchor_table} WHERE `{$post_indx}_id` = %s AND `{$post_indx}_type` = %d AND `ignore_suggestion` = 0 AND ((`{$target_indx}_type` = 'post' AND `{$target_indx}_id` IN ({$post_query})))", $search_post->id, $search_post->type));
+
+        // exit now if there are no suggested anchors
+        if(empty($suggestion_data)){
+            return array();
+        }
+
+        // first off, remove any ignored posts from our data
+        foreach($suggestion_data as $key => $dat){
+            $pid = $dat->target_type . '_' . $dat->target_id;
+            if(in_array($pid, $ignore_posts) || in_array($dat->target_id, $ignore_categories_posts)){
+                unset($suggestion_data[$key]);
+            }
+        }
+
+        $suggestion_target_post_ids = array();
+        if(empty($target)){
+            foreach($suggestion_data as $dat){
+                if($dat->target_type === 'post'){
+                    $suggestion_target_post_ids[] = $dat->target_id;
+                }
+            }
+        }else{
+            // TODO: handle cases wherre this is used for inbound suggestions.
+            // Currently, it isn't needed to because the post id filtering happens upstream,
+            // so we never need this function to handle this kind of filtering
+        }
+
+        if(!empty($post_ids) && !empty(Wpil_Settings::get_suggestion_filter('link_orphaned'))){
+            $post_ids = implode(',', $post_ids);
+
+            $ignore_string = '';
+            $ignored_ids = Wpil_Settings::getItemTypeIds(Wpil_Settings::getIgnoreOrphanedPosts(), 'post');
+    
+            if(!empty($ignored_ids)){
+                $ignore_string = " AND ID NOT IN ('" . implode("', '", $ignored_ids) . "')";
+            }
+    
+            $statuses_query = Wpil_Query::postStatuses('a');
+            $post_types = Wpil_Query::postTypes('a');
+
+            $ids = $wpdb->get_col("SELECT ID FROM {$wpdb->posts} a WHERE a.ID NOT IN (select distinct `target_id` from {$link_report_table} where `target_type` = 'post' and has_links > 0) {$ignore_string} {$ignore_string} {$statuses_query} {$post_types}");
+
+        }elseif(!empty($post_ids) && !empty($inbound_link_limit)){
+            $post_ids = $wpdb->get_col("SELECT `post_id` as 'ID' FROM {$link_report_table} WHERE `target_type` = 'post' GROUP BY target_id HAVING COUNT(post_id) < {$inbound_link_limit}");
+        }
+
+        if(empty($post_ids)){
+            $post_ids = array();
+        }
+
+        // if we have a lot of language ids to check
+        if(!empty($post_ids) && $check_language_ids){
+            // find all the ids that are in the same language
+            $post_ids = array_intersect($post_ids, $ids);
+        }
+
+        if(!empty($post_ids) && Wpil_Settings::removeNoindexFromSuggestions()){
+            $post_ids = Wpil_Query::remove_noindex_ids($post_ids);
+        }
+
+        // if we're only supposed to show links to the Yoast cornerstone content
+        if($only_show_cornerstone && !empty($suggestion_target_post_ids)){
+            // query the meta to see what posts have been set as cornerstone content
+            $result = $wpdb->get_col("SELECT `post_id` AS ID FROM {$wpdb->postmeta} WHERE `post_id` IN (" . implode(', ', $suggestion_target_post_ids) . ") AND `meta_key` = '_yoast_wpseo_is_cornerstone'");
+        
+            if(!empty($result)){
+                $post_ids = (!empty($post_ids)) ? array_intersect($post_ids, $result): $result;
+            }
+        }
+
+        // if we're limiting outbound suggestions to specfic posts
+        if(empty($target) && !empty($outbound_selected_posts) && !empty($post_ids)){
+            // get all of the ids that the user wants to make suggestions to
+            $ids = array();
+            foreach($outbound_selected_posts as $selected_post){
+                $bits = explode('_', $selected_post);
+
+                if($bits[0] === 'post'){
+                    $ids[] = $bits[1];
+                }
+            }
+
+            if(!empty($ids)){
+                $post_ids = array_intersect($post_ids, $ids);
+            }
+        }
+
+        // if we have ids to filter by
+        if(!empty($post_ids)){
+            // go over the suggestion data
+            foreach($suggestion_data as $d => $dat){
+                // and remove any that aren't in the filter list
+                if($dat->target_type === 'post' && !in_array($dat->target_id, $post_ids)){
+                    unset($suggestion_data[$d]);
+                }
+            }
+        }
+
+        // if the user wants to limit the number of posts searched for suggestions
+        $max_count = Wpil_Settings::get_max_suggestion_post_count();
+        if(!empty($max_count) && !empty($suggestion_data)){
+            // shuffle the ids so we don't consistently miss posts
+            shuffle($suggestion_data);
+            // obtain the number of posts that the user wants
+            $suggestion_data = array_slice($suggestion_data, 0, $max_count);
+        }
+
+        if(!empty($suggestion_data)){
+            foreach($suggestion_data as $dat){
+                if(!isset($suggestions[$dat->sentence_id])){
+                    $suggestions[$dat->sentence_id] = array();
+                }
+
+                if(true){
+                    $dat->suggestion_words = Wpil_Toolbox::json_decompress($dat->suggestion_words);
+                    if(!empty($dat->notes)){
+                        $dat->notes = Wpil_Toolbox::json_decompress($dat->notes);
+                    }
+                }
+
+                $suggestions[$dat->sentence_id][] = $dat;
+            }
+        }
+
+        set_transient('wpil_ai_suggested_sentences' . $process_key, Wpil_Toolbox::json_compress($suggestions), MINUTE_IN_SECONDS * 15);
+
+        return $suggestions;
+    }
+
+    public static function getExternalSiteSuggestions($post, $all = false, $keyword = null, $count = null, $process_key = 0){
+        $ignored_words = Wpil_Settings::getIgnoreWords();
+        $use_slug = Wpil_Settings::use_post_slug_for_suggestions();
+
+        $link_index = get_transient('wpil_external_post_link_index_' . $process_key);
+
+        if(empty($link_index)){
+            $external_links = Wpil_Report::getOutboundLinks($post, true);
+            $link_index = array();
+            if(isset($external_links['external'])){
+                foreach($external_links['external'] as $link){
+                    $link_index[$link->url] = true;
+                }
+            }
+            unset($external_links);
+            set_transient('wpil_external_post_link_index_' . $process_key, Wpil_Toolbox::compress($link_index), MINUTE_IN_SECONDS * 15);
+        }else{
+            $link_index = Wpil_Toolbox::decompress($link_index);
+        }
+
+        //get all possible words from external post titles
+        $words_to_posts = self::getExternalTitleWords(false, false, $count, $link_index);
+
+        $used_posts = array();
+
+        $phrases = self::getOutboundPhrases($post, $process_key);
+
+        //divide text to phrases
+        foreach ($phrases as $key_phrase => $phrase) {
+
+            $suggestions = [];
+            foreach ($phrase->words_uniq as $word) {
+                if (empty($_REQUEST['keywords']) && in_array($word, $ignored_words)) {
+                    continue;
+                }
+
+                //skip word if no one post title has this word
+                if (empty($words_to_posts[$word])) {
+                    continue;
+                }
+
+                //create array with all possible posts for current word
+                foreach ($words_to_posts[$word] as $p) {
+                    $key = $p->type == 'term' ? 'ext_cat' . $p->id : 'ext_post' . $p->id;
+
+                    //create new suggestion
+                    if (empty($suggestions[$key])) {
+                        $suggestion_post = $p;
+                
+                        $suggestions[$key] = [
+                            'post' => $suggestion_post,
+                            'post_score' => 0,
+                            'words' => []
+                        ];
+                    }
+
+                    //add new word to suggestion
+                    if (!in_array($word, $suggestions[$key]['words'])) {
+                        if(!self::isAsianText()){
+                            $suggestions[$key]['words'][] = $word;
+                        }else{
+                            $suggestions[$key]['words'] = mb_str_split($word);
+                        }
+
+                        $suggestions[$key]['post_score'] += 1;
+                    }
+                }
+            }
+
+            //check if suggestion has at least 2 words & is less than 10 words long, and then calculate count of close words
+            foreach ($suggestions as $key => $suggestion) {
+                if ((!empty($_REQUEST['keywords']) && count($suggestion['words']) != count(array_unique(explode(' ', $keyword))))
+                    || (empty($_REQUEST['keywords']) && count($suggestion['words']) < 2)
+                ) {
+                    unset ($suggestions[$key]);
+                    continue;
+                }
+
+                // get the suggestion's current length
+                $suggestion['length'] = self::getSuggestionAnchorLength($phrase, $suggestion['words']);
+
+                // if the suggestion isn't long enough
+                if($suggestion['length'] < self::get_min_anchor_length()){
+                    // remove it and continue to the next
+                    unset ($suggestions[$key]);
+                    continue;
+                }
+
+                // if the suggested anchor is longer than 10 words
+                if(self::get_max_anchor_length() < $suggestion['length']){
+                    // see if we can trim up the suggestion to get under the limit
+                    $trimmed_suggestion = self::adjustTooLongSuggestion($phrase, $suggestion);
+
+                    // if we can
+                    if( self::get_max_anchor_length() >= $trimmed_suggestion['length'] && 
+                        count($suggestion['words']) >= 2)
+                    {
+                        // update the suggestion
+                        $suggestion = $trimmed_suggestion;
+                    }else{
+                        // if we can't, remove the suggestion
+                        unset($suggestions[$key]);
+                        continue;
+                    }
+                }
+
+                sort($suggestion['words']);
+
+                if($use_slug){
+                    $title_words = $suggestion['post']->getSlugWords();
+                }else{
+                    $title_words = $suggestion['post']->getTitle();
+                }
+
+                $close_words = self::getMaxCloseWords($suggestion['words'], $title_words);
+
+                if ($close_words > 1) {
+                    $suggestion['post_score'] += $close_words;
+                }
+
+                //calculate anchor score
+                $close_words = self::getMaxCloseWords($suggestion['words'], $phrase->text);
+                $suggestion['anchor_score'] = count($suggestion['words']);
+                if ($close_words > 1) {
+                    $suggestion['anchor_score'] += $close_words * 2;
+                }
+                $suggestion['total_score'] = $suggestion['anchor_score'] + $suggestion['post_score'];
+
+                $phrase->suggestions[$key] = new Wpil_Model_Suggestion($suggestion);
+            }
+
+            if (!count($phrase->suggestions)) {
+                unset($phrases[$key_phrase]);
+                continue;
+            }
+
+            usort($phrase->suggestions, function ($a, $b) {
+                if ($a->total_score == $b->total_score) {
+                    return 0;
+                }
+                return ($a->total_score > $b->total_score) ? -1 : 1;
+            });
+        }
+
+        //remove same suggestions on top level
+        foreach ($phrases as $key => $phrase) {
+            $post_key = ($phrase->suggestions[0]->post->type=='term'?'ext_cat':'ext_post') . $phrase->suggestions[0]->post->id;
+            if (!empty($target) || !in_array($post_key, $used_posts)) {
+                $used_posts[] = $post_key;
+            } else {
+                if (!empty(self::$undeletable)) {
+                    $phrase->suggestions[0]->opacity = .5;
+                } else {
+                    unset($phrase->suggestions[0]);
+                }
+
+            }
+
+            if (!count($phrase->suggestions)) {
+                unset($phrases[$key]);
+            } else {
+                if (!empty(self::$undeletable)) {
+                    $i = 1;
+                    foreach ($phrase->suggestions as $suggestion) {
+                        $i++;
+                        if ($i > 10) {
+                            $suggestion->opacity = .5;
+                        }
+                    }
+                } else {
+                    if (!$all) {
                         $phrase->suggestions = array_slice($phrase->suggestions, 0, 1);
                     }else{
                         $phrase->suggestions = array_values($phrase->suggestions);
@@ -675,9 +2501,12 @@ class Wpil_Suggestion
      * Divide text to sentences
      *
      * @param $content
+     * @param $with_links
+     * @param $word_segments
+     * @param $single_words
      * @return array
      */
-    public static function getPhrases($content, $with_links = false, $word_segments = array(), $single_words = false, $ignore_text = array())
+    public static function getPhrases($content, $with_links = false, $word_segments = array(), $single_words = false, $ignore_text = array(), $full_sentences = false)
     {
         // get the section skip type and counts
         $section_skip_type = Wpil_Settings::getSkipSectionType();
@@ -838,10 +2667,12 @@ class Wpil_Suggestion
             $sentence = [
                 'src_raw' => $src_raw,
                 'src' => $item,
-                'text' => strip_tags(htmlspecialchars_decode($item))
+                'text' => trim(strip_tags(htmlspecialchars_decode($item)))
             ];
 
-            $sentence['text'] = trim($sentence['text']);
+            if($full_sentences){
+                $phrases = array_merge($phrases, self::getSentences($sentence));
+            }else
 
             //add sentence to array if it has at least 2 words
             if (!empty($sentence['text']) && ($single_words || count(explode(' ', $sentence['text'])) > 1)) {
@@ -849,6 +2680,7 @@ class Wpil_Suggestion
             }
         }
 
+        self::indexPhraseIds($phrases);
 
         return $phrases;
     }
@@ -985,6 +2817,89 @@ class Wpil_Suggestion
     }
 
     /**
+     * Removes user-ignored shortcodes from supplied content so we don't process their content
+     **/
+    public static function removeShortcodes($content = ''){
+        if(empty($content)){
+            return $content;
+        }
+
+        // get the shortcodes to ignore
+        $shortcode_names = Wpil_Settings::get_ignored_shortcode_names();
+
+        // exit if the user isn't ignoring any shortcodes
+        if(empty($shortcode_names)){
+            return $content;
+        }
+
+        // go over the shortcode names
+        foreach($shortcode_names as $index => $name){
+            // if there's no name, or it's not in the content
+            if(empty($name) || false === strpos($content, '[' . $name)){ // we're checking for the opening tag
+                // skip to the next shortcode
+                continue;
+            }
+            
+            // remove any opening/closing shortcode pairs, and the content then contain
+            $regex = '\[' . preg_quote($name) . '(?:[ ][^\[\]]*\]|\])[\s\S]*?\[\/' . preg_quote($name) . '\]';
+            $content = mb_ereg_replace($regex, "\n", $content);
+
+            // if there are still shortcodes in the content
+            if(false !== strpos($content, '[' . $name)){ // again checking for the opening tag
+                // try removing singular shortcode tags
+                $regex = '\[' . preg_quote($name) . '(?:[ ][^\[\]]*\]|\])';
+                $content = mb_ereg_replace($regex, "\n", $content);
+            }
+        }
+
+        return $content;
+    }
+
+    /**
+     * Removes user-ignored HTML tags so we don't stick links in them
+     **/
+    public static function removeIgnoredContentTags($content = ''){
+        if(empty($content)){
+            return $content;
+        }
+
+        // get the shortcodes to ignore
+        $ignored_tags = Wpil_Settings::getIgnoreLinkingTags();
+
+        // exit if the user isn't ignoring any shortcodes
+        if(empty($ignored_tags)){
+            return $content;
+        }
+
+        // set up the tag removing regex
+        $tag_regex = '';
+
+        // go over the tags
+        foreach($ignored_tags as $index => $tag){
+            // if there's no tag, or it's not in the content
+            if(empty($tag) || false === strpos($content, '</' . $tag . '>')){ // we're checking for the closing tag since that won't have classes or other random attributes
+                // skip to the next tag
+                continue;
+            }
+            
+            // if we've got a tag, add it to the regex
+            $tag_regex .= '<' . $tag . '(?:[^>]*)>(.*?)<\/' . $tag . '>|';
+        }
+
+        // trim off any pipes
+        $tag_regex = (!empty($tag_regex)) ? trim($tag_regex, '|'): '';
+
+        // if we've got a regex to work with
+        if(!empty($tag_regex)){
+            // use it on the content
+            $content = mb_ereg_replace($tag_regex, "\n", $content); // replace the tag with a newline so that we split the sentence and don't accidentally create a suggestion for a sentence that has a slice of HTML chopped out of it.
+        }
+
+        // and return the content
+        return $content;
+    }
+
+    /**
      * Returns a filterable list of abbreviations that the sentence splitter should ignore.
      * Contains abbreviations that don't follow the (Letter + Period * (Repeat?)) pattern used for common abbrs. like "U.S.A."
      * There's a regex up in the sentence splitter that handles that.
@@ -1024,7 +2939,7 @@ class Wpil_Suggestion
     /**
      * Gets the paragraph offset for a specific piece of text so we can tell how far down a specific paragraph break is
      **/
-    public static function get_paragraph_offset($content, $paragraph_num = 0, $reverse = false) {
+    public static function get_paragraph_offset($content, $paragraph_num = 0, $reverse = false, $search_blockquote = true) {
         // create an offset index for the tags we're searching for
         $char_count = array(
             'p' => 4,
@@ -1038,6 +2953,23 @@ class Wpil_Suggestion
             // add an extra loop to account for the fact the search works from the end of a paragraph.
             // That way, entering a 2 for $paragraph_num will give us "before the second to last paragraph"
             $paragraph_num++;
+        }
+
+        $blockquotes = array();
+        if(!$search_blockquote && false !== strpos($content, '<blockquote')){
+            $limit = 0; // we're setting a limit to prevent whild server timeouts if there's a mistake
+            $offset = 0;
+            $open = true;
+            $close = true;
+            while(!empty($open) && !empty($close) && $limit < 20){
+                $open = mb_strpos($content, '<blockquote', $offset);
+                $close = mb_strpos($content, '</blockquote>', $offset);
+                if(!empty($open) && !empty($close)){
+                    $blockquotes[] = array('open' => $open, 'close' => $close);
+                }
+                $offset = ($close + $char_count['blockquote']);
+                $limit++;
+            }
         }
 
         $i = 0;
@@ -1054,6 +2986,24 @@ class Wpil_Suggestion
                 'newline' => $reverse ? Wpil_Word::mb_strrpos($content, '\n', $reverse_search) : Wpil_Word::mb_strpos($content, '\n', $pos),
                 'blockquote' => $reverse ? Wpil_Word::mb_strrpos($content, '</blockquote>', $reverse_search) : Wpil_Word::mb_strpos($content, '</blockquote>', $pos)
             );
+
+            // if we're skipping blockquotes and counting them as single paragraphs
+            if(!$search_blockquote && !empty($blockquotes)){
+                // unset the blockquotes since we won't be using them
+                unset($pos_search['blockquote']);
+                
+                // check to see if any of the proposed inds land inside of a blockquote
+                foreach($pos_search as $ind => $search_pos){
+                    foreach($blockquotes as $quote_pos){
+                        // if they do
+                        if($quote_pos['open'] <= $search_pos && $search_pos <= $quote_pos['close']){
+                            // rerun the search to pull something from outside the quote
+                            $search_ind = ($ind !== 'newline') ? '</' . $ind . '>': '\n';
+                            $pos_search[$ind] = ($reverse) ? Wpil_Word::mb_strrpos($content, $search_ind, (($quote_pos['open']) ? ($len - $quote_pos['open']) * -1: $quote_pos['open'])) : Wpil_Word::mb_strpos($content, $search_ind, ($quote_pos['close'] + $char_count['blockquote']));
+                        }
+                    }
+                }
+            }
 
             // sort the results and remove the empties
             asort($pos_search);
@@ -1194,19 +3144,87 @@ class Wpil_Suggestion
     }
 
     /**
+     * Get processed sentences so we can use the whole sentence text in our suggestions.
+     */
+    public static function getSentences($sentence, $one_word = false)
+    {
+        $phrases = [];
+        $src = $sentence['src_raw'];
+
+        $item = self::decodeIgnoredText($src);
+        $phrase = new Wpil_Model_Phrase([
+            'text' => trim(strip_tags(htmlspecialchars_decode($item))),
+            'src' => $item,
+            'sentence_text' => $sentence['text'],
+            'sentence_src' => $sentence['src'],
+        ]);
+
+        $phrases[] = $phrase;
+
+        return $phrases;
+    }
+
+    /**
+     * Indexes the processed phrase ids so that we can look them up by id in the AI processing
+     **/
+    public static function indexPhraseIds($phrases = array()){
+        if(!empty($phrases)){
+            foreach($phrases as $phrase){
+                $id = md5(Wpil_Suggestion::get_ai_phrase_text($phrase));
+                $inds[$id] = $phrase;
+
+            }
+
+            self::$phrase_id_cache = $inds;
+        }
+    }
+    
+    /**
+     * Tries getting a phrase based on its md5 id.
+     * Intended for use with the AI functionality.
+     * Tries using the phrase cache to save resources, but will pull data from the db if the cache isn't set
+     * @param string $id The md5 hash of the phrase that we're looking for
+     * @param Wpil_Model_Post $post The post object that we're trying to pull a phrase from
+     **/
+    public static function getPhrasebyId($id = '', $post = array()){
+        if(empty($id)){
+            return false;
+        }
+
+        // check the cache for a stored phrase
+        if(isset(self::$phrase_id_cache[$id]) && !empty(self::$phrase_id_cache[$id])){
+            return self::$phrase_id_cache[$id];
+        }
+
+        // if there is no cache, and we have a post
+        if(empty(self::$phrase_id_cache) && !empty($post) && is_a($post, 'Wpil_Model_Post')){
+            // pull the phrases to populate the cache
+            self::getPhrases($post->getContent(), true, array(), false, array(), ('sentence_text' === Wpil_Suggestion::get_phrase_text_prop()));
+        }
+
+        // check the cache again for a stored phrase
+        if(isset(self::$phrase_id_cache[$id]) && !empty(self::$phrase_id_cache[$id])){
+            return self::$phrase_id_cache[$id];
+        }
+
+        // if we couldn't find anything, return false
+        return false;
+    }
+
+    /**
      * Collect uniques words from all post titles
      *
      * @param $post_id
      * @param null $target
      * @return array
      */
-    public static function getTitleWords($post, $target = null, $keyword = null, $count = null, $process_key = 0)
+    public static function getTitleWords($post, $target = null, $keyword = null, $count = null, $process_key = 0, $return_posts = false)
     {
         global $wpdb;
         $start = microtime(true);
 
         $ignore_words = Wpil_Settings::getIgnoreWords();
-        $ignore_posts = Wpil_Settings::getIgnorePosts();
+        $ignore_posts = Wpil_Settings::getAllIgnoredPosts();
         $ignore_categories_posts = Wpil_Settings::getIgnoreCategoriesPosts();
         $ignore_numbers = get_option(WPIL_OPTION_IGNORE_NUMBERS, 1);
         $outbound_selected_posts = Wpil_Settings::getOutboundSuggestionPostIds();
@@ -1337,6 +3355,10 @@ class Wpil_Suggestion
                     }
                 }
             }
+
+            if($return_posts){
+                return $posts;
+            }
         }
 
         $words = [];
@@ -1361,6 +3383,57 @@ class Wpil_Suggestion
         }
 
         return $words;
+    }
+
+    /**
+     * Gets the section of title words that the user selected from the settings.
+     * @param string $title The unchanged post title straigt from the db.
+     * @return string $title The post title after we've applied the user's rules to it and removed any words he doesn't want to match with.
+     **/
+    public static function getPartialTitleWords($title){
+        $partial_match_basis = get_option('wpil_get_partial_titles', false);
+
+        // if the user hasn't set a basis, return the title unchanged
+        if(empty($partial_match_basis)){
+            return $title;
+        }
+
+        // if the user wants to only match with a limited number of words from the front or back of the title
+        if($partial_match_basis === '1' || $partial_match_basis === '2'){
+            // get the number of words he's selected
+            $word_count = get_option('wpil_partial_title_word_count', 0);
+
+            if(!empty($word_count)){
+                $title_words = mb_split('\s', $title);
+
+                // if we're supposed to remove words from the front of the title
+                if($partial_match_basis === '1'){
+                    $title_words = array_splice($title_words, 0, $word_count);
+                }else{
+                    $title_words = array_splice($title_words, count($title_words) - $word_count);
+                }
+
+                $title = implode(' ', $title_words);
+            }
+
+        }elseif($partial_match_basis === '3' || $partial_match_basis === '4'){ // if the user wants the title words before or after a split char
+            $split_char = get_option('wpil_partial_title_split_char', '');
+
+            // if the user has specified a split char and it's present in the title
+            if(!empty($split_char) && false !== Wpil_Word::mb_strpos($title, $split_char)){
+                $title_words = mb_split(preg_quote($split_char), $title);
+
+                // if we're returning words beofre the split
+                if($partial_match_basis === '3'){
+                    $title = $title_words[0];
+                }else{
+                    $title = end($title_words);
+                }
+
+            }
+        }
+
+        return trim($title);
     }
 
     /**
@@ -1777,7 +3850,7 @@ class Wpil_Suggestion
 
                 // check to see if we can get a link in this suggestion
                 $has_words = array_slice($words_real, $min, $max - $min + 1); // TODO: CHECK THIS AND MAKE SURE I DON"T HAVE IT BACKWARDS AND I SHOULD BE CHECKING MIN SIZE!
-                if(empty($has_words) || ($max - $min) > Wpil_Settings::getSuggestionMaxAnchorSize()){
+                if(empty($has_words) || ($max - $min) > Wpil_Settings::getSuggestionMaxAnchorSize() || (!isset($_REQUEST['keywords']) && !empty(Wpil_Settings::get_use_anchor_limit_tk_matches()) && ($max - $min + 1) < Wpil_Settings::getSuggestionMinAnchorSize())){
                     // if it can't, remove it from the list
                     unset($phrase->suggestions[$suggestion_key]);
                     // and proceed
@@ -2062,13 +4135,24 @@ class Wpil_Suggestion
      * Calculates the words used for anchor texts
      **/
     public static function getSuggestionAnchorWords($text, $words = array(), $return_indexes = false){
+        // make sure that we're dealing with an array of words
         if(is_string($text) && !empty($text)){
-            // stem the sentence words
-            $stemmed_phrase_words = array_map(array('Wpil_Stemmer', 'Stem'), Wpil_Word::getWords($text));
-        }elseif(is_array($text) && !empty($text)){
-            // if it's not a string, it was cleaned up somewhere else
-            $stemmed_phrase_words = $text;
+            $text = Wpil_Word::getWords($text);
+        }
+
+        // stem the sentence words
+        if(is_array($text) && !empty($text)){
+            $stemmed_phrase_words = array_map(array('Wpil_Stemmer', 'Stem'), $text);
         }else{
+            return false;
+        }
+
+        // make sure that the words we're looking at are stemmed too
+        $words = array_map(array('Wpil_Stemmer', 'Stem'), $words);
+
+        // also make sure that the words show up in the sentence
+        $has_words = array_intersect($stemmed_phrase_words, $words);
+        if(empty($has_words)){
             return false;
         }
 
@@ -2201,6 +4285,924 @@ class Wpil_Suggestion
         }
 
         return $merged_phrases;
+    }
+
+    /**
+     * Get Inbound internal links page search keywords
+     *
+     * @param $post
+     * @return array
+     */
+    public static function getKeywords($post, $include_target_keywords = false)
+    {
+        $keywords = array();
+        if(!empty($_REQUEST['keywords'])){
+            $keywords = array_map(function($word){ return trim($word); }, explode(";", sanitize_text_field($_POST['keywords'])));
+        }
+
+        $keywords = array_filter($keywords);
+
+        if(empty($keywords)){
+            // get if the user wants to use the slug for suggestions instead of the title
+            $use_slug = Wpil_Settings::use_post_slug_for_suggestions();
+
+            if($use_slug){
+                $words = self::getPartialTitleWords($post->getSlugWords());
+            }else{
+                $words = self::getPartialTitleWords($post->getTitle());
+            }
+
+            if($include_target_keywords){
+                $keyword_string = Wpil_TargetKeyword::get_active_keyword_string($post->id, $post->type);
+                $words .= ' ' . $keyword_string;
+                $words .= ' ' . Wpil_Word::getStemmedSentence(Wpil_Word::remove_accents($keyword_string), true);
+            }
+
+            $words = array_flip(array_flip(Wpil_Word::cleanIgnoreWords(explode(' ', Wpil_Word::strtolower($words)))));
+            $words = array_filter($words, function($word){ return (mb_strlen($word) > 2) ? true: false;});
+            $keywords = array(implode(' ', $words));
+        }
+
+        return $keywords;
+    }
+
+    /**
+     * Search posts with common words in the content and return an array of all found post ids
+     *
+     * @param $keyword
+     * @param $excluded_posts
+     * @return array
+     */
+    public static function getInboundSuggestedPosts($keyword, $excluded_posts, $limit = 0)
+    {
+        global $wpdb;
+
+        $post_types = implode("','", self::getSuggestionPostTypes());
+        $suggestion_ids = Wpil_Settings::getOutboundSuggestionPostIds();
+        $search_limit = (!empty($limit)) ? "LIMIT " . (int) $limit: '';
+
+        $search_terms = '';
+        $selected_terms = '';
+        $term_taxonomy_ids = array();
+        $cat_ids = array();
+        $tag_ids = array();
+        if (!empty(Wpil_Settings::get_suggestion_filter('same_category'))) {
+            $post = Wpil_Base::getPost();
+            if ($post->type === 'post') {
+                if (!empty(Wpil_Settings::get_suggestion_filter('selected_category'))) {
+                    $cat_ids = array_merge($cat_ids, self::get_selected_categories());
+                } else {
+                    $taxes = get_object_taxonomies(get_post($post->id));
+                    $query_taxes = array();
+                    foreach($taxes as $tax){
+                        if(get_taxonomy($tax)->hierarchical){
+                            $query_taxes[] = $tax;
+                        }
+                    }
+                    $categories = wp_get_object_terms($post->id, $query_taxes, ['fields' => 'tt_ids']);
+                    if(!empty($categories) && !is_a($categories, 'WP_Error')){
+                        $cat_ids = array_merge($cat_ids, $categories);
+                    }
+                }
+            }
+
+            if(!empty($cat_ids)){
+                $term_taxonomy_ids[] = $cat_ids;
+            }
+        }
+
+        if (!empty(Wpil_Settings::get_suggestion_filter('same_tag'))) {
+            $post = Wpil_Base::getPost();
+            if ($post->type === 'post') {
+                if (!empty(Wpil_Settings::get_suggestion_filter('selected_tag'))) {
+                    $tag_ids = array_merge($tag_ids, self::get_selected_tags());
+                } else {
+                    $taxes = get_object_taxonomies(get_post($post->id));
+                    $query_taxes = array();
+                    foreach($taxes as $tax){
+                        if(empty(get_taxonomy($tax)->hierarchical)){
+                            $query_taxes[] = $tax;
+                        }
+                    }
+                    $tags = wp_get_object_terms($post->id, $query_taxes, ['fields' => 'tt_ids']);
+                    if(!empty($tags) && !is_a($tags, 'WP_Error')){
+                        $tag_ids = array_merge($tag_ids, $tags);
+                    }
+                }
+            }
+
+            if(!empty($tag_ids)){
+                $term_taxonomy_ids[] = $tag_ids;
+            }
+        }
+
+        $selected_terms .= (isset($term_taxonomy_ids[0])) ? " AND ID in (select object_id from {$wpdb->term_relationships} where term_taxonomy_id in (" . implode(',', $term_taxonomy_ids[0]) . ")) " : "";
+        $selected_terms .= (isset($term_taxonomy_ids[1])) ? " AND ID in (select object_id from {$wpdb->term_relationships} where term_taxonomy_id in (" . implode(',', $term_taxonomy_ids[1]) . ")) " : "";
+
+        //get all posts contains words from post title
+        $post_content = self::getInboundPostContent($keyword);
+
+        $include_ids = array();
+        $custom_fields = self::getInboundCustomFields($keyword, $term_taxonomy_ids);
+        if (!empty($custom_fields)) {
+            $posts = $custom_fields;
+            if(!empty($excluded_posts)){
+                foreach ($posts as $key => $included_post) {
+                    if (in_array($included_post, $excluded_posts)) {
+                        unset($posts[$key]);
+                    }
+                }
+            }
+
+            if (!empty($posts)) {
+                $include_ids = $posts;
+            }
+        }
+
+        //WPML
+        $post = Wpil_Base::getPost();
+        $same_language_posts = array();
+        $multi_lang = false;
+        if ($post->type == 'post') {
+            if (Wpil_Settings::translation_enabled()) {
+                $multi_lang = true;
+                $same_language_posts = Wpil_Post::getSameLanguagePosts($post->id);
+            }
+        }
+
+        $statuses_query = Wpil_Query::postStatuses();
+
+        $related_ids = array();
+        if($post->type === 'post' && !empty(Wpil_Settings::get_suggestion_filter('same_parent'))){
+            $related_ids = Wpil_Toolbox::get_related_post_ids($post);
+        }
+
+        // create the array of posts
+        $posts = array();
+
+        // create the string of excluded posts
+        $excluded_posts = implode(',', $excluded_posts);
+
+        // if the user is age limiting the posts, get the query limit string
+        $age_query = Wpil_Query::getPostDateQueryLimit();
+
+        // and if the user is restricting suggestions from posts created by specific roles
+        $user_role_ignore = Wpil_Query::get_ignore_user_role_suggestions_query();
+
+        // if there are ids to process
+        if(!empty($same_language_posts) && $multi_lang){
+            // if there are related post ids
+            if(!empty($related_ids)){
+                // make sure that we only search for those
+                $same_language_posts = array_intersect($same_language_posts, $related_ids);
+            }
+
+            if(!empty($suggestion_ids)){
+                foreach($same_language_posts as $ind => $id){
+                    $pid = 'post_' . $id;
+                    if(!in_array($pid, $suggestion_ids)){
+                        unset($same_language_posts[$ind]);
+                    }
+                }
+            }
+
+            // chunk the ids to query so we don't ask for too many
+            $id_batches = array_chunk($same_language_posts, 2000);
+            foreach($id_batches as $batch){
+                $include = " AND ID IN (" . implode(', ', $batch) . ") ";
+                $batch_ids = $wpdb->get_col("SELECT `ID` FROM {$wpdb->posts} WHERE post_type IN ('{$post_types}') $statuses_query AND ID NOT IN ({$excluded_posts}) {$age_query} {$user_role_ignore} {$selected_terms} {$post_content} $include ORDER BY ID DESC {$search_limit}");
+
+                if(!empty($batch_ids)){
+                    $posts = array_merge($posts, $batch_ids);
+                }
+
+                if(!empty($limit)){
+                    break;
+                }
+            }
+        }elseif(empty($multi_lang)){
+            $related = '';
+            if(!empty($related_ids)){
+                $related = 'AND ID IN (' . implode(',', $related_ids) . ')';
+            }
+            $posts = $wpdb->get_col("SELECT `ID` FROM {$wpdb->posts} WHERE post_type IN ('{$post_types}') $statuses_query AND ID NOT IN ({$excluded_posts}) {$age_query} {$user_role_ignore} {$selected_terms} {$post_content} {$related} ORDER BY ID DESC {$search_limit}");
+        }
+
+        if(!empty($include_ids)){
+            $posts = array_merge($posts, $include_ids);
+        }
+
+        // get any posts from alternate storage locations
+        $posts = self::getPostsFromAlternateLocations($posts, $keyword, $excluded_posts, $term_taxonomy_ids, $limit);
+
+        // if there are posts found, remove any duplicate ids and posts hidden by redirects
+        if(!empty($posts)){
+            $redirected = Wpil_Settings::getRedirectedPosts(true); // TODO: Rework this so that posts are only removed if the redirect is hiding hte post. Some simply have updated URLs and the redirect is to accomodate that
+            $post_ids = array();
+            foreach($posts as $ind => $post){
+                // if the user is restricting the suggestions to specific posts
+                if(!empty($suggestion_ids)){
+                    // check if this is one of those posts
+                    $pid = 'post_' . $post;
+                    // if it's not
+                    if(!in_array($pid, $suggestion_ids)){
+                        // skip to the next one
+                        continue;
+                    }
+                }
+
+                // if the post isn't hidden behind a redirect
+                if(!isset($redirected[$post])){
+                    // if we're doing multi-lang suggestions and this is in the language list
+                    if($multi_lang && in_array($post, $same_language_posts)){
+                        // add it to the list of posts to process
+                        $post_ids[$post] = $post;
+                    }elseif(false === $multi_lang){
+                        // if we're not doing multilanguage processing, add the post directly
+                        $post_ids[$post] = $post;
+                    }
+                }
+            }
+
+            $posts = array_values($post_ids);
+        }
+
+        return $posts;
+    }
+
+    public static function getInboundPostContent($keyword, $column = 'post_content')
+    {
+        global $wpdb;
+
+        //get unique words from post title
+        $words = (!self::isAsianText()) ? Wpil_Word::getWords($keyword) : mb_str_split(trim($keyword));
+        $words = Wpil_Word::cleanIgnoreWords(array_unique($words));
+        $words = array_values(array_filter($words));
+
+        if (empty($words)) {
+            return '';
+        }
+
+        if($column !== 'post_content'){
+            $column = sanitize_text_field($column);
+        }
+
+        $post_content = "";
+        foreach($words as $ind => $word){
+            $escaped = "%" . $wpdb->esc_like($word) . "%";
+            if($ind < 1){
+                $post_content .= $wpdb->prepare("AND ({$column} LIKE %s", $escaped);
+            }else{
+                $post_content .= $wpdb->prepare(" OR {$column} LIKE %s", $escaped);
+            }
+        }
+
+        // if we have a post content query string
+        if(!empty($post_content)){
+            // add the closing bracket for the end of the AND
+            $post_content .= ')';
+        }
+
+        return $post_content;
+    }
+
+    /**
+     * Gets the Inbound Suggestable terms for the Inbound Suggestions
+     * 
+     **/
+    public static function get_inbound_suggested_terms($keyword, $post){
+        global $wpdb;
+
+        $terms = array();
+
+        // if terms are to be scanned, but the user is restricting suggestions by term, don't search for terms to link to. Only search for terms if:
+        if(!empty(Wpil_Settings::getTermTypes()) && // terms have been selected
+            empty(Wpil_Settings::get_suggestion_filter('same_category')) && // we're not restricting by category
+            empty(Wpil_Settings::get_suggestion_filter('same_parent'))) // we're not restricting to the post's family
+        {
+            $ignore_posts = Wpil_Settings::getAllIgnoredPosts();
+            $results = array();
+            $exclude_ids = array();
+
+            if(!empty($ignore_posts)){
+                foreach($ignore_posts as $dat){
+                    if(false !== strpos($dat, 'term_')){
+                        $bits = explode('_', $dat);
+                        if(!empty($bits[1])){
+                            $exclude_ids[] = $bits[1];
+                        }
+                    }
+                }
+            }
+
+            $exclude = "";
+            if(!empty($exclude_ids)){
+                $exclude_ids = implode(',', $exclude_ids);
+                $exclude = " AND t.term_id NOT IN ({$exclude_ids}) ";
+            }
+
+            $content = self::getInboundPostContent($keyword, 'tt.description');
+
+            //WPML
+            $same_language_terms = array();
+            $multi_lang = false;
+            $language_ids = "";
+            if ($post->type == 'post' && Wpil_Settings::translation_enabled()) {
+                $multi_lang = true;
+                $same_language_terms = Wpil_Post::getSameLanguageTerms($post->id);
+            }
+
+            if($multi_lang){
+                $language_ids .= " AND t.term_id IN (" . implode(',', $same_language_terms) . ")";
+            }
+
+            $taxonomies = Wpil_Settings::getTermTypes();
+
+            // if there are ids to process
+            if(!empty($same_language_terms) && $multi_lang){
+                // chunk the ids to query so we don't ask for too many
+                $id_batches = array_chunk($same_language_terms, 2000);
+                foreach($id_batches as $batch){
+                    $include = " AND t.term_id IN (" . implode(', ', $batch) . ") ";
+                    $batch_ids = $wpdb->get_col("SELECT t.term_id FROM {$wpdb->prefix}term_taxonomy tt LEFT JOIN {$wpdb->prefix}terms t ON tt.term_id = t.term_id WHERE tt.taxonomy IN ('" . implode("', '", $taxonomies) . "') {$content} {$include} $exclude");
+
+                    if(!empty($batch_ids)){
+                        $results = array_merge($results, $batch_ids);
+                    }
+                }
+            }elseif(empty($multi_lang)){
+                $results = $wpdb->get_col("SELECT t.term_id FROM {$wpdb->prefix}term_taxonomy tt LEFT JOIN {$wpdb->prefix}terms t ON tt.term_id = t.term_id WHERE tt.taxonomy IN ('" . implode("', '", $taxonomies) . "') {$content} {$language_ids} $exclude");
+            }
+
+            foreach ($results as $term_id) {
+                if(!$multi_lang || ($multi_lang && in_array($term_id, $same_language_terms, true)) ){
+                    $terms[$term_id] = $term_id;
+                }
+            }
+
+            // if there are terms found, pull the id values from the list
+            if(!empty($terms)){
+                $terms = array_values($terms);
+            }
+        }
+
+        return $terms;
+    }
+
+    /**
+     * Gets the posts that store content in locations other than the post_content.
+     * Most page builders update post_content as a fallback measure, so we can typically get the content that way.
+     * But some items are unique and don't update the post_content.
+     **/
+    public static function getPostsFromAlternateLocations($posts, $keyword, $exclude_ids, $term_taxonomy_ids = array(), $limit = 0){
+        global $wpdb;
+
+        $active_post_types = self::getSuggestionPostTypes();
+        $search_limit = (!empty($limit)) ? "LIMIT " . (int) $limit: '';
+
+        // if WP Recipes is active and the user wants to add links to the recipe notes
+        if(defined('WPRM_POST_TYPE') && in_array('wprm_recipe', $active_post_types)){
+
+            //get unique words from post title
+            $words = Wpil_Word::getWords($keyword);
+            $words = Wpil_Word::cleanIgnoreWords(array_unique($words));
+            $words = array_filter($words);
+
+            if(!empty($words)){
+                $selected_terms = "";
+                $selected_terms .= (isset($term_taxonomy_ids[0])) ? " AND m.post_id in (select object_id from {$wpdb->term_relationships} where term_taxonomy_id in (" . implode(',', $term_taxonomy_ids[0]) . ")) " : "";
+                $selected_terms .= (isset($term_taxonomy_ids[1])) ? " AND m.post_id in (select object_id from {$wpdb->term_relationships} where term_taxonomy_id in (" . implode(',', $term_taxonomy_ids[1]) . ")) " : "";
+
+                $keys = Wpil_Editor_WPRecipe::get_selected_fields();
+
+                if(!empty($keys)){
+                    $keys = "'" . implode("','", array_keys($keys)) . "'";
+                    $like = '';
+                    for($i = 1; $i < count($words); $i++){
+                        $like .= 'OR meta_value LIKE %s ';
+                    }
+                    $meta = $wpdb->prepare("meta_value LIKE %s {$like}", array_map(array('Wpil_Toolbox', 'esc_like'), $words));
+                    $results = $wpdb->get_col("SELECT DISTINCT m.post_id AS ID FROM {$wpdb->postmeta} m WHERE `meta_key` IN ({$keys}) AND m.post_id NOT IN ($exclude_ids) {$selected_terms} AND ({$meta}) {$search_limit}");
+
+                    if(!empty($results)){
+                        $posts = array_merge($posts, $results);
+                    }
+                }
+            }
+        }
+
+        // get the metafields for the standard builders
+        $builder_meta = Wpil_Post::get_builder_meta_keys();
+
+        // if we have builders
+        if(!empty($builder_meta)){
+            //get unique words from post title
+            $words = Wpil_Word::getWords($keyword);
+            $words = Wpil_Word::cleanIgnoreWords(array_unique($words));
+            $words = array_filter($words);
+
+            // assemble the builder meta into a key array
+            $builder_meta = "'" . implode("', '", $builder_meta) . "'";
+
+            // get the age query if the user is limiting the range for linking
+            $age_string = Wpil_Query::getPostDateQueryLimit('p');
+
+            // get if the user is restricting suggestions from posts created by specific roles
+            $user_role_ignore = Wpil_Query::get_ignore_user_role_suggestions_query('p');
+
+            if(!empty($words)){
+                $post_types_p = Wpil_Query::postTypes('p');
+                $statuses_query_p = Wpil_Query::postStatuses('p');
+
+                $selected_terms = "";
+                $selected_terms .= (isset($term_taxonomy_ids[0])) ? " AND m.post_id in (select object_id from {$wpdb->term_relationships} where term_taxonomy_id in (" . implode(',', $term_taxonomy_ids[0]) . ")) " : "";
+                $selected_terms .= (isset($term_taxonomy_ids[1])) ? " AND m.post_id in (select object_id from {$wpdb->term_relationships} where term_taxonomy_id in (" . implode(',', $term_taxonomy_ids[1]) . ")) " : "";
+
+                $like = '';
+                for($i = 1; $i < count($words); $i++){
+                    $like .= 'OR m.meta_value LIKE %s ';
+                }
+                $meta = $wpdb->prepare("m.meta_value LIKE %s {$like}", array_map(array('Wpil_Toolbox', 'esc_like'), $words));
+                $results = $wpdb->get_col("SELECT DISTINCT m.post_id AS ID FROM {$wpdb->posts} p INNER JOIN {$wpdb->postmeta} m ON p.ID = m.post_id WHERE m.meta_key IN ({$builder_meta}) {$selected_terms} {$age_string} {$user_role_ignore} {$post_types_p} {$statuses_query_p} AND ({$meta}) {$search_limit}");
+
+                if(!empty($results)){
+                    $posts = array_merge($posts, $results);
+                }
+            }
+        }
+
+        // if WooCommerce is active
+        if(defined('WC_PLUGIN_FILE') && in_array('product', $active_post_types)){
+            //get unique words from post title
+            $words = Wpil_Word::getWords($keyword);
+            $words = Wpil_Word::cleanIgnoreWords(array_unique($words));
+            $words = array_filter($words);
+
+            // get the age query if the user is limiting the range for linking
+            $age_string = Wpil_Query::getPostDateQueryLimit('p');
+
+            // get if the user is restricting suggestions from posts created by specific roles
+            $user_role_ignore = Wpil_Query::get_ignore_user_role_suggestions_query('p');
+
+            $selected_terms = "";
+            $selected_terms .= (isset($term_taxonomy_ids[0])) ? " AND ID in (select object_id from {$wpdb->term_relationships} where term_taxonomy_id in (" . implode(',', $term_taxonomy_ids[0]) . ")) " : "";
+            $selected_terms .= (isset($term_taxonomy_ids[1])) ? " AND ID in (select object_id from {$wpdb->term_relationships} where term_taxonomy_id in (" . implode(',', $term_taxonomy_ids[1]) . ")) " : "";
+
+            if(!empty($words)){
+                $like = '';
+                for($i = 1; $i < count($words); $i++){
+                    $like .= 'OR p.post_excerpt LIKE %s ';
+                }
+                $exerpt = $wpdb->prepare("p.post_excerpt LIKE %s {$like}", array_map(array('Wpil_Toolbox', 'esc_like'), $words));
+                $results = $wpdb->get_col("SELECT DISTINCT ID FROM {$wpdb->posts} p WHERE p.post_type = 'product' {$selected_terms} {$age_string} {$user_role_ignore} AND ({$exerpt}) {$search_limit}");
+
+                if(!empty($results)){
+                    $posts = array_merge($posts, $results);
+                }
+            }
+        }
+
+        // if the user has defined custom fields to process (non-ACF)
+        $fields = Wpil_Post::getMetaContentFieldList('post');
+        if(!empty($fields)){
+            //get unique words from post title
+            $words = Wpil_Word::getWords($keyword);
+            $words = Wpil_Word::cleanIgnoreWords(array_unique($words));
+            $words = array_filter($words);
+
+            // get the age query if the user is limiting the range for linking
+            $age_string = Wpil_Query::getPostDateQueryLimit('p');
+
+            // get if the user is restricting suggestions from posts created by specific roles
+            $user_role_ignore = Wpil_Query::get_ignore_user_role_suggestions_query('p');
+
+            if(!empty($words)){
+                $post_types_p = Wpil_Query::postTypes('p');
+                $statuses_query_p = Wpil_Query::postStatuses('p');
+
+                $selected_terms = "";
+                $selected_terms .= (isset($term_taxonomy_ids[0])) ? " AND m.post_id in (select object_id from {$wpdb->term_relationships} where term_taxonomy_id in (" . implode(',', $term_taxonomy_ids[0]) . ")) " : "";
+                $selected_terms .= (isset($term_taxonomy_ids[1])) ? " AND m.post_id in (select object_id from {$wpdb->term_relationships} where term_taxonomy_id in (" . implode(',', $term_taxonomy_ids[1]) . ")) " : "";
+    
+                $like = '';
+                for($i = 1; $i < count($words); $i++){
+                    $like .= 'OR meta_value LIKE %s ';
+                }
+                $meta = $wpdb->prepare("meta_value LIKE %s {$like}", array_map(array('Wpil_Toolbox', 'esc_like'), $words));
+                $results = $wpdb->get_col("SELECT DISTINCT m.post_id AS ID FROM {$wpdb->posts} p INNER JOIN {$wpdb->postmeta} m ON p.ID = m.post_id WHERE m.meta_key IN ('" . implode("', '", $fields) . "') {$selected_terms} {$age_string} {$user_role_ignore} {$post_types_p} {$statuses_query_p} AND ({$meta}) {$search_limit}");
+
+                if(!empty($results)){
+                    $posts = array_merge($posts, $results);
+                }
+            }
+        }
+
+        // if Divi is active
+        if(defined('ET_SHORTCODES_VERSION')){
+            $metas = $wpdb->get_results("SELECT pm_use_on.meta_value FROM {$wpdb->postmeta} pm_use_on
+                WHERE pm_use_on.meta_key = '_et_use_on'
+                AND pm_use_on.meta_value > '0'
+                AND EXISTS (
+                    SELECT 1 FROM {$wpdb->postmeta}
+                    WHERE post_id = pm_use_on.post_id
+                    AND meta_key = '_et_enabled'
+                    AND meta_value = '1'
+                )
+                AND EXISTS (
+                    SELECT 1 FROM {$wpdb->postmeta}
+                    WHERE post_id = pm_use_on.post_id
+                    AND meta_key = '_et_body_layout_id'
+                    AND meta_value > '0'
+                )");
+
+            if(!empty($metas)){
+                $ids = array();
+                foreach($metas as $meta){
+                    if(empty($meta)){
+                        continue;
+                    }
+                    preg_match('/^singular:post_type:([^:]+):id:(\d+)$/i', $meta->meta_value, $m);
+
+                    if(!empty($m) && isset($m[2]) && !empty($m[2])){
+                        $ids[] = (int)$m[2];
+                    }
+                }
+
+                $ids = array_filter($ids);
+
+                if(!empty($ids)){
+                    $ids = array_unique($ids);
+                    foreach($ids as $id){
+                        $posts[] = $id;
+                    }
+                }
+            }
+        }
+
+        return $posts;
+    }
+
+    /**
+     * Search posts that AI has identified as being a good match for this post post
+     *
+     * @param $keyword
+     * @param $excluded_posts
+     * @return array
+     */
+    public static function getAiInboundSuggestedPosts($excluded_posts)
+    {
+        global $wpdb;
+
+        $post_types = implode("','", self::getSuggestionPostTypes());
+        $suggestion_ids = Wpil_Settings::getOutboundSuggestionPostIds();
+        $post = Wpil_Base::getPost();
+
+        $selected_terms = '';
+        $term_taxonomy_ids = array();
+        $cat_ids = array();
+        $tag_ids = array();
+
+        if (!empty(Wpil_Settings::get_suggestion_filter('same_category'))) {
+            if ($post->type === 'post') {
+                if (!empty(Wpil_Settings::get_suggestion_filter('selected_category'))) {
+                    $cat_ids = array_merge($cat_ids, self::get_selected_categories());
+                } else {
+                    $taxes = get_object_taxonomies(get_post($post->id));
+                    $query_taxes = array();
+                    foreach($taxes as $tax){
+                        if(get_taxonomy($tax)->hierarchical){
+                            $query_taxes[] = $tax;
+                        }
+                    }
+                    $categories = wp_get_object_terms($post->id, $query_taxes, ['fields' => 'tt_ids']);
+                    if(!empty($categories) && !is_a($categories, 'WP_Error')){
+                        $cat_ids = array_merge($cat_ids, $categories);
+                    }
+                }
+            }
+
+            if(!empty($cat_ids)){
+                $term_taxonomy_ids[] = $cat_ids;
+            }
+        }
+
+        if (!empty(Wpil_Settings::get_suggestion_filter('same_tag'))) {
+            if ($post->type === 'post') {
+                if (!empty(Wpil_Settings::get_suggestion_filter('selected_tag'))) {
+                    $tag_ids = array_merge($tag_ids, self::get_selected_tags());
+                } else {
+                    $taxes = get_object_taxonomies(get_post($post->id));
+                    $query_taxes = array();
+                    foreach($taxes as $tax){
+                        if(empty(get_taxonomy($tax)->hierarchical)){
+                            $query_taxes[] = $tax;
+                        }
+                    }
+                    $tags = wp_get_object_terms($post->id, $query_taxes, ['fields' => 'tt_ids']);
+                    if(!empty($tags) && !is_a($tags, 'WP_Error')){
+                        $tag_ids = array_merge($tag_ids, $tags);
+                    }
+                }
+            }
+
+            if(!empty($tag_ids)){
+                $term_taxonomy_ids[] = $tag_ids;
+            }
+        }
+
+        $selected_terms .= (isset($term_taxonomy_ids[0])) ? " AND ID in (select object_id from {$wpdb->term_relationships} where term_taxonomy_id in (" . implode(',', $term_taxonomy_ids[0]) . ")) " : "";
+        $selected_terms .= (isset($term_taxonomy_ids[1])) ? " AND ID in (select object_id from {$wpdb->term_relationships} where term_taxonomy_id in (" . implode(',', $term_taxonomy_ids[1]) . ")) " : "";
+
+        // get the AI selected post ids
+        $ai_post_ids = self::get_ai_suggested_post_ids($post, true);
+
+        //WPML
+        $same_language_posts = array();
+        $multi_lang = false;
+        if ($post->type == 'post') {
+            if (Wpil_Settings::translation_enabled()) {
+                $multi_lang = true;
+                $same_language_posts = Wpil_Post::getSameLanguagePosts($post->id);
+            }
+        }
+
+        $statuses_query = Wpil_Query::postStatuses();
+
+        $related_ids = array();
+        if($post->type === 'post' && !empty(Wpil_Settings::get_suggestion_filter('same_parent'))){
+            $related_ids = Wpil_Toolbox::get_related_post_ids($post);
+        }
+
+        // create the array of posts
+        $posts = array();
+
+        // create the string of excluded posts
+        $excluded_posts = implode(',', $excluded_posts);
+
+        // if the user is age limiting the posts, get the query limit string
+        $age_query = Wpil_Query::getPostDateQueryLimit();
+
+        // and if the user is restricting suggestions from posts created by specific roles
+        $user_role_ignore = Wpil_Query::get_ignore_user_role_suggestions_query();
+
+        // if there are ids to process
+        if(!empty($same_language_posts) && $multi_lang){
+            // if there are related post ids
+            if(!empty($related_ids)){
+                // make sure that we only search for those
+                $same_language_posts = array_intersect($same_language_posts, $related_ids);
+            }
+
+            $same_language_posts = array_intersect($same_language_posts, $ai_post_ids);
+            if(!empty($suggestion_ids)){
+                foreach($same_language_posts as $ind => $id){
+                    $pid = 'post_' . $id;
+                    if(!in_array($pid, $suggestion_ids)){
+                        unset($same_language_posts[$ind]);
+                    }
+                }
+            }
+
+            // chunk the ids to query so we don't ask for too many
+            $id_batches = array_chunk($same_language_posts, 2000);
+            foreach($id_batches as $batch){
+                $include = " AND ID IN (" . implode(', ', $batch) . ") ";
+                $batch_ids = $wpdb->get_col("SELECT `ID` FROM {$wpdb->posts} WHERE post_type IN ('{$post_types}') $statuses_query AND ID NOT IN ({$excluded_posts}) {$age_query} {$user_role_ignore} {$selected_terms} $include ORDER BY ID DESC");
+                
+                if(!empty($batch_ids)){
+                    $posts = array_merge($posts, $batch_ids);
+                }
+            }
+        }elseif(empty($multi_lang)){
+            $related = '';
+            if(!empty($related_ids)){
+                $related = 'AND ID IN (' . implode(',', $related_ids) . ')';
+            }
+
+            $ai_post_ids = 'AND ID IN (' . implode(',', $ai_post_ids) . ')';
+
+            $posts = $wpdb->get_col("SELECT `ID` FROM {$wpdb->posts} WHERE post_type IN ('{$post_types}') $statuses_query AND ID NOT IN ({$excluded_posts}) {$age_query} {$user_role_ignore} {$selected_terms} {$ai_post_ids} {$related} ORDER BY ID DESC");
+        }
+
+        // if there are posts found, remove any duplicate ids and posts hidden by redirects
+        if(!empty($posts)){
+            $redirected = Wpil_Settings::getRedirectedPosts(true); // TODO: Rework this so that posts are only removed if the redirect is hiding hte post. Some simply have updated URLs and the redirect is to accomodate that
+            $post_ids = array();
+            foreach($posts as $ind => $post){
+                // if the user is restricting the suggestions to specific posts
+                if(!empty($suggestion_ids)){
+                    // check if this is one of those posts
+                    $pid = 'post_' . $post;
+                    // if it's not
+                    if(!in_array($pid, $suggestion_ids)){
+                        // skip to the next one
+                        continue;
+                    }
+                }
+
+                // if the post isn't hidden behind a redirect
+                if(!isset($redirected[$post])){
+                    // if we're doing multi-lang suggestions and this is in the language list
+                    if($multi_lang && in_array($post, $same_language_posts)){
+                        // add it to the list of posts to process
+                        $post_ids[$post] = $post;
+                    }elseif(false === $multi_lang){
+                        // if we're not doing multilanguage processing, add the post directly
+                        $post_ids[$post] = $post;
+                    }
+                }
+            }
+
+            $posts = array_values($post_ids);
+        }
+
+        return $posts;
+    }
+
+    /**
+     * Gets the Inbound Suggestable terms for the Inbound Suggestions
+     * 
+     **/
+    public static function get_ai_inbound_suggested_terms($post){
+        global $wpdb;
+
+        $terms = array();
+
+        // if terms are to be scanned, but the user is restricting suggestions by term, don't search for terms to link to. Only search for terms if:
+        if(!empty(Wpil_Settings::getTermTypes()) && // terms have been selected
+            empty(Wpil_Settings::get_suggestion_filter('same_category')) && // we're not restricting by category
+            empty(Wpil_Settings::get_suggestion_filter('same_parent'))) // we're not restricting to the post's family
+        {
+            $ignore_posts = Wpil_Settings::getIgnorePosts();
+            $results = array();
+            $exclude_ids = array();
+
+            if(!empty($ignore_posts)){
+                foreach($ignore_posts as $dat){
+                    if(false !== strpos($dat, 'term_')){
+                        $bits = explode('_', $dat);
+                        if(!empty($bits[1])){
+                            $exclude_ids[] = $bits[1];
+                        }
+                    }
+                }
+            }
+
+            $exclude = "";
+            if(!empty($exclude_ids)){
+                $exclude_ids = implode(',', $exclude_ids);
+                $exclude = " AND t.term_id NOT IN ({$exclude_ids}) ";
+            }
+
+            // get the AI selected post ids
+            $ai_term_ids = self::get_ai_suggested_term_ids($post, true);
+
+            //WPML
+            $same_language_terms = array();
+            $multi_lang = false;
+            $language_ids = "";
+            if ($post->type == 'post' && Wpil_Settings::translation_enabled()) {
+                $multi_lang = true;
+                $same_language_terms = Wpil_Post::getSameLanguageTerms($post->id);
+            }
+
+            if($multi_lang){
+                $language_ids .= " AND t.term_id IN (" . implode(',', $same_language_terms) . ")";
+            }
+
+            $taxonomies = Wpil_Settings::getTermTypes();
+
+            // if there are ids to process
+            if(!empty($same_language_terms) && $multi_lang){
+                $same_language_terms = array_intersect($same_language_terms, $ai_term_ids);
+
+                // chunk the ids to query so we don't ask for too many
+                $id_batches = array_chunk($same_language_terms, 2000);
+                foreach($id_batches as $batch){
+                    $include = " AND t.term_id IN (" . implode(', ', $batch) . ") ";
+                    $batch_ids = $wpdb->get_col("SELECT t.term_id FROM {$wpdb->prefix}term_taxonomy tt LEFT JOIN {$wpdb->prefix}terms t ON tt.term_id = t.term_id WHERE tt.taxonomy IN ('" . implode("', '", $taxonomies) . "') {$include} $exclude");
+
+                    if(!empty($batch_ids)){
+                        $results = array_merge($results, $batch_ids);
+                    }
+                }
+            }elseif(empty($multi_lang)){
+                $ai_term_ids = 'AND t.term_id IN (' . implode(',', $ai_term_ids) . ')';
+                $results = $wpdb->get_col("SELECT t.term_id FROM {$wpdb->prefix}term_taxonomy tt LEFT JOIN {$wpdb->prefix}terms t ON tt.term_id = t.term_id WHERE tt.taxonomy IN ('" . implode("', '", $taxonomies) . "') {$ai_term_ids} {$language_ids} $exclude");
+            }
+
+            foreach ($results as $term_id) {
+                if(!$multi_lang || ($multi_lang && in_array($term_id, $same_language_terms, true)) ){
+                    $terms[$term_id] = $term_id;
+                }
+            }
+
+            // if there are terms found, pull the id values from the list
+            if(!empty($terms)){
+                $terms = array_values($terms);
+            }
+        }
+
+        return $terms;
+    }
+
+    /**
+     * Gets the post ids that AI has identified as being good for suggestions to this post
+     **/
+    public static function get_ai_suggested_post_ids($post, $inbound = false){
+        $ids = array();
+        // if we're doing the AI powered + AI link text method && the user is not searching for a specific keyword
+        if(!Wpil_Settings::get_disable_ai_anchor_building() && (!isset($_REQUEST['keywords']) || empty($_REQUEST['keywords']))){
+            $suggestions = Wpil_Report::get_ai_detected_suggestions($post, $inbound, false, false);
+            if(!empty($suggestions)){
+                foreach($suggestions as $suggestion){
+                    if($suggestion->post_type !== 'post'){
+                        continue;
+                    }
+                    $ids[] = $suggestion->post_id;
+                }
+
+                if(!empty($ids)){
+                    $ids = array_unique($ids);
+                }
+            }
+        }
+        
+        if(empty($ids)){
+            // if we're not, or we can't find any suggestions, just pull the ids that are related based on embeddings
+            // NOTE: this doesn't check each sentence for relatability, it's just running with the post relatedness score
+            // NOTE: since other functions will be doing that work down the line, we don't have to do it here and we can just shortcut the process
+            // NOTE: but it's something to keep in mind
+            
+            $embedding_data = Wpil_AI::get_calculated_embedding_data($post->id, $post->type);
+            if(!empty($embedding_data)){
+                $embedding_data = Wpil_Toolbox::json_decompress($embedding_data->calculation, true);
+                if(!empty($embedding_data)){
+                    foreach($embedding_data as $pid => $dat){
+                        $bits = explode('_', $pid);
+                        if($bits[0] === 'post' && $dat > self::$ai_suggestion_threashold){
+                            $ids[] = $bits[1]; 
+                        }
+                    }
+                }
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Gets the post ids that AI has identified as being good for suggestions to this post
+     **/
+    public static function get_ai_suggested_term_ids($post, $inbound = false){
+        $ids = array();
+        // if we're doing the AI powered + AI link text method
+        if(!Wpil_Settings::get_disable_ai_anchor_building()){
+            $suggestions = Wpil_Report::get_ai_detected_suggestions($post, $inbound, false, false);
+            if(!empty($suggestions)){
+                foreach($suggestions as $suggestion){
+                    if($suggestion->post_type !== 'term'){
+                        continue;
+                    }
+                    $ids[] = $suggestion->post_id;
+                }
+
+                if(!empty($ids)){
+                    $ids = array_unique($ids);
+                }
+            }
+        }else{
+            // if we're not, just pull the ids that are related based on embeddings
+            // NOTE: this doesn't check each sentence for relatability, it's just running with the post relatedness score
+            // NOTE: since other functions will be doing that work down the line, we don't have to do it here and we can just shortcut the process
+            // NOTE: but it's something to keep in mind
+            
+            $embedding_data = Wpil_AI::get_calculated_embedding_data($post->id, $post->type);
+
+            if(!empty($embedding_data)){
+                $embedding_data = Wpil_Toolbox::json_decompress($embedding_data->calculation, true);
+                if(!empty($embedding_data)){
+                    foreach($embedding_data as $pid => $dat){
+                        $bits = explode('_', $pid);
+                        if($bits[0] === 'term' && $dat > self::$ai_suggestion_threashold){
+                            $ids[] = $bits[1]; 
+                        }
+                    }
+                }
+            }
+        }
+
+        return $ids;
+    }
+
+    public static function getKeywordsUrl()
+    {
+        $url = '';
+        if (!empty($_POST['keywords'])) {
+            $url = '&keywords=' . str_replace("\n", ";", $_POST['keywords']);
+        }
+
+        return $url;
     }
 
     /**
@@ -2640,13 +5642,13 @@ class Wpil_Suggestion
      * @param int $process_key The ajax processing key for the current process.
      * @return array $phrases The phrases from the given post
      **/
-    public static function getOutboundPhrases($post, $process_key){
+    public static function getOutboundPhrases($post, $process_key, $full_sentences = false){
         // try getting cached phrase data
         $phrases = get_transient('wpil_processed_phrases_' . $process_key);
 
         // if there aren't any phrases, process them now
         if(empty($phrases)){
-            $phrases = self::getPhrases($post->getContent());
+            $phrases = self::getPhrases($post->getContent(), false, array(), false, array(), $full_sentences);
 
             //divide text to phrases
             foreach ($phrases as $key_phrase => &$phrase) {

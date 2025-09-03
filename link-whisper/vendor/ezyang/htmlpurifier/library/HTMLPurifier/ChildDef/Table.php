@@ -173,6 +173,9 @@ class HTMLPurifier_ChildDef_Table extends HTMLPurifier_ChildDef
             // we have to shuffle tr into tbody
             $current_tr_tbody = null;
             foreach ($content as $node) {
+                if (!isset($node->name)) {
+                    continue;
+                }
                 switch ($node->name) {
                     case 'tbody':
                         $current_tr_tbody = null;

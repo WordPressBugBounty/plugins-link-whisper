@@ -33,6 +33,10 @@
 
     $(document).on('click', '#wpil-get-manual-suggestions', function(e){e.preventDefault(); getSuggestions(true)});
 
+    var globalSuggestionProgressTracker = {
+        errorCount: 0
+    };
+
 	function ajaxGetSuggestionsOutbound($el, url, count, post_count = 0, key = null)
 	{
         // if there isn't a key set, make one
@@ -87,10 +91,11 @@
                 key: key,
             },
             success: function(response){
+                globalSuggestionProgressTracker.errorCount = 0;
                 console.log({response, count});
 
                 if(!isJSON(response)){
-                    response = extractAndValidateJSON(response, ['error', 'info', 'message', 'batch_size', 'post_count']);
+                    response = extractAndValidateJSON(response, ['error', 'info', 'message', 'batch_size', 'post_count', 'finish']);
                 }
 
                 // stop the error clock and hide any visible message
@@ -114,8 +119,9 @@
                 }
 
                 $el.find('.progress_count').html(response.message);
+                var forceFinish = (undefined !== response.finish && response.finish === true);
 
-				if((count * response.batch_size) < response.post_count){
+				if((count * response.batch_size) < response.post_count && !forceFinish){
 					ajaxGetSuggestionsOutbound($el, url, response.count, response.post_count, key);
 				}else{
 					// if we're doing same tag or cat matching, skip the external sites.
@@ -124,6 +130,15 @@
 			},
             error: function(jqXHR, textStatus, errorThrown){
                 console.log({jqXHR, textStatus, errorThrown});
+                globalSuggestionProgressTracker.errorCount++;
+                // if we haven't errored more than 5 times
+                if(globalSuggestionProgressTracker.errorCount < 5){
+                    // go around again after a short wait
+                    setTimeout(function(){
+                        console.log('trying to go around again...');
+                        ajaxGetSuggestionsOutbound($el, url, count, post_count, key);
+                    }, 10000);
+                }
 //				setupProcessingError(true);
             }
         });
@@ -247,7 +262,9 @@
             if(urlParams.wpil_no_preload && '1' === urlParams.wpil_no_preload[0]){
                 var checkAndButton = '<div style="margin-bottom: 30px;">' +
                         '<input style="margin-bottom: -5px;" type="checkbox" name="same_category" id="field_same_category_page" ' + category_checked + '>' +
-                        '<label for="field_same_category_page">Only Show Link Suggestions in the Same Category as This Post</label> <br>' +
+                        '<label for="field_same_category_page">Only Link in This Post\'s Categories</label> <br>' +
+                        '<input style="margin-bottom: -5px;" type="checkbox" name="same_tag" id="field_same_tag_page" ' + tag_checked + '>' +
+                        '<label for="field_same_category_page">Only Suggest Posts with the Same Tags</label> <br>' +
                     '</div>' +
                     '<button id="inbound_suggestions_button" class="sync_linking_keywords_list button-primary" data-id="' + post_id + '" data-type="inbound_suggestions_page_container" data-page="inbound">Custom links</button>';
                 container.html(checkAndButton);
@@ -263,7 +280,7 @@
         }
     });
 
-    $(document).on('change', '#field_link_orphaned, #field_same_parent, #field_same_category, #field_same_tag, #field_select_post_types, select[name="wpil_selected_category"], select[name="wpil_selected_tag"], select[name="selected_post_types"], .wpil-suggestions-can-be-regenerated', function(){
+    $(document).on('change', '#field_link_orphaned, #field_same_parent, #field_same_category, #field_same_tag, #field_select_post_types, select[name="wpil_selected_category"], select[name="wpil_selected_tag"], select[name="selected_post_types"], #wpil_use_ai_suggestions, .wpil-suggestions-can-be-regenerated', function(){
         var inputs = $('.wpil-suggestion-input');
         var changed = false;
         inputs.each(function(index, element){
@@ -298,6 +315,731 @@
 			$('.wpil_styles .' + name + '-aux .select2, .' + name + '-aux').css({'display': 'none'});
 		}
     });
+
+    $(document).on('change', 'input[name="wpil_sitemap_embedding_relatedness_threshold"],input[name="ai_relatedness_threshold"],input[name="wpil_suggestion_relatedness_threshold"]', function(){
+        var level = $(this).val();
+        $(this).parent().find('.wpil-embedding-relatedness-threshold').text((parseFloat((level) * 100).toPrecision(3)) + '%');
+    });
+
+    var aiSuggestionsWait = false;
+    $(document).on('change', '.ai-powered-suggestion-container #wpil_use_ai_suggestions', function(){
+        clearTimeout(aiSuggestionsWait);
+        aiSuggestionsWait = setTimeout(ajaxUpdateAiSuggestionsUse, 200);
+    });
+
+    function ajaxUpdateAiSuggestionsUse(){
+        $.ajax({
+            url: ajaxurl,
+            dataType: 'json',
+            data: {
+                'action': 'wpil_set_use_ai_suggestions',
+                'status': ($('#wpil_use_ai_suggestions').is(':checked') ? 1: 0),
+                'nonce': $('#wpil_use_ai_suggestions').data('nonce')
+            },
+            method: 'post',
+            error: function (jqXHR, textStatus, errorThrown) {
+                var wrapper = document.createElement('div');
+                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                $(wrapper).append(jqXHR.responseText);
+                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+
+                $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
+            },
+            success: function (data) {
+
+            }
+        })
+    }
+    
+    /*
+    $(document).on('change', '#field_same_category_page', function(){
+        var url = document.URL;
+        if ($(this).prop('checked')) {
+            url += "&same_category=true";
+        } else {
+            url = url.replace('/&same_category=true/g', '');
+        }
+
+        location.href = url;
+    });
+*/
+
+    $(document).on('click', '.sync_linking_keywords_list', function (e) {
+        e.preventDefault();
+
+        var page = $(this).data('page');
+        var links = [];
+        var data = [];
+        var button = $(this);
+        var rows = [];
+
+        if(page == 'inbound'){
+            $(this).parents('.tbl-link-reports').find('.wpil-inbound-links').find('[wpil-link-new][type=checkbox]:checked').each(function() {
+                rows.push($(this).closest('tr'));
+                var item = {};
+                item.id = $(this).closest('tr').find('.sentence').data('id');
+                item.type = $(this).closest('tr').find('.sentence').data('type');
+                item.links = [{
+                    'sentence': $(this).closest('tr').find('.sentence').find('[name="sentence"]').val(),
+                    'sentence_with_anchor': $(this).closest('tr').find('.wpil_sentence_with_anchor').html(),
+                    'custom_sentence': $(this).closest('tr').find('input[name="custom_sentence"]').val()
+                }];
+                data.push(item);
+            });
+
+        }else{
+            $(this).closest('div:not(#wpil-inbound-suggestions-head-controls)').find('[wpil-link-new][type=checkbox]:checked').each(function() {
+                rows.push($(this).closest('tr'));
+                if ($(this).closest('tr').find('input[type="radio"]:checked').length) {
+                    var id =  $(this).closest('tr').find('input[type="radio"]:checked').data('id');
+                    var type = $(this).closest('tr').find('input[type="radio"]:checked').data('type');
+                    var custom_link = $(this).closest('tr').find('input[type="radio"]:checked').data('custom');
+                    var post_origin = $(this).closest('tr').find('input[type="radio"]:checked').data('post-origin');
+                    var site_url = $(this).closest('tr').find('input[type="radio"]:checked').data('site-url');
+                } else {
+                    var id =  $(this).closest('tr').find('.suggestion').data('id');
+                    var type =  $(this).closest('tr').find('.suggestion').data('type');
+                    var custom_link =  $(this).closest('tr').find('.suggestion').data('custom');
+                    var post_origin = $(this).closest('tr').find('.suggestion').data('post-origin');
+                    var site_url = $(this).closest('tr').find('.suggestion').data('site-url');
+                }
+
+                links.push({
+                    id: id,
+                    type: type,
+                    custom_link: custom_link,
+                    post_origin: post_origin,
+                    site_url: site_url,
+                    sentence: $(this).closest('div').find('[name="sentence"]').val(),
+                    sentence_with_anchor: $(this).closest('div').find('.wpil_sentence_with_anchor').html(),
+                    custom_sentence: $(this).closest('.sentence').find('input[name="custom_sentence"]').val()
+                });
+            });
+        }
+
+        if (page == 'outbound') {
+            data.push({'links': links});
+        }else{
+            button.addClass('wpil_button_is_active');
+        }
+
+        
+
+        var data_post = {
+            "id": $(this).data('id'),
+            "type": $(this).data('type'),
+            "page": $(this).data('page'),
+            "action": 'wpil_save_linking_references',
+            'data': data,
+            'gutenberg' : $('.block-editor-page').length ? true : false
+        };
+
+        // if we're inserting links on the Links Report
+        if($('.linkingstats').length > 0){
+            data_post['from_links_report'] = 1;
+            $('.wpil-activity-panel .wpil-activity-panel-suggestions').addClass('ajax_loader');
+        }else{
+            $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').not('.linkingstats').addClass('ajax_loader');
+        }
+
+        $.ajax({
+            url: ajaxurl,
+            dataType: 'json',
+            data: data_post,
+            method: 'post',
+            error: function (jqXHR, textStatus, errorThrown) {
+                var wrapper = document.createElement('div');
+                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                $(wrapper).append(jqXHR.responseText);
+                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+
+                $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
+            },
+            success: function (data) {
+
+                if(!isJSON(data)){
+                    data = extractAndValidateJSON(data, ['err_msg', 'further_processing', 'data']);
+                }
+
+                if (data.err_msg) {
+                    wpil_swal('Error', data.err_msg, 'error');
+                    button.removeClass('wpil_button_is_active');
+                    $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
+                } else if(undefined != data.further_processing && data.further_processing){
+                    continueInsertingInboundLinks(button, data.data);
+                }else {
+                    if (page == 'outbound') {
+                        if ($('.editor-post-save-draft').length) {
+                            $('.editor-post-save-draft').click();
+                        } else if ($('#save-post').length) {
+                            $('#save-post').click();
+                        } else if ($('.editor-post-publish-button').length) {
+                            $('.editor-post-publish-button').click();
+                        } else if ($('#publish').length) {
+                            $('#publish').click();
+                        } else if ($('.edit-tag-actions').length) {
+                            $('.edit-tag-actions input[type="submit"]').click();
+                        }
+
+                        // set the flag so we know that the editor needs to be reloaded
+                        reloadGutenberg = true;
+                    } else {
+                        location.reload();
+                    }
+
+                    for(var i in rows){
+                        $(rows[i]).fadeOut(300, function(){ $(this).remove(); });
+                    }
+
+                    button.removeClass('wpil_button_is_active');
+                    $('.ajax_loader').removeClass('ajax_loader');
+                }
+            }
+        })
+    });
+
+    function continueInsertingInboundLinks(button, data){
+        if(!button || !data){
+            return;
+        }
+
+        // go over all the datas that have been given to us and remove any Inbound Internal Suggestion Rows that are checked and not on the list
+        $('.chk-keywords:checked').each(function(index, element){
+            var row = $(element).parents('tr.wpil-inbound-sentence');
+            var postData = row.find('div.suggestion');
+
+            if(postData.length > 0){
+                var type = postData.data('type'); // saving sanity
+                var id = postData.data('id');
+
+                if(undefined != data[type] && undefined == data[type][id]){
+                    row.fadeOut(300, function(){ $(this).remove(); });
+                }
+            }
+        });
+
+        var ajaxData = {
+            "action": 'wpil_continue_inbound_saving_process',
+            "target_id": button.data('id'),
+            "target_type": button.data('type'),
+            'data': data
+        };
+
+        $.ajax({
+            url: ajaxurl,
+            dataType: 'json',
+            data: ajaxData,
+            method: 'post',
+            error: function (jqXHR, textStatus, errorThrown) {
+                var wrapper = document.createElement('div');
+                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                $(wrapper).append(jqXHR.responseText);
+                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+
+                $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
+            },
+            success: function (response) {
+                if(!isJSON(response)){
+                    response = extractAndValidateJSON(response, ['err_msg', 'further_processing', 'data']);
+                }
+
+                if (response.err_msg) {
+                    wpil_swal('Error', response.err_msg, 'error');
+                    button.removeClass('wpil_button_is_active');
+                    $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
+                } else if(undefined != response.further_processing && response.further_processing){
+                    continueInsertingInboundLinks(button, response.data);
+                } else{
+                    button.removeClass('wpil_button_is_active');
+                    $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
+                    location.reload();
+                }
+            }
+        })
+    }
+
+    $(document).on('change', '#suggestion_filter_field', filterSuggestionsWaiter);
+    $(document).on('keyup', '#suggestion_filter_field', filterSuggestionsWaiter);
+
+    var filterSuggestionsWait = false;
+    function filterSuggestionsWaiter(){
+        clearTimeout(filterSuggestionsWait);
+        filterSuggestionsWait = setTimeout(filterSuggestions, 500);
+    }
+
+    var filteringSuggestions = false;
+    function filterSuggestions(){
+        var keywords = $('#suggestion_filter_field').val();
+        var inbound = ($('.wpil-inbound-links').length > 0) ? true: false;
+
+        // exit if the suggestion table isn't currently being filtered for keywords and there are no keywords
+        if(!filteringSuggestions && '' === keywords){
+            return;
+        }
+
+        filteringSuggestions = true;
+
+        // close any open editors
+        var editors = $('[id^="wp-wpil_editor"][id$="-wrap"]');
+        editors.each(function(index, element){
+            var block = $(element).closest('.sentence');
+            if(block.length > 0){
+                wpil_editor_remove(block);
+            }
+        });
+
+        // if there are no keywords, show all suggestions and close the dropdowns
+        if(keywords === '' || keywords.trim() === ''){
+            $('.wpil-active').removeClass('wpil-active');
+            $('.hidden-suggestion').removeClass('hidden-suggestion');
+            $('.wpil-content').css({'display':'none'});
+            filteringSuggestions = false;
+            return;
+        }else if(keywords.length > 0){
+            keywords = keywords.trim().toLowerCase().split("\n");
+        }
+
+        // go over each suggestion
+        $('.wpil-inbound-links tr:not(.wpil-suggestion-table-heading), .wpil-outbound-links tr:not(.wpil-suggestion-table-heading)').each(function(index, element){
+            var wrapper = $(element).find('.wpil-collapsible-wrapper');
+            var visibleCount = 0;
+
+            // if the suggested post has a dropdown selector
+            if(wrapper.length > 0){
+                // go over each suggestion and hide the ones without the filter words
+                $(element).find('.wpil-content li').each(function(index, element2){
+                    if(inbound){
+                        var text = $(element2).find('.wpil_sentence_with_anchor').text().trim().toLowerCase();
+                    }else{
+                        var text = $(element2).find('.suggested-post-title').text().trim().toLowerCase();
+                    }
+                    var hasKeyword = false;
+                    var hasNegativeKeyword = false;
+                    var doingKeywordSearch = false;
+                    var doingNegativeMatch = false;
+    
+                    for(var i in keywords){
+                        // check if the a negative char is used
+                        var negativeMatch = keywords[i].length > 1 && keywords[i].charAt(0) === '-';
+    
+                        if(!hasKeyword && false === negativeMatch && -1 !== text.indexOf(keywords[i])){ // if the suggestion has the keyword somewhere
+                            hasKeyword = true;
+                        }else if(!hasNegativeKeyword && true === negativeMatch && -1 !== text.indexOf(keywords[i].slice(1))){ // if the suggestion has a keyword the user doesn't want
+                            hasNegativeKeyword = true;
+                        }
+    
+                        if(negativeMatch){
+                            doingNegativeMatch = true;
+                        }else{
+                            doingKeywordSearch = true;
+                        }
+                    }
+    
+                    if(	(!hasKeyword && !doingNegativeMatch) || 
+                        (hasNegativeKeyword) || 
+                        (doingKeywordSearch && doingNegativeMatch && !hasNegativeKeyword && !hasKeyword))
+                    {
+                        $(element2).addClass('hidden-suggestion');
+                    }else{
+                        $(element2).removeClass('hidden-suggestion');
+                        visibleCount++;
+                    }
+                });
+
+                var containers = $(element).find('.wpil-collapsible-wrapper, .wpil-collapsible');
+                if(visibleCount === 0){
+                    if($(containers[0]).hasClass('wpil-active')){ $(containers[0]).removeClass('wpil-active'); }
+                    if($(containers[1]).hasClass('wpil-active')){ $(containers[1]).removeClass('wpil-active'); }
+                    $(element).find('.wpil-content').css({'display':'none'});
+                    $(element).addClass('hidden-suggestion');
+                }else{
+                    if(!$(containers[0]).hasClass('wpil-active')){ $(containers[0]).addClass('wpil-active'); }
+                    if(!$(containers[1]).hasClass('wpil-active')){ $(containers[1]).addClass('wpil-active'); }
+                    $(element).removeClass('hidden-suggestion');
+                    $(element).find('.wpil-content').css({'display':'block'});
+
+                    // select the top sentence and set it to be the top_level_sentence
+                    if(!$(element).find('.chk-keywords').is(':checked')){
+                        var firstVisible = $(element).find('.wpil-content li:not(.hidden-suggestion) input').first();
+                        var id = $(firstVisible).data('id');
+                        var data = $(firstVisible).closest('li').find('.data').html();
+
+                        if(inbound){
+                            $(firstVisible).closest('ul').find('input').prop('checked', false);
+                            $(firstVisible).prop('checked', true);
+                            $(firstVisible).closest('.wpil-collapsible-wrapper').find('.sentence').html(data + '<span class="wpil_edit_sentence">| <a href="javascript:void(0)">Edit Sentence</a></span>');
+                            $(firstVisible).closest('tr').find('input[type="checkbox"]').prop('checked', false);
+                            $(firstVisible).closest('tr').find('.raw_html').hide();
+                            $(firstVisible).closest('tr').find('.raw_html[data-id="' + id + '"]').show();
+                        }else{
+                            var type = $(firstVisible).data('type');
+                            var suggestion = $(firstVisible).data('suggestion');
+                            var origin = $(firstVisible).data('post-origin');
+                            var siteUrl = $(firstVisible).data('site-url');
+
+                            $(firstVisible).closest('ul').find('input').prop('checked', false);
+
+                            $(firstVisible).prop('checked', true);
+                            $(firstVisible).closest('.wpil-collapsible-wrapper').find('.wpil-collapsible-static').html('<div data-id="' + id + '" data-type="' + type + '" data-post-origin="' + origin + '" data-site-url="' + siteUrl + '">' + data + '<span class="add_custom_link_button link-form-button"> | <a href="javascript:void(0)"><span class="dashicons dashicons-edit"></span></a></span><span class="wpil_add_link_to_ignore link-form-button"> | <a href="javascript:void(0)">Ignore Suggested Page</a></span></div>');
+                            $(firstVisible).closest('tr').find('input[type="checkbox"]').prop('checked', false);
+                            $(firstVisible).closest('tr').find('input[type="checkbox"]').val(suggestion + ',' + id);
+
+                            if (!$(firstVisible).closest('tr').find('input[data-wpil-custom-anchor]').length && $(firstVisible).closest('tr').find('.sentence[data-id="'+id+'"][data-type="'+type+'"]').length) {
+                                $(firstVisible).closest('tr').find('.sentences > div').hide();
+                                $(firstVisible).closest('tr').find('.sentence[data-id="'+id+'"][data-type="'+type+'"]').show();
+                            }
+                        };
+                    }
+                }
+            }else{
+                if(inbound){
+                    var text = $(element).find('.wpil_sentence_with_anchor').text().trim().toLowerCase();
+                }else{
+                    var text = $(element).find('.suggested-post-title').text().trim().toLowerCase();
+                }
+                var hasKeyword = false;
+                var hasNegativeKeyword = false;
+                var doingKeywordSearch = false;
+                var doingNegativeMatch = false;
+
+                for(var i in keywords){
+                    // check if the a negative char is used
+                    var negativeMatch = keywords[i].length > 1 && keywords[i].charAt(0) === '-';
+
+                    if(!hasKeyword && false === negativeMatch && -1 !== text.indexOf(keywords[i])){ // if the suggestion has the keyword somewhere
+                        hasKeyword = true;
+                    }else if(!hasNegativeKeyword && true === negativeMatch && -1 !== text.indexOf(keywords[i].slice(1))){ // if the suggestion has a keyword the user doesn't want
+                        hasNegativeKeyword = true;
+                    }
+
+                    if(negativeMatch){
+                        doingNegativeMatch = true;
+                    }else{
+                        doingKeywordSearch = true;
+                    }
+                }
+
+                if(	(!hasKeyword && !doingNegativeMatch) || 
+                    (hasNegativeKeyword) || 
+                    (doingKeywordSearch && doingNegativeMatch && !hasNegativeKeyword && !hasKeyword))
+                {
+                    $(element).addClass('hidden-suggestion');
+                }else{
+                    $(element).removeClass('hidden-suggestion');
+                }
+            }
+        });
+    }
+
+    $(document).on('change', '#field_ai_relatedness_threshold', filterSuggestionsAiRelatedWaiter);
+    $(document).on('keyup', '#field_ai_relatedness_threshold', filterSuggestionsAiRelatedWaiter);
+
+    var filterSuggestionsAiRelatedWait = false;
+    function filterSuggestionsAiRelatedWaiter(){
+        clearTimeout(filterSuggestionsAiRelatedWait);
+        filterSuggestionsAiRelatedWait = setTimeout(filterSuggestionsAiRelated, 500);
+    }
+
+    var filteringSuggestions = false;
+    function filterSuggestionsAiRelated(){
+        var relatedness = $('#field_ai_relatedness_threshold').val();
+        var inbound = ($('.wpil-inbound-links').length > 0) ? true: false;
+        var initial = $('#field_ai_relatedness_threshold').data('suggestion-input-initial-value');
+
+        if(inbound){
+            var sortType = 'ai_post_relatedness_score'; // TODO: Add sentence based sorting when we have that working
+            //var sortType = 'ai_relatedness_score';
+        }else{
+            var sortType = ($('#wpil-outbound-suggestions-sorting-select').val() === 'wpil-ai-post-relatedness-score') ? 'wpil-ai-post-relatedness-score': 'wpil-ai-sentence-relatedness-score';
+            //var sortType = 'wpil-ai-relatedness-score'; // TODO: 
+        }
+
+        // exit if the suggestion table isn't currently being filtered for keywords and there are no keywords
+        if(!filteringSuggestions && '0' === relatedness){
+            return;
+        }
+
+        filteringSuggestions = true;
+
+        // close any open editors
+        var editors = $('[id^="wp-wpil_editor"][id$="-wrap"]');
+        editors.each(function(index, element){
+            var block = $(element).closest('.sentence');
+            if(block.length > 0){
+                wpil_editor_remove(block);
+            }
+        });
+
+        // if there are no keywords, show all suggestions and close the dropdowns
+        if(relatedness === '0' || initial == relatedness){
+            $('.wpil-active').removeClass('wpil-active');
+            $('.hidden-suggestion').removeClass('hidden-suggestion');
+            $('.wpil-content').css({'display':'none'});
+            filteringSuggestions = false;
+            return;
+        }
+
+        // go over each suggestion
+        $('.wpil-inbound-links tr:not(.wpil-suggestion-table-heading), .wpil-outbound-links tr:not(.wpil-suggestion-table-heading)').each(function(index, element){
+            var wrapper = $(element).find('.wpil-collapsible-wrapper');
+            var visibleCount = 0;
+
+            // if the suggested post has a dropdown selector
+            if(wrapper.length > 0){
+                // go over each suggestion and hide the ones that aren't related enough
+                $(element).find('.wpil-content li').each(function(index, element2){
+                    if(inbound){
+                        var elementRelatedness = $(element2).find('[name="' + sortType + '"]').val();
+                    }else{
+                        var elementRelatedness = $(element2).data(sortType);
+                    }
+    
+                    if(elementRelatedness < relatedness)
+                    {
+                        $(element2).addClass('hidden-suggestion');
+                    }else{
+                        $(element2).removeClass('hidden-suggestion');
+                        visibleCount++;
+                    }
+                });
+
+                var containers = $(element).find('.wpil-collapsible-wrapper, .wpil-collapsible');
+                if(visibleCount === 0){
+                    if($(containers[0]).hasClass('wpil-active')){ $(containers[0]).removeClass('wpil-active'); }
+                    if($(containers[1]).hasClass('wpil-active')){ $(containers[1]).removeClass('wpil-active'); }
+                    $(element).find('.wpil-content').css({'display':'none'});
+                    $(element).addClass('hidden-suggestion');
+                }else{
+                    if(!$(containers[0]).hasClass('wpil-active')){ $(containers[0]).addClass('wpil-active'); }
+                    if(!$(containers[1]).hasClass('wpil-active')){ $(containers[1]).addClass('wpil-active'); }
+                    $(element).removeClass('hidden-suggestion');
+                    $(element).find('.wpil-content').css({'display':'block'});
+
+                    // select the top sentence and set it to be the top_level_sentence
+                    if(!$(element).find('.chk-keywords').is(':checked')){
+                        var firstVisible = $(element).find('.wpil-content li:not(.hidden-suggestion) input').first();
+                        var id = $(firstVisible).data('id');
+                        var data = $(firstVisible).closest('li').find('.data').html();
+
+                        if(inbound){
+                            $(firstVisible).closest('ul').find('input').prop('checked', false);
+                            $(firstVisible).prop('checked', true);
+                            $(firstVisible).closest('.wpil-collapsible-wrapper').find('.sentence').html(data + '<span class="wpil_edit_sentence">| <a href="javascript:void(0)">Edit Sentence</a></span>');
+                            $(firstVisible).closest('tr').find('input[type="checkbox"]').prop('checked', false);
+                            $(firstVisible).closest('tr').find('.raw_html').hide();
+                            $(firstVisible).closest('tr').find('.raw_html[data-id="' + id + '"]').show();
+                        }else{
+                            var type = $(firstVisible).data('type');
+                            var suggestion = $(firstVisible).data('suggestion');
+                            var origin = $(firstVisible).data('post-origin');
+                            var siteUrl = $(firstVisible).data('site-url');
+
+                            $(firstVisible).closest('ul').find('input').prop('checked', false);
+
+                            $(firstVisible).prop('checked', true);
+                            $(firstVisible).closest('.wpil-collapsible-wrapper').find('.wpil-collapsible-static').html('<div data-id="' + id + '" data-type="' + type + '" data-post-origin="' + origin + '" data-site-url="' + siteUrl + '">' + data + '<span class="add_custom_link_button link-form-button"> | <a href="javascript:void(0)"><span class="dashicons dashicons-edit"></span></a></span><span class="wpil_add_link_to_ignore link-form-button"> | <a href="javascript:void(0)">Ignore Suggested Page</a></span></div>');
+                            $(firstVisible).closest('tr').find('input[type="checkbox"]').prop('checked', false);
+                            $(firstVisible).closest('tr').find('input[type="checkbox"]').val(suggestion + ',' + id);
+
+                            if (!$(firstVisible).closest('tr').find('input[data-wpil-custom-anchor]').length && $(firstVisible).closest('tr').find('.sentence[data-id="'+id+'"][data-type="'+type+'"]').length) {
+                                $(firstVisible).closest('tr').find('.sentences > div').hide();
+                                $(firstVisible).closest('tr').find('.sentence[data-id="'+id+'"][data-type="'+type+'"]').show();
+                            }
+                        };
+                    }
+                }
+            }else{
+                if(inbound){
+                    var elementRelatedness = $(element).find('[name="' + sortType + '"]').val();
+                }else{
+                    var elementRelatedness = $(element).find('.dated-outbound-suggestion').data(sortType);
+                }
+
+                if(elementRelatedness < relatedness)
+                {
+                    $(element).addClass('hidden-suggestion');
+                }else{
+                    $(element).removeClass('hidden-suggestion');
+                }
+            }
+        });
+    }
+
+    /** Related Posts Widget Controls */
+    $(document).on('keyup', '#link-whisper-related-posts-search', searchForRelatedPosts);
+    var relatedPostSearchWait;
+    function searchForRelatedPosts(e){
+        clearTimeout(relatedPostSearchWait);
+        var search = $(e.target).val();
+        if(search.length > 3){
+            relatedPostSearchWait = setTimeout(function(){
+                ajaxSearchRelatedPosts();
+            }, 750);
+        }else{
+            $('#link-whisper-related-posts-search-results').empty();
+            $('#link-whisper-related-posts-add-posts, #link-whisper-related-posts-search-results-title').css({'display': 'none'});
+            $('#link-whisper-related-posts-search-container').removeClass('searching');
+        }
+    }
+
+    /**
+     * Makes the request for posts and updates the related post metabox with the results
+     **/
+    function ajaxSearchRelatedPosts(){
+        var search = $('#link-whisper-related-posts-search').val(),
+            selected = $('#link-whisper-related-posts-link-list .link-whisper-related-posts-item input:checked'),
+            selectedIds = [],
+            nonce = $('#link-whisper-related-posts-nonce').val();
+
+        // hide the "add posts" button when we start searching
+        $('#link-whisper-related-posts-add-posts, #link-whisper-related-posts-search-results-title').css({'display': 'none'});
+        // show the loader
+        $('#link-whisper-related-posts-search-container').addClass('searching');
+
+        selected.each(function(index, element){
+            selectedIds.push($(element).data('post-id'));
+        });
+
+        jQuery.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            data: {
+                action: 'wpil_search_related_posts',
+                search: search,
+                selected_ids: selectedIds,
+                nonce: nonce,
+            },
+            error: function (jqXHR, textStatus) {
+                var wrapper = document.createElement('div');
+                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                $(wrapper).append(jqXHR.responseText);
+                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"}).then(wpil_report_next_step());
+            },
+            success: function(response){
+
+                if(!isJSON(response)){
+                    response = extractAndValidateJSON(response, ['success', 'error']);
+                }
+
+                // if there was an error
+                if(response.error){
+                    wpil_swal(response.error.title, response.error.text, 'error');
+                    return;
+                }
+                
+                if(response.success){
+                    $('#link-whisper-related-posts-search-results').empty().html(response.success.content);
+                    if(response.success.found > 0){
+                        $('#link-whisper-related-posts-add-posts, #link-whisper-related-posts-search-results-title').css({'display': 'block'});
+                    }else{
+                        $('#link-whisper-related-posts-add-posts, #link-whisper-related-posts-search-results-title').css({'display': 'none'});
+                    }
+                }
+            },
+            complete: function(){
+                // hide the loading animation when the search is ended
+                $('#link-whisper-related-posts-search-container').removeClass('searching');
+            }
+        });
+    }
+
+    $(document).on('click', '#link-whisper-related-posts-add-posts', addSelectedRelatedPosts);
+    function addSelectedRelatedPosts(){
+        var related = $('#link-whisper-related-posts-search-results-container .link-whisper-related-posts-item input:checked').parents('li');
+        if(related.length < 1){
+            return;
+        }
+
+        $('#link-whisper-related-posts-link-list').append(related.detach());
+        $('#link-whisper-related-posts-add-posts').addClass('disabled');
+        activateSaveRelatedPostsButton();
+    }
+
+    $(document).on('change', '#link-whisper-related-posts-enable', toggleRelatedPostsActive);
+    function toggleRelatedPostsActive(e){
+        if($(e.target).is(':checked')){
+            $('#link-whisper-related-posts-content-container').removeClass('wpil-section-disabled').removeClass('hidden');
+            $('.wpil-related-posts-enable-helptext.unchecked').addClass('hidden');
+            $('.wpil-related-posts-enable-helptext.checked').removeClass('hidden');
+        }else{
+            $('#link-whisper-related-posts-content-container').addClass('wpil-section-disabled');
+            $('.wpil-related-posts-enable-helptext.checked').addClass('hidden');
+            $('.wpil-related-posts-enable-helptext.unchecked').removeClass('hidden');
+        }
+
+        activateSaveRelatedPostsButton();
+    }
+
+    $(document).on('change', '#link-whisper-related-posts-search-results input:checked', toggleAddItemButton);
+    function toggleAddItemButton(){
+        var items = $('#link-whisper-related-posts-search-results input:checked');
+        if(items.length > 0){
+            $('#link-whisper-related-posts-add-posts').removeClass('disabled');
+        }else{
+            $('#link-whisper-related-posts-add-posts').addClass('disabled');
+        }
+    }
+
+    $(document).on('change', '#link-whisper-related-posts-link-list input', activateSaveRelatedPostsButton);
+    function activateSaveRelatedPostsButton(){
+        $('#link-whisper-related-posts-save').removeClass('disabled');
+    }
+
+    function disableSaveRelatedPostsButton(){
+        $('#link-whisper-related-posts-save').addClass('disabled');
+    }
+
+    $(document).on('click', '#link-whisper-related-posts-save', saveSelectedRelatedPosts);
+    function saveSelectedRelatedPosts(){
+        var	active = $('#link-whisper-related-posts-enable').is(':checked'),
+            selected = $('#link-whisper-related-posts-link-list .link-whisper-related-posts-item input:checked'),
+            selectedIds = [],
+            postId = $('#link-whisper-related-posts-current-post').val(),
+            nonce = $('#link-whisper-related-posts-nonce').val();
+
+        selected.each(function(index, element){
+            selectedIds.push($(element).data('post-id'));
+        });
+
+        jQuery.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            data: {
+                action: 'wpil_save_related_posts',
+                active: active,
+                post_id: postId,
+                selected_ids: selectedIds,
+                nonce: nonce,
+            },
+            error: function (jqXHR, textStatus) {
+                var wrapper = document.createElement('div');
+                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                $(wrapper).append(jqXHR.responseText);
+                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"}).then(wpil_report_next_step());
+            },
+            success: function(response){
+                if(!isJSON(response)){
+                    response = extractAndValidateJSON(response, ['error']);
+                }
+
+                // if there was an error
+                if(response.error){
+                    wpil_swal(response.error.title, response.error.text, 'error');
+                    return;
+                }
+
+                // remove any unchecked posts from the Related Posts box
+                $('#link-whisper-related-posts-link-list .link-whisper-related-posts-item input').not(':checked').parents('li.link-whisper-related-posts-item').remove();
+                // deactivate the save button
+                disableSaveRelatedPostsButton();
+            }
+        });
+    }
+
+
+
+    /** /Related Posts Widget Controls */
+
 
     function stristr(haystack, needle, bool)
     {
@@ -707,6 +1449,10 @@
                     }
                 };
 
+                if(el.data('wpilTooltipPlacement')){
+                    args['placement'] = el.data('wpilTooltipPlacement');
+                }
+
                 if(el.data('wpilTooltipInteractive')){
                     args['interactive'] = true;
                 }
@@ -723,10 +1469,18 @@
                     args['theme'] = el.data('wpilTooltipTheme');
                 }
 
-                tippy(element, args);
+                var tip = tippy(element, args);
+
+                if(el.data('wpilShowAfterDelay')){
+                    setTimeout(function(){
+                        tip.show();
+                    }, el.data('wpilShowAfterDelay') * 1000);
+                    
+                }
             }
         });
     }
+    $(document).on('click', '#wpil-tippy-tooltip-target', runStandardTippy);
 
     $(document).on('click', '.wpil-collapsible', function (e) {
         if ($(this).hasClass('wpil-no-action') ||
@@ -738,9 +1492,12 @@
             $(e.target).parents('.add_custom_link').length || 
             $(this).find('.custom-link-wrapper').length > 0 || 
             $(this).find('.wp-editor-wrap').length > 0 ||
-			$(e.target).hasClass('wpil-reload-sentence-with-anchor') ||
-			$(e.target).hasClass('button-primary') ||
-			$(e.target).hasClass('button-secondary')
+            $(e.target).hasClass('wpil-reload-sentence-with-anchor') ||
+            $(e.target).hasClass('button-primary') ||
+            $(e.target).hasClass('button-secondary') ||
+            $(e.target).parent().hasClass('wpil_edit_sentence') ||
+            $(e.target).parents('a').hasClass('add-internal-links') ||
+            $(e.target).parents('a').hasClass('add-outbound-internal-links')
         ) 
         {
             return;
@@ -768,6 +1525,9 @@
                 $(this).closest('tr').find('td .wpil-collapsible').removeClass('wpil-active');
                 $(this).closest('tr').find('td .wpil-collapsible-wrapper').removeClass('wpil-active');
                 $(this).closest('tr').find('td .wpil-collapsible-wrapper').find('.wpil-content').hide();
+                if(!$(this).parents('.wpil-collapsible-wrapper').hasClass('wpil-secondary-collapsible')){
+                    $(this).closest('tr').find('.wpil-quick-links-button').removeClass('wpil-active');
+                }
             }
             $el.addClass(cl_active);
             wrapper.addClass(cl_active);
@@ -1208,6 +1968,1385 @@
 		});
 	});
 
+    /**
+     * Asks the user if they want to consign multiple posts to the trash when they click the bulk "Trash Post" button
+     **/
+    $(document).on('click', '#wpil_links_trash_selected', function () {
+        if($('.tbl-link-reports #the-list .checkall input.wpil-report-post-checkbox:checked').length < 1){
+            return;
+        }
+
+        if ((wpil_ajax.dismissed_popups && wpil_ajax.dismissed_popups['link_report_trash_post'] !== 1)) {
+            var popupWrapper = document.createElement('div');
+            $(popupWrapper).append('Please confirm that you want to put these pages in the trash. This will remove them from your site and put it in the trash, not just remove them from the report. <br><br> <input type="checkbox" id="wpil-perma-dismiss-popup" data-wpil-popup-name="link_report_trash_post"><span style="font-size: 12px;">(Don\'t show this again)</span>');
+            wpil_swal({
+                'title': 'Notice:', 
+                content: popupWrapper, 
+                'icon': 'info',
+                buttons: {
+                    cancel: true,
+                    confirm: true,
+                }
+            }).then((trash) => {
+                if (trash) {
+                    $('.tbl-link-reports #the-list .checkall input.wpil-report-post-checkbox:checked').each(function () {
+                        var parent = $(this).parents('tr'),
+                            trashLink = parent.find('.wpil-trash-post-link').attr('href');
+                        parent.css({'opacity': 0.4});
+                        $.post(trashLink, function(){
+                            parent.fadeOut(300);
+                        });
+                    });
+                }
+
+                var checkbox = $('#wpil-perma-dismiss-popup');
+                if(checkbox.is(':checked') && wpil_ajax.dismiss_popup_nonce){
+                    $.ajax({
+                        type: 'POST',
+                        url: ajaxurl,
+                        data: {
+                            action: 'wpil_dismiss_popup_notice',
+                            popup_name: checkbox.data('wpil-popup-name'),
+                            nonce: wpil_ajax.dismiss_popup_nonce,
+                        },
+                        complete: function (data) {
+                            console.log('ignoring complete!');
+                            wpil_ajax.dismissed_popups['link_report_trash_post'] = 1;
+                        }
+                    })
+                }
+            });
+        }else{
+            $('.tbl-link-reports #the-list .checkall input.wpil-report-post-checkbox:checked').each(function () {
+                var parent = $(this).parents('tr'),
+                    trashLink = parent.find('.wpil-trash-post-link').attr('href');
+                parent.css({'opacity': 0.4});
+                $.post(trashLink, function(){
+                    parent.fadeOut(300);
+                });
+            });
+        }
+    });
+
+    //ignore link in error reports 
+    $(document).on('click', '.wpil_ignore_link', function () {
+        var el = $(this);
+        var parent = el.parents('.column-url');
+        var data = {
+            url: el.data('url'),
+            anchor: el.data('anchor'),
+            post_id: el.data('post_id'),
+            post_type: el.data('post_type'),
+            link_id: typeof el.data('link_id') !== 'undefined' ? el.data('link_id') : ''
+        };
+
+        if (el.hasClass('wpil_ignore_link')) {
+            var rowParent = $('td.checkbox [data-broken-link-id="' + data.link_id + '"]').closest('tr');
+        } else {
+            var rowParent = el.closest('li');
+        }
+
+        parent.html('<div style="margin-left: calc(50% - 16px);" class="la-ball-clip-rotate la-md"><div></div></div>');
+
+        $.post('admin.php?page=link_whisper&type=ignore_link', data, function(){
+            rowParent.fadeOut(300);
+        });
+    });
+
+    $(document).on('click', '.wpil-action-panel-button.wpil_edit_link', function (e) {
+        e.preventDefault();
+        var links = [$(this).data('broken-link-id')];
+
+        $('.wpil-activity-panel').empty();
+        closeActionPanel();
+        animateActivityPanel($(this).data('activity-panel-title'));
+
+        $.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            data: {
+                links: links, 
+                action: 'wpil_get_edit_error_links',
+                nonce: $(this).data('nonce')
+            },
+            error: function (jqXHR, textStatus) {
+                var wrapper = document.createElement('div');
+                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                $(wrapper).append(jqXHR.responseText);
+                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"}).then(wpil_report_next_step());
+            },
+            success: function (response) {
+                if(!isJSON(response)){
+                    response = extractAndValidateJSON(response, ['error', 'success']);
+                }
+
+                if (response.error) {
+                    wpil_swal(response.error.title, response.error.text, 'error');
+                } else if (response.success) {
+                    $('.wpil-activity-panel').empty().append(response.success.table);
+                }
+            }
+        });
+    });
+
+    $(document).on('click', '.wpil_stop_ignore_link', function () {
+        var el = $(this);
+        var parent = el.parents('.column-url');
+        var data = {
+            url: el.data('url'),
+            anchor: el.data('anchor'),
+            post_id: el.data('post_id'),
+            post_type: el.data('post_type'),
+            link_id: typeof el.data('link_id') !== 'undefined' ? el.data('link_id') : ''
+        };
+
+        if (el.hasClass('wpil_stop_ignore_link')) {
+            var rowParent = $('td.checkbox [data-broken-link-id="' + data.link_id + '"]').closest('tr');
+        } else {
+            var rowParent = el.closest('li');
+        }
+
+        parent.html('<div style="margin-left: calc(50% - 16px);" class="la-ball-clip-rotate la-md"><div></div></div>');
+
+        $.post('admin.php?page=link_whisper&type=stop_ignore_link', data, function(){
+            rowParent.fadeOut(300);
+        });
+    });
+
+    function getReportPage(){
+        if($('#report_domains').length > 0){
+            return 'domain_report';
+        }else if ($('.tbl-link-reports').length > 0){
+            return 'link_report';
+        }else if ($('#report_clicks').length > 0){
+            return 'click_report';
+        }else if ($('#report_sitemaps').length > 0){
+            return 'sitemap_report';
+        }else if ($('#report_error').length > 0){
+            return 'error_report';
+        }else{
+            return 'unknown_report';
+        }
+    }
+
+    // ignore an orphaned post from the link report
+    $(document).on('click', '.wpil-ignore-orphaned-post', function (e) {
+        e.preventDefault();
+        var el = $(this);
+
+        if (confirm("Are you sure you want to ignore this post on the Orphaned Posts view? It will still be visible on the Internal Links Report and you can re-add the post to the Orphaned Posts from the settings.")) {
+            var el = $(this);
+            var data = {
+                action: 'wpil_ignore_orphaned_post',
+                post_id: el.data('post-id'),
+                type: el.data('type'),
+                nonce: el.data('nonce')
+            };
+            jQuery.ajax({
+                type: 'POST',
+                url: ajaxurl,
+                dataType: 'json',
+                data: data,
+                error: function (jqXHR, textStatus, errorThrown) {
+                    var wrapper = document.createElement('div');
+                    $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                    $(wrapper).append(jqXHR.responseText);
+                    wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+                },
+                success: function(response){
+
+                    if(!isJSON(response)){
+                        response = extractAndValidateJSON(response, ['error', 'success']);
+                    }
+
+                    if(response.success){
+                        if (el.hasClass('wpil-ignore-orphaned-post')) {
+                            el.closest('tr').fadeOut(300);
+                        } else {
+                            el.closest('li').fadeOut(300);
+                        }
+                    }else if(response.error){
+                        wpil_swal(response.error.title, response.error.text, 'error');
+                    }
+                }
+            });
+        }
+    });
+
+    $(document).ready(function(){
+        runStandardTippy();
+        var saving = false;
+
+        if (typeof wp.data != 'undefined' && typeof wp.data.select('core/editor') != 'undefined') {
+            wp.data.subscribe(function () {
+                if (document.body.classList.contains( 'block-editor-page' ) && !saving && reloadGutenberg) {
+                    saving = true;
+                    setTimeout(function(){
+                        $.post( ajaxurl, {action: 'wpil_editor_reload', post_id: $('#post_ID').val()}, function(data) {
+                            if (data == 'reload') {
+                                location.reload();
+                            }
+
+                            saving = false;
+                            reloadGutenberg = false;
+                        });
+                    }, 3000);
+                }
+            });
+        }
+
+        $('.wpil-hamburger-filter-option').each(function() {
+            var option = $(this);
+            var fields = option.find('.wpil-hamburger-filter-fields');
+
+            option.on('mouseenter', function() {
+                fields.css('max-height', fields.prop('scrollHeight') + 'px');
+            });
+
+            option.on('mouseleave', function() {
+                fields.css('max-height', '0');
+            });
+        });
+
+        if ($('#post_ID').length) {
+            return;
+            $.post( ajaxurl, {action: 'wpil_is_outbound_links_added', id: $('#post_ID').val(), type: 'post'}, function(data) {
+                if (data == 'success' && (wpil_ajax.dismissed_popups && wpil_ajax.dismissed_popups['suggestions'] !== 1)) {
+                    var wrapper = document.createElement('div');
+                    $(wrapper).append('Links have been added successfully! <br><br> <input type="checkbox" id="wpil-perma-dismiss-popup" data-wpil-popup-name="suggestions"><span style="font-size: 12px;">(Don\'t show this again)</span>');
+                    wpil_swal({'title': 'Success', content: wrapper, 'icon': 'success'}).then(() => {
+                        var checkbox = $('#wpil-perma-dismiss-popup');
+                        var nonce = (checkbox.data('wpil-popup-name') === 'suggestion') ? $('div[data-wpil-ajax-container=""]').data('wpil-suggestion-nonce'): '';
+                        if(checkbox.is(':checked') && nonce){
+                            $.ajax({
+                                type: 'POST',
+                                url: ajaxurl,
+                                data: {
+                                    action: 'wpil_dismiss_popup_notice',
+                                    popup_name: checkbox.data('wpil-popup-name'),
+                                    nonce: nonce,
+                                },
+                                complete: function (data) {
+                                    console.log('ignoring complete!');
+                                }
+                            })
+                        }
+                    });
+                }
+            });
+        }
+
+        if ($('#inbound_suggestions_page').length) {
+            var id  = $('#inbound_suggestions_page').data('id');
+            var type  = $('#inbound_suggestions_page').data('type');
+
+            $.post( ajaxurl, {action: 'wpil_is_inbound_links_added', id: id, type: type}, function(data) {
+                if (data == 'success' && (!wpil_ajax.dismissed_popups || (wpil_ajax.dismissed_popups && wpil_ajax.dismissed_popups['suggestions'] === undefined || wpil_ajax.dismissed_popups['suggestions'] !== 1))) {
+                    var popupWrapper = document.createElement('div');
+                    $(popupWrapper).append('Links have been added successfully! <br><br> <input type="checkbox" id="wpil-perma-dismiss-popup" data-wpil-popup-name="suggestions"><span style="font-size: 12px;">(Don\'t show this again)</span>');
+                    wpil_swal({'title': 'Success', content: popupWrapper, 'icon': 'success'}).then(() => {
+                        var checkbox = $('#wpil-perma-dismiss-popup');
+                        var nonce = wpil_ajax.dismiss_popup_nonce;
+                        if(checkbox.is(':checked') && nonce){
+                            $.ajax({
+                                type: 'POST',
+                                url: ajaxurl,
+                                data: {
+                                    action: 'wpil_dismiss_popup_notice',
+                                    popup_name: checkbox.data('wpil-popup-name'),
+                                    nonce: nonce,
+                                },
+                                complete: function (data) {
+                                    console.log('ignoring complete!');
+                                }
+                            })
+                        }
+                    });
+                }
+            });
+        }
+
+        /** Animating the Dashboard loading **/
+        var globalDashboardUpdate = {
+            error_count: 0
+        };
+
+        if($('.wpil-wizard-loading-dashboard').length > 0){
+            function loadDashboardDuringScan(){
+                // obtain the dashboard data via ajax
+                $.ajax({
+                    type: "POST",
+                    url: ajaxurl,
+                    data: {
+                        action: 'wpil_get_dashboard_scan_loading_data',
+                        nonce: $('.wpil-wizard-loading-dashboard-nonce').val()
+                    },
+                    error: function (jqXHR, textStatus, errorThrown) {
+                        globalDashboardUpdate.error_count += 1;
+        
+                        // if the scan has errored less than 5 times, try it again
+                        if(globalDashboardUpdate.error_count < 5){
+                            loadDashboardDuringScan();
+                        }else{
+                            var wrapper = document.createElement('div');
+                            $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                            $(wrapper).append(jqXHR.responseText);
+                            wpil_swal({"title": "Error", "content": wrapper, "icon": "error"}).then(function(){
+                                location.reload();
+                            });
+                        }
+                    },
+                    success: function(response){
+                        console.log(response);
+
+                        if(response.data){
+                            // reset the error counter
+                            globalDashboardUpdate.error_count = 0;
+                            // if we have post scanning data
+                            if(response.data.post_scanning){
+                                $('.wpil-report-stats-posts-crawled').html(response.data.post_scanning.posts_crawled);
+                                $('.wpil-report-stats-link-coverage').html(response.data.post_scanning.link_coverage);
+                                $('.wpil-report-stats-relation-score').html(response.data.post_scanning.link_relation_score);
+                                $('.wpil-report-stats-external-focus').html(response.data.post_scanning.external_site_focus);
+                                $('.wpil-report-stats-anchor-quality').html(response.data.post_scanning.anchor_quality);
+
+                                $('.wpil-report-stats-links-found').html(response.data.post_scanning.links_found);
+//                                $('.wpil-report-stats-internal-links').html(response.data.post_scanning.internal_links);
+/*
+                                var topDomainsWidget = $('#report_dashboard_domains');
+                                var topDomainContent = '';
+                                if(response.data.post_scanning.top_domains && response.data.post_scanning.top_domains.length){
+                                    var topCount = response.data.post_scanning.top_domains[0].link_count;
+                                    for(var i in response.data.post_scanning.top_domains){
+                                        var domain = response.data.post_scanning.top_domains[i];
+                                        topDomainContent += '\
+                                            <div>\
+                                                <div class="count">' + domain.link_count + '</div>\
+                                                <div class="host">' + domain.host + '</div>\
+                                            </div>\
+                                            <div class="line line'+i+'"><span style="width: '+ ((domain.link_count/topCount)*100) + '%"></span></div>';
+                                    }
+                                }
+
+                                if(topDomainContent.length > 0){
+                                    topDomainsWidget.html(topDomainContent);
+                                }*/
+/*
+                                var anim = $('#wpil_links_chart').jqChart('option', 'animation'),
+                                    data = $('#wpil_links_chart').jqChart('option', 'series');
+
+                                // if the chart hasn't loaded with data yet
+                                if(!internal && !external){
+                                    // set the data variables so that on the next go around we can disable the animation
+                                    internal = response.data.post_scanning.internal_links; // these
+                                    external = response.data.post_scanning.external_links;
+                                }else{
+                                    anim['enabled'] = false;
+                                }
+                                data[0].data[0][1] = response.data.post_scanning.internal_links;
+                                data[0].data[1][1] = response.data.post_scanning.external_links;
+                                $('#wpil_links_chart').jqChart('update');*/
+                            }
+
+                            // determine what is the longest running process and what percent of completion it has
+                            var longestTime = null,
+                                longestProcess = null,
+                                notCompleted = [],
+                                notCompletedDisplay = [];
+                            for(var j in response.data){
+                                var dat = response.data[j];
+                                console.log(dat);
+                                if(dat.estimated_completion_time > 0 || undefined === dat.percent_complete){
+                                    notCompleted.push(j);
+                                    notCompletedDisplay.push(dat.display_name);
+                                }
+
+                                if(dat.estimated_completion_time > 0 && dat.estimated_completion_time > longestTime){
+                                    longestTime = dat.estimated_completion_time;
+                                    longestProcess = j;
+                                }
+                            }
+
+                            if(undefined !== response.data.link_scanning && response.data.link_scanning.percent_complete){
+                                if(response.data.link_scanning.percent_complete < 100){
+                                    $('.wpil-report-download-banner .progress_count').css({'width': response.data.link_scanning.percent_complete + '%'});
+                                    createDashboardCountdownClock(response.data.link_scanning.estimated_completion_time);
+                                }else{
+                                    if(longestTime){
+                                        $('.wpil-report-download-banner .progress_count').css({'width': response.data[longestProcess].percent_complete + '%'});
+                                        createDashboardCountdownClock(longestTime);
+                                    }
+                                }
+                            }
+
+                            // if there aren't any more processes to run
+                            if(notCompleted.length < 1 || response.data.finished || response.data.running_autolinks){
+                                // stop the loader 
+                                clearInterval(interval);
+                                // update the loading bar to 100%
+                                $('.wpil-report-download-banner .progress_count').css({'width': '100%'});
+                                // update the clock
+                                createDashboardCountdownClock(0);
+
+                                // hide the tooltips if they are active
+                                $('#wpil-help-overlay-controls .close-overlay').trigger('click');
+                                // otherwise, show the completion popup
+                                var wrapper = document.createElement('div');
+                                $(wrapper).append('Link Whisper is fully setup and is ready for you!');
+                                wpil_swal({'title': 'Success', content: wrapper, 'icon': 'success'}).then(() => {
+                                    var pageUrl = new URL(window.location.href);
+                                    if (pageUrl.searchParams.has('loading')) {
+                                        // remove the loading parameter
+                                        pageUrl.searchParams.delete('loading');
+                                        // update the URL in the address bar without reloading
+                                        window.history.pushState({}, '', pageUrl);
+                                    }
+                                    // and reload the page
+                                    window.location.reload();
+                                });
+                            }else{
+                                $('.wpil-report-download-banner .wpil-dashboard-processing-message').html(notCompletedDisplay[Math.floor(Math.random() * notCompletedDisplay.length)]);
+                            }
+                        }
+                    }
+                });
+            }
+
+            var interval = setInterval(loadDashboardDuringScan, 5000);
+        }
+
+        var clock,
+            clockTarget = null;
+        function createDashboardCountdownClock(secondsFromNow = 0){
+            clockTarget = new Date().getTime() + (secondsFromNow * 1000);
+
+            clearInterval(clock);
+            clock = setInterval(function() {
+
+                // Get today's date and time
+                var now = new Date().getTime();
+
+                // Find the distance between now and the count down date
+                var distance = clockTarget - now;
+              
+                // Time calculations for days, hours, minutes and seconds
+                var days = Math.floor(distance / (1000 * 60 * 60 * 24));
+                var hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                var minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+                var seconds = Math.floor((distance % (1000 * 60)) / 1000);
+              
+                if(hours < 10){
+                    hours = ("0" + hours);
+                }
+
+                if(minutes < 10){
+                    minutes = ("0" + minutes);
+                }
+
+                if(seconds < 10){
+                    seconds = ("0" + seconds);
+                }
+
+                $('.wpil-dashboard-processing-time-remaining').html('Estimated Time Remaining');
+                $('.wpil-dashboard-processing-clock').html(hours + ":" + minutes + ":" + seconds);
+              
+                // If the count down is finished, write some text
+                if (distance < 0) {
+                  clearInterval(clock);
+                  $('.wpil-dashboard-processing-clock').html('00 00:00');
+                }
+              }, 1000);
+        }
+
+        //show links chart in dashboard
+        if ($('#wpil_links_chart').length) {
+            var internal = $('input[name="internal_links_count"]').val();
+            var external = $('input[name="total_links_count"]').val() - $('input[name="internal_links_count"]').val();
+
+            $('#wpil_links_chart').jqChart({
+                title: { text: '' },
+                legend: {
+                    title: '',
+                    font: '15px sans-serif',
+                    location: 'top',
+                    border: {visible: false}
+                },
+                border: { visible: false },
+                animation: { duration: 1 },
+                shadows: {
+                    enabled: true
+                },
+                series: [
+                    {
+                        type: 'pie',
+                        fillStyles: ['#33c7fd', '#7646b0'],
+                        labels: {
+                            stringFormat: '%d',
+                            valueType: 'dataValue',
+                            font: 'bold 15px sans-serif',
+                            fillStyle: 'white',
+                            fontWeight: 'bold'
+                        },
+                        explodedRadius: 8,
+                        explodedSlices: [1],
+                        data: [['Internal', internal], ['External', external]],
+                        labelsPosition: 'inside', // inside, outside
+                        labelsAlign: 'circle', // circle, column
+                        labelsExtend: 20,
+                        leaderLineWidth: 1,
+                        leaderLineStrokeStyle: 'black'
+                    }
+                ]
+            });
+        }
+
+        //show links chart in dashboard
+        if ($('#wpil_links_domain_chart').length) {
+            var linezero = $('.mltdcount-0').text();
+            var lineone = $('.mltdcount-1').text();
+            var linetwo = $('.mltdcount-2').text();
+            var linethree = $('.mltdcount-3').text();
+            var linefour = $('.mltdcount-4').text();
+            var linevalzero = $('.mltdval-0').text();
+            var linevalone = $('.mltdval-1').text();
+            var linevaltwo = $('.mltdval-2').text();
+            var linevalthree = $('.mltdval-3').text();
+            var linevalfour = $('.mltdval-4').text();
+
+            $('#wpil_links_domain_chart').jqChart({
+                title: { text: '' },
+                legend: {
+                    title: '',
+                    font: '15px sans-serif',
+                    location: 'top',
+                    border: {visible: false},
+                    visible: false
+                },
+                border: { visible: false },
+                animation: { duration: 1 },
+                shadows: {
+                    enabled: true
+                },
+                series: [
+                    {
+                        type: 'pie',
+                        animationEnabled: true,
+                        fillStyles: ['#4272fd', '#A0A0A0', '#B8B8B8', '#C8C8C8', '#D3D3D3'],
+                        labels: {
+                            stringFormat: '%d%',
+                            valueType: 'percentage', //dataValue
+                            font: '15px sans-serif',
+                            fillStyle: 'black',
+                            fontWeight: 'bold'
+                        },
+                        explodedRadius: 8,
+                        explodedSlices: [0],
+                        data: [[linevalzero, linezero], [linevalone, lineone], [linevaltwo, linetwo], [linevalthree, linethree], [linevalfour, linefour]],
+                        labelsPosition: 'outside', // inside, outside
+                        labelsAlign: 'column', // circle, column
+                        labelsExtend: 20,
+                        leaderLineWidth: 1,
+                        leaderLineStrokeStyle: 'black'
+                    }
+                ]
+            });
+        }
+
+        /**/
+        // After the jqChart initialization
+        let legendHtml = '<div id="wpil_chart_legend" style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: -20px;">';
+        const colors = ['#4272fd', '#A0A0A0', '#B8B8B8', '#C8C8C8', '#D3D3D3'];
+        const labels = [linezero, lineone, linetwo, linethree, linefour];
+        const values = [linevalzero, linevalone, linevaltwo, linevalthree, linevalfour];
+        for (let i = 0; i < labels.length; i++) {
+            legendHtml += `
+                <div style="display: flex; align-items: center; font-size: 14px;">
+                    <div style="width: 12px; height: 12px; background-color: ${colors[i]}; margin-right: 6px; border-radius: 2px;"></div>
+                    (${values[i]})
+                </div>
+            `;
+        }
+        legendHtml += '</div>';
+        $('#wpil_links_domain_chart').after(legendHtml);
+        /**/
+
+        //show links click chart in detailed click report
+        if ($('#link-click-detail-chart').length) {
+            
+            var clickData	= JSON.parse($('input#link-click-detail-data').val());
+            var range		= JSON.parse($('input#link-click-detail-data-range').val());
+            var dateFormat = $('input#link-click-detail-data-format').val();
+            var clickCount = 0;
+            var dateRange = getAllDays(range.start, range.end);
+            var displayData = [];
+
+            if(clickData !== ''){
+                for(var i in dateRange){
+                    var date = dateRange[i];
+                    if(clickData[date] !== undefined){
+                        displayData.push([date, clickData[date]]);
+                        clickCount += clickData[date];
+                    }else{
+                        displayData.push([date, 0]);
+                    }
+                }
+            }
+
+            $('#link-click-detail-chart').jqChart({
+                title: { text: 'Clicks per day' },
+                legend: {
+                    title: '',
+                    font: '15px sans-serif',
+                    location: 'top',
+                    border: {visible: false},
+                    visible: false
+                },
+                border: { visible: false },
+                animation: { duration: 1 },
+                shadows: {
+                    enabled: true
+                },
+                axes: [
+                    {
+                        type: 'linear',
+                        location: 'left',
+                        minimum: 0,
+                    },
+                    {
+                        location: 'bottom',
+                        labels: {
+                            resolveOverlappingMode: 'hide'
+                        },
+                        majorTickMarks: {
+                        },
+                        minorTickMarks: {
+                        }
+                    },
+                    {
+                        location: 'bottom',
+                        title: {
+                            text: 'Total Clicks for Selected Range: ' + clickCount,
+                            font: '16px sans-serif',
+                            fillStyle: '#282828',
+                        },
+                        strokeStyle: '#ffffff	',
+                        labels: {
+                            resolveOverlappingMode: 'hide'
+                        },
+                        majorTickMarks: {
+                        },
+                        minorTickMarks: {
+                        }
+                    },
+                ],
+                series: [
+                    {
+                        type: 'area',
+                        title: '',
+                        shadows: {
+                            enabled: true
+                        },
+//						fillStyles: ['#33c7fd', '#7646b0'],
+                        lineWidth : 2,
+                        fillStyle: 'transparent',
+                        strokeStyle:'#6b3da7',
+                        markers: { 
+                            size: 8, 
+                            type: 'circle',
+                            strokeStyle: 'black', 
+                            fillStyle : '#6b3da7', 
+                            lineWidth: 1 
+                        },
+                        labels: {
+                            visible: false,
+                            stringFormat: '%d',
+                            valueType: 'dataValue',
+                            font: 'bold 15px sans-serif',
+                            fillStyle: 'transparent',
+                            fontWeight: 'bold'
+                        },
+                        data: displayData,
+                        leaderLineWidth: 1,
+                        leaderLineStrokeStyle: 'black'
+                    }
+                ]
+            });
+        }
+
+        function getAllDays(start, end) {
+            var s = new Date(start);
+            var e = new Date(end);
+            var a = [];
+        
+            while(s < e) {
+                a.push(moment(s).format(wpil_ajax.wpil_timepicker_format));
+                s = new Date(s.setDate(
+                    s.getDate() + 1
+                ))
+            }
+        
+            // add an extra day because the date range counter cuts the last day off.
+            a.push(moment(s).format(wpil_ajax.wpil_timepicker_format));
+
+            return a;
+        };
+
+    });
+
+    $(document).on('click', '.add_custom_link_button', function(e){
+        $(this).closest('div').append('<div class="custom-link-wrapper">' + 
+                '<div class="add_custom_link">' +
+                    '<input type="text" placeholder="Paste URL or type to search">' +
+                    '<div class="links_list"></div>' +
+                    '<span class="button-primary">' +
+                        '<i class="mce-ico mce-i-dashicon dashicons-editor-break"></i>' +
+                    '</span>' +
+                '</div>' +
+                '<div class="cancel_custom_link">' +
+                    '<span class="button-primary">' +
+                        '<i class="mce-ico mce-i-dashicon dashicons-no"></i>' +
+                    '</span>' +
+                '</div>' +
+            '</div>');
+        $(this).closest('.suggestion').find('.link-form-button').hide();
+        $(this).closest('.wpil-collapsible-wrapper').find('.link-form-button').hide();
+    });
+
+    $(document).on('keyup', '.add_custom_link input[type="text"]', wpil_link_autocomplete);
+    $(document).on('click', '.add_custom_link .links_list .item', wpil_link_choose);
+
+    var wpil_link_autocomplete_timeout = null;
+    var wpil_link_number = 0;
+    function wpil_link_autocomplete(e) {
+        var list = $(this).closest('div').find('.links_list');
+
+        //choose variant with keyboard
+        if ((e.which == 38 || e.which == 40 || e.which == 13) && list.css('display') !== 'none') {
+            switch (e.which) {
+                case 38:
+                    wpil_link_number--;
+                    if (wpil_link_number > 0) {
+                        list.find('.item').removeClass('active');
+                        list.find('.item:nth-child(' + wpil_link_number + ')').addClass('active')
+                    }
+                    break;
+                case 40:
+                    wpil_link_number++;
+                    if (wpil_link_number <= list.find('.item').length) {
+                        list.find('.item').removeClass('active');
+                        list.find('.item:nth-child(' + wpil_link_number + ')').addClass('active')
+                    }
+                    break;
+                case 13:
+                    if (list.find('.item.active').length) {
+                        var url = list.find('.item.active').data('url');
+                        list.closest('.add_custom_link').find('input[type="text"]').val(url);
+                        list.html('').hide();
+                        wpil_link_number = 0;
+                    }
+                    break;
+            }
+        } else {
+            //search posts
+            var search = $(this).val();
+            if ($('#_ajax_linking_nonce').length && search.length) {
+                var nonce = $('#_ajax_linking_nonce').val();
+                clearTimeout(wpil_link_autocomplete_timeout);
+                wpil_link_autocomplete_timeout = setTimeout(function(){
+                    $.post(ajaxurl, {
+                        page: 1,
+                        search: search,
+                        action: 'wp-link-ajax',
+                        _ajax_linking_nonce: nonce,
+                        'wpil_custom_link_search': 1
+                    }, function (response) {
+                        list.html('');
+                        response = jQuery.parseJSON(response);
+                        for (var item of response) {
+                            list.append('<div class="item" data-url="' + item.permalink + '"><div class="title">' + item.title + '</div><div class="date">' + item.info + '</div></div>');
+                        }
+                        list.show();
+                        wpil_link_number = 0;
+                    });
+                }, 500);
+            }
+        }
+    }
+
+    function wpil_link_choose() {
+        var url = $(this).data('url');
+        $(this).closest('.add_custom_link').find('input[type="text"]').val(url);
+        $(this).closest('.links_list').html('').hide();
+    }
+
+    $(document).on('click', '.add_custom_link span', function(){
+        var el = $(this),
+            link = el.parents('.add_custom_link').find('input').val(),
+            nonce = $('[data-wpil-ajax-container]').data('wpil-suggestion-nonce');
+
+        if (link) {
+            $.post(
+                ajaxurl, 
+                {
+                    action: 'wpil_get_link_title',
+                    link: link,
+                    nonce: nonce
+                }, function (response) {
+                    if(!isJSON(response)){
+                        response = extractAndValidateJSON(response, ['error', 'title', 'id', 'type', 'link']);
+                    }
+
+                    if(response && undefined !== response.error){
+                        wpil_swal(response.error.title, response.error.text, 'error');
+                        return;
+                    }
+
+                    if (!el.parents('.wpil-collapsible-wrapper').length) {
+                        var suggestion = el.closest('.suggestion');
+                        suggestion.html(response.title + '<br><a class="post-slug" target="_blank" href="'+link+'">'+response.link+'</a>' +
+                            '<span class="add_custom_link_button link-form-button"> | <a href="javascript:void(0)"><span class="dashicons dashicons-edit"></span></a></span>');
+                        suggestion.data('id', response.id);
+                        suggestion.data('type', response.type);
+                        suggestion.data('custom', response.link);
+                    } else {
+                        var wrapper = el.closest('.wpil-collapsible-wrapper');
+                        wrapper.find('input[type="radio"]').prop('checked', false);
+                        wrapper.find('.wpil-content ul').prepend('<li>' +
+                            '<div>' +
+                            '<input type="radio" checked="" data-id="'+response.id+'" data-type="'+response.type+'" data-suggestion="-1" data-custom="'+link+'" data-post-origin="internal" data-site-url="">' +
+                            '<span class="data">' +
+                            '<div class="suggested-post-data-container"><strong>Title:</strong> <span class="suggested-post-title">'+response.title+'</span></div>' +
+                            '<div class="suggested-post-data-container"><strong>Published:</strong> '+response.date+'</div>' +
+                            '<strong>URL:</strong> <a class="post-slug" target="_blank" href="'+link+'">'+response.link+'</a>\n' +
+                            '</span>' +
+                            '</div>' +
+                            '</li>');
+                        wrapper.find('input[type="radio"]')[0].click();
+                        wrapper.find('.wpil-collapsible').addClass('wpil-active');
+                        wrapper.find('.wpil-content').show();
+                    }
+            });
+        } else {
+            alert("The link is empty!");
+        }
+    });
+
+    // if the user cancels the custom link
+    $(document).on('click', '.cancel_custom_link span', function(){
+        $(this).closest('.suggestion').find('.link-form-button').show();
+        $(this).closest('.wpil-collapsible-wrapper').find('.link-form-button').show();
+        $(this).closest('.custom-link-wrapper').remove();
+    });
+
+    //show edit sentence form
+    $(document).on('click', '.wpil_edit_sentence', function(){
+        var block = $(this).closest('.sentence');
+        setTimeout(function(){openSentenceEditor(block);}, 300); // delay the opening so things can finish their processing
+    });
+
+    // listen for clicks to the "Allow multiple links" checkbox
+    var multiLinkSet;
+    $(document).on('click', '.wpil-sentence-allow-multiple-links', function(){
+        var checkbox = $(this);
+        clearTimeout(multiLinkSet);
+        multiLinkSet = setTimeout(function(){
+            ajaxSetMultiLinksInEditor(checkbox);
+        }, 200);
+    });
+
+    function ajaxSetMultiLinksInEditor(checkbox){
+        if(!checkbox){
+            return;
+        }
+
+        var checked = checkbox.is(':checked') ? 1: 0;
+
+        var data = {
+            action: 'wpil_set_multi_link_in_sentence_editor',
+            checked: checked,
+            nonce: checkbox.data('nonce')
+        };
+        jQuery.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            dataType: 'json',
+            data: data,
+            error: function (jqXHR, textStatus, errorThrown) {
+                var wrapper = document.createElement('div');
+                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                $(wrapper).append(jqXHR.responseText);
+                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+            },
+            success: function(response){
+                if(response.success){
+                    console.log(response.success.text);
+                }
+            },
+            complete: function(){
+                // regardless of the outcome, set all the other checkboxes to the same setting as this one
+                if(checkbox.is(':checked')){
+                    $('.wpil-sentence-allow-multiple-links').prop('checked', true);
+                }else{
+                    $('.wpil-sentence-allow-multiple-links').prop('checked', false);
+                }
+            }
+        });
+
+    }
+
+    function openSentenceEditor(block){
+        var form = block.find('.wpil_edit_sentence_form');
+        var id = 'wpil_editor' + block.data('id');
+        var sentence = form.find('.wpil_content').html();
+
+        if (typeof inbound_internal_link !== 'undefined') {
+            var link = inbound_internal_link;
+        } else {
+            var link = $(block).closest('tr').find('.post-slug:first').attr('href');
+        }
+
+        sentence = sentence.replace('%view_link%', link);
+        form.find('.wpil_content').attr('id', id).html(sentence).show();
+        form.show();
+        var textarea_height = form.find('.wpil_content').height() + 100;
+        form.find('.wpil_content').height(textarea_height);
+        if(undefined === wp.blockEditor){
+            wp.editor.initialize(id, {
+                tinymce: true,
+                quicktags: true,
+            });
+        }else{
+            wp.oldEditor.initialize(id, {
+                tinymce: true,
+                quicktags: true,
+            });
+        }
+
+        tinyMCE.activeEditor.setContent(form.find('.wpil_content').text());
+        block.find('input[type="checkbox"]:not(.wpil-sentence-allow-multiple-links), .wpil_sentence_with_anchor, .wpil_edit_sentence').hide();
+        setTimeout(function(){ 
+            block.find('.mce-tinymce').show(); 
+            block.find('.wp-editor-tabs .switch-tmce').trigger('click');
+            block.find('.mce-tinymce.mce-container.mce-panel').css({'display': 'block'});
+            console.log('editor open!');
+        }, 500);
+        form.find('.wpil_content').hide();
+        form.show();
+    }
+
+    // make sure the text area shows when the user clicks the "text" button
+    $(document).on('click', '.wpil_edit_sentence_form .wp-editor-tabs .switch-html', function(){
+        var textEditor = $(this).parents('.wp-editor-tools').find('textarea.wpil_content');
+        if(!$(textEditor).is(':visible')){
+            setTimeout(function(){
+                $(textEditor).css({'display': 'inline-block'});
+            }, 50);
+        }
+    });
+
+    //Cancel button pressed
+    $(document).on('click', '.wpil_edit_sentence_form .button-secondary', function(){
+        var block = $(this).closest('.sentence');
+        wpil_editor_remove(block);
+    });
+
+    //Save edited sentence
+    $(document).on('click', '.wpil_edit_sentence_form .button-primary', function(){
+        var block = $(this).closest('.sentence');
+        var id = 'wpil_editor' + block.data('id');
+
+        //get content from the editor
+        var sentence;
+        if ($('#' + id).css('display') == 'none') {
+            var editor = tinyMCE.get(id);
+            sentence = editor.getContent();
+        } else {
+            sentence = $('#' + id).val();
+        }
+
+        //remove multiple whitespaces and outer P tag
+        if (sentence.substr(0,3) == '<p>') {
+            sentence = sentence.substr(3);
+        }
+        if (sentence.substr(-4) == '</p>') {
+            sentence = sentence.substr(0, sentence.length - 4);
+        }
+        var sentence_clear = sentence;
+
+        // clear any click-disabling classes
+        block.find('.wpil_sentence').removeClass('wpil-disable-word-click').prop('title', 'Double clicking a word will select it.');
+
+        // update the text in the plain text version of the link content
+        block.find('.wpil_edit_sentence_form').find('.wpil_content').text(sentence_clear);
+
+        // if the user wants to allow multiple links in the suggestion text
+        if(block.find('.wpil-sentence-allow-multiple-links').is(':checked')){
+            // grab all the links and replace their text representations with placeholders
+            var links = sentence.match(/<a[^>]+>/g);
+
+            if (links[0] != null) {
+                sentence = sentence.replace(/<a[^>]+\s*>/g, ' %link_start% ');
+                sentence = sentence.replace(/\s*<\/a>/g, ' %link_end% ');
+
+                // if there's more than one link
+                if(links[1] != null){
+                    // disable the sentence word clicking
+                    block.find('.wpil_sentence').addClass('wpil-disable-word-click').prop('title', 'Word click-selecting disabled when multiple links present.');;
+                }
+            }
+        }else{
+            //put each word to span
+            var link = sentence.match(/<a[^>]+>/);
+            if (link[0] != null) {
+                sentence = sentence.replace(/<a[^>]+\s*>/, ' %link_start% ');
+                sentence = sentence.replace(/\s*<\/a>/, ' %link_end% ');
+            }
+
+            // check for a second link
+            var secondLink = sentence.match(/<a[^>]+>/);
+            if (secondLink != null && secondLink[0] != null) {
+                // if there are more links, remove them
+                sentence = sentence.replace(/<a[^>]+\s*>/g, '');
+                sentence = sentence.replace(/\s*<\/a>/g, '');
+                // and update the clear sentence so the additional links aren't present
+                sentence_clear = sentence.replace(/%link_start%/g, link[0]);
+                sentence_clear = sentence_clear.replace(/%link_end%/g, '</a>');
+                block.find('.wpil_edit_sentence_form').find('.wpil_content').text(sentence_clear);
+            }
+        }
+
+        sentence = sentence.replace(/\s+/g, ' ');
+        sentence = sentence.replace(/ /g, '</span> <span class="wpil_word">');
+        sentence = '<span class="wpil_word">' + sentence + '</span>';
+        if (link && link[0] != null) {
+            sentence = sentence.replace(/<span class="wpil_word">%link_start%<\/span>/g, link[0]);
+            sentence = sentence.replace(/<span class="wpil_word">%link_end%<\/span>/g, '</a>');
+        }else if(links && links[0] != null){
+            for(var i in links){
+                sentence = sentence.replace(/<span class="wpil_word">%link_start%<\/span>/, links[i]);
+            }
+            sentence = sentence.replace(/<span class="wpil_word">%link_end%<\/span>/g, '</a>');
+        }
+
+        block.find('.wpil_sentence').html(sentence);
+        block.find('input[name="custom_sentence"]').val(btoa(unescape(encodeURIComponent(sentence_clear))));
+
+        spaceSentenceWords(block.find('.wpil_sentence'));
+
+        if(block.closest('.wp-list-table').hasClass('inbound')){
+            if(block.closest('.wpil-collapsible').length > 0){ // if the sentence is the top-level sentence in a dropdown
+                updateDropdownSentence(block.find('.wpil_sentence'));
+            }
+        }
+        toggleSentenceReset(block.find('.wpil_sentence'));
+
+        if (block.closest('tr').find('.raw_html').length) {
+            sentence_clear = sentence_clear.replace(/</g, '&lt;');
+            sentence_clear = sentence_clear.replace(/>/g, '&gt;');
+            block.closest('tr').find('.raw_html').hide();
+            block.closest('tr').find('.raw_html.custom-text').html(sentence_clear).show();
+        }
+
+        block.closest('tr').find('.chk-keywords').prop('checked', true);
+        wpil_editor_remove(block)
+    });
+
+    /**
+     * Fires the WP editor at a target element to run through the initialization process
+     **/
+    function wpilEditorInitialize(){
+        if(undefined === wp.blockEditor){
+            wp.editor.initialize('wpil-editor-target', {
+                tinymce: true,
+                quicktags: true,
+            });
+            setTimeout(function(){
+                wp.editor.remove('wpil-editor-target');
+            }, 250);
+        }else{
+            wp.oldEditor.initialize('wpil-editor-target', {
+                tinymce: true,
+                quicktags: true,
+            });
+            setTimeout(function(){
+                wp.oldEditor.remove('wpil-editor-target');
+            }, 250);
+        }
+    }
+
+    //Remove WP Editor after sentence editing
+    function wpil_editor_remove(block) {
+        var form = block.find('.wpil_edit_sentence_form');
+        var textarea_height = form.find('.wpil_content').height() - 100;
+        form.find('.wpil_content').height(textarea_height);
+        form.hide();
+        form.find('.wpil_content').attr('id', '').prependTo(form);
+        if(undefined === wp.blockEditor){
+            wp.editor.remove('wpil_editor' + block.data('id'));
+        }else{
+            wp.oldEditor.remove('wpil_editor' + block.data('id')); 
+        }
+        form.find('.wp-editor-wrap').remove();
+        block.find('input[type="checkbox"], .wpil_sentence_with_anchor, .wpil_edit_sentence').show();
+    }
+
+    function customSentenceRefresh(el) {
+        if(el.parents('.wpil-content').length){
+            var input = el.closest('.data').find('input[name="custom_sentence"]');
+            var sentence = el.html();
+            var editorContent = el.closest('.data').find('.wpil_content');
+        }else{
+            var input = el.closest('.sentence').find('input[name="custom_sentence"]');
+            var sentence = el.closest('.wpil_sentence').html();
+            var editorContent = el.closest('.sentence').find('.wpil_content');
+        }
+
+        sentence = sentence.replace(/<span[^>]+wpil_suggestion_tag[^>]+>([a-zA-Z0-9=+]+)<\/span>/g, function (x) {
+            x = x.replace(/<span[^>]+>/g, '');
+            x = x.replace(/<\/span>/g, '');
+            return atob(x);
+        });
+        sentence = sentence.replace(/<\/span> <\/a>/g, '<\/span><\/a> ');
+        sentence = sentence.replace(/<span[^>]+>/g, '');
+        sentence = sentence.replace(/<\/span>/g, '');
+        editorContent.html(sentence);
+
+        if (input.val() !== '') {
+            input.val(btoa(unescape(encodeURIComponent(sentence))));
+        }
+    }
+
+    /**
+     * Updates the sentence and "custom_sentence" text of suggested sentences in dropdowns
+     **/
+    function updateDropdownSentence(sentence){
+        var sentenceWithAnchor = sentence.closest('.wpil_sentence_with_anchor');
+        var listItemId = sentenceWithAnchor.data('li-id');
+
+        if(undefined !== listItemId){
+            var itemData = $(sentence).closest('.wpil-collapsible-wrapper').find('.wpil-inbound-sentence-data-container[data-container-id="' + listItemId + '"] .data');
+
+            itemData.find('.wpil_sentence').html(sentence.html());
+            itemData.find('.wpil_content').html(sentenceWithAnchor.siblings('.wpil_edit_sentence_form').find('.wpil_content').html());
+            itemData.find('[name="custom_sentence"]').val(sentenceWithAnchor.siblings('[name="custom_sentence"]').val());
+
+            if(sentence.hasClass('wpil-disable-word-click')){
+                itemData.find('.wpil_sentence').addClass('wpil-disable-word-click').prop('title', 'Word click-selecting disabled when multiple links present.');
+            }else{
+                itemData.find('.wpil_sentence').removeClass('wpil-disable-word-click').prop('title', 'Double clicking a word will select it.');
+            }
+
+            customSentenceRefresh(itemData.find('.wpil_sentence'));
+        }
+    }
+
+    /**
+     * Toggles the display of the "reset sentence" button.
+     **/
+    function toggleSentenceReset(sentence){
+        var parent = sentence.closest('div');
+        var listItemId = sentence.closest('.wpil_sentence_with_anchor').data('li-id');
+        var currentSentence = sentence.html().toString().replace(new RegExp(' data-wpil-word-id="[0-9]*"', 'ig'), '').replace(new RegExp('[\\s]*</a>[\\s]*', 'ig'), '</a> ').trim();
+
+        // get the current target link
+        if (typeof inbound_internal_link !== 'undefined') {
+            var link = inbound_internal_link;
+        } else {
+            var link = $(sentence).closest('tr').find('.post-slug:first').attr('href');
+        }
+
+        // if the target link is in the sentence
+        if(currentSentence.indexOf(link) !== -1){
+            // normalize the changed sentence so we can tell if it's basically the same as the original
+            currentSentence = currentSentence.replace(link, '%view_link%')
+                                                .replace(new RegExp('[\\s]*<a href="%view_link%">[\\s]*', 'ig'), ' <a href="%view_link%">')
+                                                .replace(new RegExp('[\\s]*</a>[\\s]*', 'ig'), '</a> ')
+                                                .replace(new RegExp('[\\s][\\s]*', 'ig'), ' ').trim();
+
+            if(currentSentence.indexOf('<span class="wpil_word"></span> <a href="%view_link%">') === 0){
+                currentSentence = currentSentence.replace('<span class="wpil_word"></span> <a href="%view_link%">', '<a href="%view_link%">');
+            }
+
+            if(currentSentence.indexOf('</span></a> <span class="wpil_word"></span>') + 43 === currentSentence.length){
+                currentSentence = currentSentence.replace('</span></a> <span class="wpil_word"></span>', '</span></a>');
+            }
+        }
+
+        // base64 the sentence
+        currentSentence = Base64.encode(currentSentence);
+
+        if(parent.find('[name="original_sentence_with_anchor"]').val() === currentSentence){
+            parent.find('.wpil-reload-sentence-with-anchor').removeClass('wpil-reset-active');
+        }else{
+            parent.find('.wpil-reload-sentence-with-anchor').addClass('wpil-reset-active');
+        }
+
+        if(undefined !== listItemId){
+            var itemData = $(sentence).closest('.wpil-collapsible-wrapper').find('.wpil-inbound-sentence-data-container[data-container-id="' + listItemId + '"] .data');
+
+            if(itemData.find('[name="original_sentence_with_anchor"]').val() === currentSentence){
+                itemData.find('.wpil-reload-sentence-with-anchor').removeClass('wpil-reset-active');
+            }else{
+                itemData.find('.wpil-reload-sentence-with-anchor').addClass('wpil-reset-active');
+            }
+        }
+
+        if(parent.hasClass('data')){ // if this is a sentence in a dropdown
+            // do the check on the active sentence
+            var tLS = parent.closest('.wpil-collapsible-wrapper').find('.top-level-sentence');
+            if(tLS.find('[name="original_sentence_with_anchor"]').val() === currentSentence){
+                tLS.find('.wpil-reload-sentence-with-anchor').removeClass('wpil-reset-active');
+            }else{
+                tLS.find('.wpil-reload-sentence-with-anchor').addClass('wpil-reset-active');
+            }
+        }
+    }
+
+    /**
+     * Resets modified suggestion texts back to their initial values when the user clicks the reset button.
+     **/
+    $(document).on('click', '.wpil-reload-sentence-with-anchor', function(){
+        var parent = $(this).closest('div');
+        var sentence = parent.find('.wpil_sentence');
+        var originalSentence = Base64.decode(parent.find('[name="original_sentence_with_anchor"]').val());
+        var dropdownWrapper = parent.closest('.wpil-collapsible-wrapper');
+
+        sentence.html(originalSentence);
+        sentence.removeClass('wpil-disable-word-click').prop('title', 'Double clicking a word will select it.');
+        $(this).removeClass('wpil-reset-active');
+
+        styleSentenceWords(sentence);
+        customSentenceRefresh(parent.find('.wpil_sentence'));
+
+        // if the user clicked the reset button in the top level sentence in a dropdown,
+        // trigger the sentence refresh in the element in the dropdown
+        if(dropdownWrapper.length > 0){
+            if(parent.hasClass('top-level-sentence')){
+                var listItemId = parent.find('.wpil_sentence_with_anchor').data('li-id');
+                if(undefined !== listItemId){
+                    var reset = dropdownWrapper.find('.wpil-inbound-sentence-data-container .wpil_sentence_with_anchor[data-li-id="' + listItemId + '"] .wpil-reload-sentence-with-anchor');
+                    if(reset.hasClass('wpil-reset-active')){
+                        reset.trigger('click');
+                    }
+                }
+            }else{
+                var listItemId = parent.closest('.wpil-inbound-sentence-data-container').data('container-id');
+                if(undefined !== listItemId){
+                    var activeSentence = dropdownWrapper.find('.sentence.top-level-sentence .wpil_sentence_with_anchor');
+                    if(listItemId === activeSentence.data('li-id')){
+                        var reset = activeSentence.find('.wpil-reload-sentence-with-anchor');
+                        if(reset.hasClass('wpil-reset-active')){
+                            reset.trigger('click');
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    $(document).on('click', '.wpil_add_link_to_ignore', function(){
+        if (confirm('You are about to add this link to your ignore list and it will not be suggested as a link in the future. However, you can reverse this decision on the settings page.')) {
+            var block = $(this).closest('div');
+            var id = block.data('id');
+            var type = block.data('type');
+            var postOrigin = block.data('post-origin');
+            var siteUrl = block.data('site-url');
+
+            $.post(ajaxurl, {
+                id: id,
+                type: type,
+                post_origin: postOrigin,
+                site_url: siteUrl,
+                action: 'wpil_add_link_to_ignore'
+            }, function (response) {
+                response = $.parseJSON(response);
+                if (response.error) {
+                    wpil_swal('Error', response.error, 'error');
+                } else {
+                    if (block.closest('.suggestion').length) {
+                        block.closest('tr').fadeOut(300, function(){
+                            $(this).remove();
+                        });
+                    } else {
+                        var id = block.data('id');
+                        var type = block.data('type');
+                        var wrapper = block.closest('.wpil-collapsible-wrapper');
+
+                        wrapper.find('input[data-id="' +  id + '"][data-type="' +  type + '"]').closest('li').remove();
+                        wrapper.find('li:first input').prop('checked', true).click();
+                    }
+                    wpil_swal('Success', 'Link was added to the ignored list successfully!', 'success');
+                }
+            });
+        }
+    });
+
+    /**
+     * Currently only supporting the inbound internal links
+     **/
+    $(document).on('click', '.wpil_add_multiple_link_to_ignore', function(){
+        if (confirm('You are about to add these links to your ignore list and they will not be suggested in the future. You can stop ignoring the pages from the Link Whisper Settings.')) {
+            
+            var links = [];
+            
+            if($('.wpil-inbound-links').length > 0){
+                var checked = $('.wpil-inbound-links .chk-keywords:checked');
+                checked.each(function(ind, element){
+                    var block = $(element).parents('tr').find('.wpil-inbound-suggestion-posts .suggestion:visible');
+                    var id = block.data('id');
+                    var type = block.data('type');
+                    var postOrigin = block.data('post-origin');
+                    var siteUrl = block.data('site-url');
+                    
+                    links.push({
+                        id: id,
+                        type: type,
+                        post_origin: postOrigin,
+                        site_url: siteUrl,
+                    });
+                });
+            }else{
+                var checked = $('.wpil-inbound-links .chk-keywords:checked');
+                checked.each(function(ind, element){
+                    var block = $(element).parents('tr').find('.wpil-inbound-suggestion-posts .suggestion:visible');
+                    var id = block.data('id');
+                    var type = block.data('type');
+                    var postOrigin = block.data('post-origin');
+                    var siteUrl = block.data('site-url');
+                    
+                    links.push({
+                        id: id,
+                        type: type,
+                        post_origin: postOrigin,
+                        site_url: siteUrl,
+                    });
+                });
+            }
+
+            $.post(ajaxurl, {
+                multiple_links: links,
+                action: 'wpil_add_link_to_ignore'
+            }, function (response) {
+                response = $.parseJSON(response);
+                if (response.error) {
+                    wpil_swal('Error', response.error, 'error');
+                } else {
+                    $('.wpil-inbound-links .chk-keywords:checked').fadeOut(300, function(){
+                        $(this).remove();
+                    });
+                }
+            });
+        }
+    });
+
+    $(document).on('click', '#wpil_show_expanded_details', function(){
+        if($(this).is(':checked')){
+            $('.wpil-suggestion-peripheral').css({'display': 'block'});
+        }else{
+            $('.wpil-suggestion-peripheral').css({'display': 'none'});
+        }
+    });
+
     var mouseExit;
     $(document).on('mouseover', '.wpil_help i, .wpil_help div', function(){
         clearTimeout(mouseExit);
@@ -1309,6 +3448,156 @@
         }
     });
 
+    $(document).on('click', '.wpil-export-suggestions', function(e){
+        e.preventDefault();
+
+        var links = [];
+        var data = [];
+        var suggestions = $('#tbl_keywords').find('[wpil-link-new][type=checkbox]:checked');
+        var suggestionType = $(this).data('suggestion-type');
+        if(suggestions.length === 0){
+            suggestions = $('#tbl_keywords').find('[wpil-link-new][type=checkbox]');
+        }
+
+        suggestions.each(function() {
+            if (suggestionType == 'inbound') {
+                var dropdownData = $(this).closest('tr').find('.sentences .wpil-content');
+                var item = {};
+                var id = $(this).closest('tr').find('.sentence').data('id');
+                var type = $(this).closest('tr').find('.sentence').data('type');
+                if(dropdownData.length > 0){
+                    item.links = [];
+                    $(dropdownData).find('.data').each(function(index, element){
+                        item.links.push({
+                            'id': id,
+                            'type': type,
+                            'sentence': $(element).find('[name="sentence"]').val(),
+                            'sentence_with_anchor': $(element).find('.wpil_sentence_with_anchor').html(),
+                            'custom_sentence': $(element).find('input[name="custom_sentence"]').val()
+                        });
+                    });
+                }else{
+                    item.links = [{
+                        'id': id,
+                        'type': type,
+                        'sentence': $(this).closest('tr').find('.sentence').find('[name="sentence"]').val(),
+                        'sentence_with_anchor': $(this).closest('tr').find('.wpil_sentence_with_anchor').html(),
+                        'custom_sentence': $(this).closest('tr').find('input[name="custom_sentence"]').val()
+                    }];
+                }
+
+                data.push(item);
+            } else {
+                if ($(this).closest('tr').find('input[type="radio"]:checked').length) {
+                    var id =  $(this).closest('tr').find('input[type="radio"]:checked').data('id');
+                    var type = $(this).closest('tr').find('input[type="radio"]:checked').data('type');
+                    var custom_link = $(this).closest('tr').find('input[type="radio"]:checked').data('custom');
+                    var post_origin = $(this).closest('tr').find('input[type="radio"]:checked').data('post-origin');
+                    var site_url = $(this).closest('tr').find('input[type="radio"]:checked').data('site-url');
+                } else {
+                    var id =  $(this).closest('tr').find('.suggestion').data('id');
+                    var type =  $(this).closest('tr').find('.suggestion').data('type');
+                    var custom_link =  $(this).closest('tr').find('.suggestion').data('custom');
+                    var post_origin = $(this).closest('tr').find('.suggestion').data('post-origin');
+                    var site_url = $(this).closest('tr').find('.suggestion').data('site-url');
+                }
+
+                links.push({
+                    id: id,
+                    type: type,
+                    custom_link: custom_link,
+                    post_origin: post_origin,
+                    site_url: site_url,
+                    sentence: $(this).closest('div').find('[name="sentence"]').val(),
+                    sentence_with_anchor: $(this).closest('div').find('.wpil_sentence_with_anchor').html(),
+                    custom_sentence: $(this).closest('.sentence').find('input[name="custom_sentence"]').val()
+                });
+            }
+        });
+
+        if (suggestionType == 'outbound') {
+            data.push({'links': links});
+        }
+
+        var exportData = {
+            "id": $(this).data('id'),
+            "type": $(this).data('type'),
+            "suggestion_type": suggestionType,
+            'export_type': $(this).data('export-type'),
+            'data': JSON.stringify(data)
+        };
+
+        $.post(ajaxurl, {
+            action: 'wpil_export_suggestion_data',
+            export_data: exportData,
+            nonce: $(this).data('nonce'),
+        }, function (response) {
+            if(!isJSON(response)){
+                response = extractAndValidateJSON(response, ['error', 'filename', 'nicename']);
+            }
+
+            if (response.error) {
+                wpil_swal(response.error.title, response.error.text, 'error');
+            } else {
+                if (response.filename) {
+                    var link = document.createElement('a');
+                    link.href = response.filename;
+                    link.download = response.nicename;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+//					location.href = response.filename;
+                }
+            }
+        });
+    });
+
+    $(document).on('click', '.wpil_gsc_switch_app', function(){
+        if($(this).hasClass('enter-custom')){
+            $('.wpil_gsc_app_inputs').hide();
+            $('.wpil_gsc_custom_app_inputs').show();
+        }else{
+            $('.wpil_gsc_app_inputs').show();
+            $('.wpil_gsc_custom_app_inputs').hide();
+        }
+    });
+
+    /*$(document).on('click', '.wpil-get-gsc-access-token', function(){
+        $('.wpil_gsc_get_authorize').show();
+        $(this).hide();
+    });*/
+
+    $(document).on('click', '.wpil_gsc_enter_app_creds', function(){
+        $('#frmSaveSettings').trigger('submit');
+    });
+
+    $(document).on('click', '.wpil_gsc_clear_app_creds', function(){
+        $.post(ajaxurl, {
+            action: 'wpil_clear_gsc_app_credentials',
+            nonce: $(this).data('nonce')
+        }, function (response) {
+            location.reload();
+        });
+    });
+
+    $(document).on('click', '.wpil-gsc-deactivate-app', function(){
+        $.post(ajaxurl, {
+            action: 'wpil_gsc_deactivate_app',
+            nonce: $(this).data('nonce')
+        }, function (response) {
+            location.reload();
+        });
+    });
+
+    $(document).on('click', '#wpil-disconnect-ai-subscription', function(){
+        $.post(ajaxurl, {
+            action: 'wpil_disconnect_from_ai_subscription',
+            nonce: $(this).data('nonce')
+        }, function (response) {
+            location.reload();
+        });
+    });
+    
     /** Showing processing errors **/
     var processingError;
     // sets up a notice that will display if it's not cleared
@@ -1421,7 +3710,7 @@
     }
     /** /General Items */
 	/** Lazyload the dropdowns */
-    $(document).on('click', 'td .wpil-collapsible-wrapper', maybeAjaxDownloadData);
+//    $(document).on('click', 'td .wpil-collapsible-wrapper', maybeAjaxDownloadData);
 
 	/**
      * Checks to see if the clicked dropdown has all of its data.
@@ -1567,5 +3856,214 @@
     }
 
     /** /Ajax saving for Screen Options **/
+
+
+    /** Report page actions and activity **/
+    $(document).on('click', '.column-wpil-report-actions .dashicons-plus', animateActionPanel);
+
+    function animateActionPanel(){
+        var button = $(this),
+            panel = button.parents('.column-wpil-report-actions').find('.wpil-report-action-panel-wrapper');
+        
+        if(panel.hasClass('open')){
+            panel.animate({'right': '-600px'}, 500, function(){
+                panel.removeClass('active-1');
+                panel.removeClass('open');
+            });
+        }else{
+            closeActionPanel(); // clase any active panels
+            panel.addClass('active-1');
+            panel.animate({'right': '0px'}, 500, function(){
+                panel.addClass('open');
+            });
+        }
+    }
+
+    $(document).on('click', function(e){
+        if($('.wpil-report-action-panel-wrapper.open').length > 0 && $(e.target).closest('.wpil-report-action-panel-wrapper').length < 1){
+            closeActionPanel();
+        }
+    });
+
+    /**
+     * Closes any open action panel
+     **/
+    function closeActionPanel(){
+        var panel = $('.wpil-report-action-panel-wrapper.open');
+        if(panel){
+            panel.animate({'right': '-600px'}, 500, function(){
+                panel.removeClass('active-1');
+                panel.removeClass('open');
+            });
+        }
+    }
+
+    $(document).on('click', '#checkall .wpil-report-post-checkbox, .wpil-sticky-header .wpil-report-post-checkbox', function(){
+        var check = $(this);
+        if(check.is(':checked')){
+            check.parents('table').find('input.wpil-report-post-checkbox').prop('checked', true);
+        }else{
+            check.parents('table').find('input.wpil-report-post-checkbox').prop('checked', false);
+        }
+    });
+
+    $(document).on('click', '.wpil-panel-subaction, .wpil-collapsible-wrapper.wpil-activity-activate', function(e){
+        var actionPanel = $('.wpil-report-action-panel-wrapper.open'),
+            action = $(this),
+            row = $(this).parents('tr');
+
+        if($(e.target).parents('.add-density-highlight').length > 0 || $(e.target).hasClass('add-density-highlight')){
+            return;
+        }
+
+        actionPanel.animate({'right': '-600px'}, 500, function(){
+            actionPanel.removeClass('active-1 open');
+        });
+        
+        $('.active-dropdown').removeClass('active-dropdown');
+        if(action.data('link-type')){
+            row.find('.wpil-collapsible-wrapper[data-link-type="'+action.data('link-type')+'"]').addClass('active-dropdown');
+        }else if(action.data('domain')){
+            row.find('.wpil-collapsible-wrapper[data-domain="'+action.data('domain')+'"]').addClass('active-dropdown');
+        }
+
+        animateActivityPanel(action.data('activity-panel-title'))
+    });
+
+    $(document).on('click', '.wpil-panel-close, .wpil-overlay', closeActivityPanel);
+    $(document).on('keydown', function(e){ if(e.key === 'Escape') closeActivityPanel(); });
+
+    function animateActivityPanel(title = ''){
+        var panel = $('.wpil-activity-panel-wrapper');
+        if(panel.hasClass('open')){
+            closeActivityPanel();
+        }else{
+            if(title){
+                panel.find('.wpil-activity-panel-header').text(title);
+            }
+            panel.addClass('active-1');
+            $('.wpil-overlay').addClass('is-open');
+            panel.animate({ right: '0px' }, 500, function(){ panel.addClass('open'); });
+        }
+    }
+
+    function closeActivityPanel(){
+        var panel = $('.wpil-activity-panel-wrapper');
+        if(!panel.hasClass('open')) return;
+        panel.animate({ right: '-110vw' }, 500, function(){
+            panel.removeClass('active-1 open');
+            $('.wpil-overlay').removeClass('is-open');
+        });
+    }
+
+
+    /*** Report page bulk action selector ****/
+    var $root   = $('#wpil-bulk-select');
+    var $button = $root.find('.wpil-bulk-trigger');
+    var $menu   = $root.find('.wpil-bulk-menu');
+    var activeIndex = -1;
+    var outsideHandler;
+
+    function openMenu() {
+        $menu.prop('hidden', false)
+            .attr('data-open', 'true')
+            .focus({ preventScroll: true });
+        $button.attr('aria-expanded', 'true');
+        setActive(0);
+        bindOutside();
+    }
+
+    function closeMenu() {
+        $menu.prop('hidden', true)
+            .removeAttr('data-open');
+        $button.attr('aria-expanded', 'false');
+        activeIndex = -1;
+        unbindOutside();
+    }
+
+    function setActive(i) {
+        var $items = $menu.find('li[role="option"]');
+        $items.removeClass('is-active');
+        if (!$items.length) return;
+        activeIndex = (i + $items.length) % $items.length;
+        var $active = $items.eq(activeIndex).addClass('is-active');
+        $active[0].scrollIntoView({ block: 'nearest' });
+    }
+
+    function choose($el) {
+        var value = $el.data('value'),
+            data = [];
+            
+        $('.wpil-report-post-checkbox:checked').each(
+        function(ind, element){ 
+            data.push($(element).data('post-id'));
+        });
+
+        $root.trigger('wpil:bulkActionSelected', {
+        value: value,
+        data: data
+        });
+        closeMenu();
+    }
+
+    $button.on('click', function() {
+        var open = $button.attr('aria-expanded') === 'true';
+        open ? closeMenu() : openMenu();
+    });
+
+    // Mouse interactions
+    $menu.on('click', 'li[role="option"]', function() {
+        choose($(this));
+    });
+
+    // Keyboard on trigger
+    $button.on('keydown', function(e) {
+        if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openMenu();
+        }
+    });
+
+    // Keyboard in menu
+    $menu.on('keydown', function(e) {
+        var $items = $menu.find('li[role="option"]');
+        if (!$items.length) return;
+
+        switch (e.key) {
+        case 'Escape': closeMenu(); $button.focus(); break;
+        case 'ArrowDown': e.preventDefault(); setActive(activeIndex + 1); break;
+        case 'ArrowUp': e.preventDefault(); setActive(activeIndex - 1); break;
+        case 'Home': e.preventDefault(); setActive(0); break;
+        case 'End': e.preventDefault(); setActive($items.length - 1); break;
+        case 'Enter':
+        case ' ': e.preventDefault(); choose($items.eq(activeIndex).length ? $items.eq(activeIndex) : $items.eq(0)); break;
+        }
+    });
+
+    function bindOutside() {
+        outsideHandler = function(e) {
+            if (!$root[0].contains(e.target)) {
+                closeMenu();
+            }
+        };
+        $(document).on('mousedown', outsideHandler);
+    }
+
+    function unbindOutside() {
+        if (outsideHandler) {
+            $(document).off('mousedown', outsideHandler);
+        }
+    }
+    /*** \Report page bulk action selector ****/
+
+    // auto check the update box when text changes
+    $(document).on('change', '.wpil-activity-table input[type="text"]', function(){
+        $(this).parents('tr').find('td .wpil_activity_select').prop('checked', true);
+        $('.wpil-update-activity-items a').removeClass('disabled');
+    });
+
+    /** \Report page actions and activity **/
+
+
 
 })(jQuery);

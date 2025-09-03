@@ -16,7 +16,9 @@
 
             // Add controls and overlay to the body
             $('body').append($('#wpil-help-overlay-controls').detach());
-            $('body').append('<div id="wpil-help-overlay"></div>'); // style="opacity:0.01"
+            if($('#wpil-help-overlay').length === 0){
+                $('body').append('<div id="wpil-help-overlay"></div>'); // style="opacity:0.01"
+            }
             $('body').append(controls);
         }
         createOverlay();
@@ -27,7 +29,7 @@
             });
             removeHighlight();
             $('.wpil-active-help-text-bubble').remove();
-            $('#wpil-explain-page-button').text('Explain Page');
+            //$('#wpil-explain-page-button').text('Explain Page');
             overlayActive = tourActive = false;
             currentStep = 0;
             clearTimeout(waiter);
@@ -109,30 +111,44 @@
             // Determine optimal position for the tooltip
             let top, left; // Coordinates for tooltip positioning
 
+            // Create positioning class
+            let position;
+
             if (spaceRight >= tooltipWidth) {
                 // Position to the right if there's enough space
                 top = elemOffset.top + elemHeight / 2 - tooltipHeight / 2;
                 left = elemOffset.left + elemWidth;
+                position = 'wpil-tooltip-position-right';
             } else if (spaceLeft >= tooltipWidth) {
                 // Position to the left if there's enough space
                 top = elemOffset.top + elemHeight / 2 - tooltipHeight / 2;
                 left = elemOffset.left - tooltipWidth;
+                position = 'wpil-tooltip-position-left';
             } else if (spaceBelow >= tooltipHeight) {
                 // Position below if there's enough space
                 top = elemOffset.top + elemHeight;
                 left = elemOffset.left + elemWidth / 2 - tooltipWidth / 2;
+                position = 'wpil-tooltip-position-bottom';
             } else if (spaceAbove >= tooltipHeight) {
                 // Position above if there's enough space
                 top = elemOffset.top - tooltipHeight;
                 left = elemOffset.left + elemWidth / 2 - tooltipWidth / 2;
+                position = 'wpil-tooltip-position-top';
             } else {
                 // Default to placing below and center-align with element if no optimal space
                 top = elemOffset.top + elemHeight;
                 left = elemOffset.left + elemWidth / 2 - tooltipWidth / 2;
+                position = 'wpil-tooltip-position-bottom';
             }
 
             // Apply calculated position to the tooltip
             $tooltip.css({ top: `${top}px`, left: `${left}px`, position: 'absolute' });
+
+            // Remove any existing positioning class
+            $tooltip.removeClass('wpil-tooltip-position-right wpil-tooltip-position-left wpil-tooltip-position-bottom wpil-tooltip-position-top');
+
+            // Add the new positioning class
+            $tooltip.addClass(position);
 
             // return the top position in case there's follow up positioning
             return top;
@@ -312,7 +328,31 @@
             }
         });
 
+        $('#wpil-help-overlay-controls .close-overlay').on('click', function(){
+            hideOverlay();
+        });
+
         $('#wpil-explain-page-button').on('click', function(){
+            // toggle the tour state
+            tourActive = (tourActive) ? false: true;
+
+            if(tourActive){
+                // get the tooltips
+                tourSteps = $('.wpil-is-tooltipped:visible');
+                // Start at the first step
+                showCurrentStep();
+                // begin the tour
+                playTour();
+                // change the button text
+                //$(this).text('Stop Explaining');
+                // hide the explain part button
+                //$('#wpil-explain-part-button').css({'display': 'none'});
+            }else{
+                hideOverlay();
+            }
+        });
+
+        function beginTour(){
             // toggle the tour state
             tourActive = (tourActive) ? false: true;
 
@@ -330,7 +370,12 @@
             }else{
                 hideOverlay();
             }
-        });
+        }
+
+        // start the tour if we're loading the dashboard
+        if($('.wpil-dashboard-report-is-loading').length > 0){
+            beginTour();
+        }
 
         function checkIfTargetRelative(selector){
             if($(selector).hasClass('wpil-tooltip-target-child')){

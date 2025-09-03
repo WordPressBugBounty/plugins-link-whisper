@@ -17,6 +17,7 @@ class Wpil_Base
         add_action('admin_menu', [$this, 'addMenu']);
         add_action('add_meta_boxes', [$this, 'addMetaBoxes']);
         add_action('admin_enqueue_scripts', [$this, 'addScripts']);
+        add_action('wp_enqueue_scripts', array(__CLASS__, 'enqueue_frontend_scripts'));
         add_action('plugin_action_links_' . WPIL_PLUGIN_NAME, [$this, 'showSettingsLink']);
         add_action('admin_notices', [$this, 'addEmailSignupNotice'], 7);
         add_action('admin_notices', [$this, 'add_notice_for_review'], 20);
@@ -29,10 +30,35 @@ class Wpil_Base
         add_action('wp_ajax_get_post_suggestions', ['Wpil_Suggestion','ajax_get_post_suggestions']);
         add_action('wp_ajax_update_suggestion_display', ['Wpil_Suggestion','ajax_update_suggestion_display']);
         add_action('wp_ajax_wpil_csv_export', ['Wpil_Export','ajax_csv']);
+//        add_action('wp_ajax_wpil_export_sitemap_data_for_support', ['Wpil_Export','ajax_export_sitemap_support']);
+        add_action('wp_ajax_wpil_export_suggestion_data', ['Wpil_Export','ajax_export_suggestion_data']);
+        add_action('wp_ajax_wpil_bulk_keyword_export', ['Wpil_Export','ajax_export_autolink_rule_data']);
+        add_action('wp_ajax_wpil_clear_gsc_app_credentials', ['Wpil_SearchConsole','ajax_clear_custom_auth_config']);
+        add_action('wp_ajax_wpil_gsc_deactivate_app', ['Wpil_SearchConsole','ajax_disconnect']);
+        add_action('wp_ajax_wpil_disconnect_from_ai_subscription', ['Wpil_Settings', 'ajax_disconnect_ai_subscription']);
+        add_action('wp_ajax_wpil_save_animation_load_status', array('Wpil_Suggestion', 'ajax_save_animation_load_status'));
+        add_action('wp_ajax_wpil_set_multi_link_in_sentence_editor', array('Wpil_Suggestion', 'ajax_set_allow_multiple_sentence_links'));
+        add_action('wp_ajax_wpil_term_search', array(__CLASS__, 'ajax_term_search'));
+        add_action('wp_ajax_wpil_post_search', array(__CLASS__, 'ajax_post_search'));
         add_action('wp_ajax_wpil_hide_explain_page', array(__CLASS__, 'ajax_hide_explain_page'));
+        add_action('wp_ajax_wpil_set_use_ai_suggestions', array('Wpil_Settings', 'ajax_set_ai_suggestions_use'));
+        add_action('wp_ajax_wpil_wizard_save_settings', array(__CLASS__, 'ajax_save_wizard_settings'));
+        add_action('wp_ajax_wpil_wizard_save_oai_key', array(__CLASS__, 'ajax_wizard_save_oai_key'));
+        add_action('wp_ajax_wpil_clear_process_tracker', array(__CLASS__, 'ajax_clear_process_tracker'));
+        add_action('wp_ajax_wpil_has_run_wizard', array(__CLASS__, 'ajax_has_run_wizard'));
+        add_action('wp_ajax_wpil_get_dashboard_scan_loading_data', array('Wpil_Wizard', 'ajax_pull_loading_progress_for_dashboard'));
+        add_action('wp_ajax_wpil_wizard_set_completion_flag', array(__CLASS__, 'ajax_set_processing_complete_flag'));
+        add_action('wp_ajax_wpil_run_autolink_insert_search', array(__CLASS__, 'ajax_get_wizard_insert_count'));
+        /*add_filter('the_content', array(__CLASS__, 'remove_link_whisper_attrs'));
+        add_filter('the_content', array(__CLASS__, 'add_link_attrs'));
+        add_filter('the_content', array(__CLASS__, 'add_link_icons'), 100, 1);*/
         foreach(Wpil_Settings::getPostTypes() as $post_type){
             add_filter( "manage_{$post_type}_posts_columns", array(__CLASS__, 'add_columns'), 11 );
             add_action( "manage_{$post_type}_posts_custom_column", array(__CLASS__, 'columns_contents'), 11, 2);
+        }
+
+        foreach(Wpil_Settings::getTermTypes() as $term_type){
+            add_filter($term_type . '_row_actions', array(__CLASS__, 'modify_list_row_actions'), 10, 2); // we can only add the row actions. There's no modifying of the columns...
         }
     }
 
@@ -53,6 +79,13 @@ class Wpil_Base
             Wpil_Export::clear_exports();
             delete_transient('wpil_clear_exports_folder');
         }*/
+
+
+        $clear_exports = get_transient('wpil_clear_exports_folder');
+        if(!empty($clear_exports) && time() > (int)$clear_exports){
+            Wpil_Export::clear_exports();
+            delete_transient('wpil_clear_exports_folder');
+        }
 
         $post = self::getPost();
 
@@ -86,6 +119,22 @@ class Wpil_Base
             }
         }
 
+        // if we're on a link whisper page
+        if(isset($_GET['page']) && ('link_whisper' === $_GET['page'] || 'link_whisper_settings' === $_GET['page'])){
+            // do a version check
+            $version = get_option('wpil_version_check_update', WPIL_PLUGIN_OLD_VERSION_NUMBER);
+            // if the plugin update check hasn't run yet
+            if($version < WPIL_PLUGIN_VERSION_NUMBER){
+                // create any tables that need creating
+                self::createDatabaseTables();
+                // and make sure the existing tables are up to date
+                self::updateTables();
+                // note the updated status
+                update_option('wpil_version_check_update', WPIL_PLUGIN_VERSION_NUMBER);
+            }
+        }
+
+
         //add screen options
         add_action("load-" . self::$report_menu, function () {
             add_screen_option( 'report_options', array(
@@ -107,6 +156,18 @@ class Wpil_Base
             return;
         }
 
+        if(!WPIL_STATUS_HAS_RUN_SCAN && !Wpil_Settings::has_run_wizard()){
+            add_menu_page(
+                __('Link Whisper', 'wpil'),
+                __('Link Whisper', 'wpil'),
+                'manage_categories',
+                'link_whisper_wizard',
+                [Wpil_Wizard::class, 'init'],
+                plugin_dir_url(__DIR__).'../images/lw-icon-16x16.png'
+            );
+           return;
+        }
+
         add_menu_page(
             'Link Whisper',
             'Link Whisper',
@@ -115,6 +176,24 @@ class Wpil_Base
             [Wpil_Report::class, 'init'],
             plugin_dir_url(__DIR__). '../images/lw-icon-16x16.png'
         );
+
+        if(WPIL_STATUS_HAS_RUN_SCAN){
+            $page_title = __('Internal Links Report', 'wpil');
+            $menu_title = __('Reports', 'wpil');
+        }else{
+            $page_title = __('Internal Links Report', 'wpil');
+            $menu_title = __('Complete Install', 'wpil');
+        }
+
+        $menu_list = array(
+//            'link_whisper_dashboard', // we'll always have the main report page since we need to stick the reports to something
+            'link_whisper_target_keywords', //
+            'link_whisper_settings', //
+            'link_whisper_wizard',
+            'link_whisper_ai_subscription'
+        );
+
+        $menu_list = apply_filters('wpil_filter_menu_listings', $menu_list);
 
         self::$report_menu = add_submenu_page(
             'link_whisper',
@@ -125,19 +204,61 @@ class Wpil_Base
             [Wpil_Report::class, 'init']
         );
 
-        add_submenu_page(
-            'link_whisper',
-            'Settings',
-            'Settings',
-            'manage_categories',
-            'link_whisper_settings',
-            [Wpil_Settings::class, 'init']
-        );
+        if(in_array('link_whisper_wizard', $menu_list, true)){
+            add_submenu_page(
+                'link_whisper',
+                __('One Click Setup', 'wpil'),
+                __('One Click Setup', 'wpil'),
+                'manage_categories',
+                'link_whisper_wizard',
+                [Wpil_Wizard::class, 'init']
+            );
+        }
+
+        if(in_array('link_whisper_ai_subscription', $menu_list, true) && current_user_can('install_plugins')){
+            add_submenu_page(
+                'link_whisper',
+                __('AI Subscription', 'wpil'),
+                __('AI Subscription', 'wpil'),
+                'manage_categories',
+                'link_whisper_ai_subscription',
+                [Wpil_Settings::class, 'ai_init']
+            );
+        }
+
+        if(in_array('link_whisper_target_keywords', $menu_list, true)){
+            $target_keywords = add_submenu_page(
+                'link_whisper',
+                __('Target Keywords', 'wpil'),
+                __('Target Keywords', 'wpil'),
+                'manage_categories',
+                'link_whisper_target_keywords',
+                [Wpil_TargetKeyword::class, 'init']
+            );
+
+            //add target keyword screen options
+            add_action("load-" . $target_keywords, function () {
+                add_screen_option( 'target_keyword_options', array(
+                    'option' => 'target_keyword_options',
+                ) );
+            });
+        }
+
+        if(in_array('link_whisper_settings', $menu_list, true)){
+            add_submenu_page(
+                'link_whisper',
+                __('Settings', 'wpil'),
+                __('Settings', 'wpil'),
+                'manage_categories',
+                'link_whisper_settings',
+                [Wpil_Settings::class, 'init']
+            );
+        }
 
         add_submenu_page(
             'link_whisper',
             'Premium',
-            '<a class="link-whisper-get-premium-link" href="' . WPIL_STORE_URL . '" target="blank">Get Premium <span style="font-size: 16px; margin: 2px 0 -2px 0;" class="dashicons dashicons-admin-links"></span></a>',
+            '<a class="link-whisper-get-premium-link" href="' . WPIL_STORE_URL . '/upgrade-offer/" target="blank">Get Premium <span style="font-size: 16px; margin: 2px 0 -2px 0;" class="dashicons dashicons-admin-links"></span></a>',
             'manage_categories',
             WPIL_STORE_URL
         );
@@ -171,6 +292,26 @@ class Wpil_Base
         $plugin_data = get_plugin_data(WP_INTERNAL_LINKING_PLUGIN_DIR . 'link-whisper.php');
 
         return "<p style='float: right'>version <b>".esc_html($plugin_data['Version'])."</b></p>";
+    }
+
+    public static function show_tawkto_widget(){
+        if(!empty(get_option('wpil_disable_tawkto_widget', ''))){
+            return;
+        }?>
+        <!--Start of Tawk.to Script-->
+            <script type="text/javascript">
+            var Tawk_API=Tawk_API||{}, Tawk_LoadStart=new Date();
+            (function(){
+            var s1=document.createElement("script"),s0=document.getElementsByTagName("script")[0];
+            s1.async=true;
+            s1.src='https://embed.tawk.to/686b600853ff86190e6b0ab6/1ivhmu817';
+            s1.charset='UTF-8';
+            s1.setAttribute('crossorigin','*');
+            s0.parentNode.insertBefore(s1,s0);
+            })();
+            </script>
+        <!--End of Tawk.to Script-->
+        <?php
     }
 
     /**
@@ -280,26 +421,109 @@ class Wpil_Base
             }
         }
 
-        wp_register_script('wpil_helper', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/wpil_helper.js', array(), filemtime(WP_INTERNAL_LINKING_PLUGIN_DIR . '/js/wpil_helper.js'), true);
-
-        wp_register_script('wpil_base64', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/base64.js', array(), false, true);
-        wp_enqueue_script('wpil_base64');
-
-        wp_register_script('wpil_sweetalert_script_min', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/sweetalert.min.js', array('jquery'), $ver=false, true);
-        wp_enqueue_script('wpil_sweetalert_script_min');
-
         $js_path = 'js/wpil_admin.js';
         $f_path = WP_INTERNAL_LINKING_PLUGIN_DIR.$js_path;
         $ver = filemtime($f_path);
         $current_screen = get_current_screen();
 
-        wp_register_script('wpil_admin_script', WP_INTERNAL_LINKING_PLUGIN_URL.$js_path, array('jquery', 'wpil_helper'), $ver, true);
-        wp_enqueue_script('wpil_admin_script');
+        $added_standard = false;
 
-        wp_register_script('wpil_help_overlay', WP_INTERNAL_LINKING_PLUGIN_URL.'js/wpil_help_overlay.js', array('jquery', 'wpil_base64'), $ver, true);
-        wp_enqueue_script('wpil_help_overlay');
+        if(isset($_GET['page']) && $_GET['page'] == 'link_whisper' || (!empty($current_screen) && $current_screen->base === 'edit')){
+            self::add_standard_admin_scripts();
+            $added_standard = true;
+        }
+
+        // IF
+        if (isset($_GET['page']) && $_GET['page'] == 'link_whisper' && isset($_GET['type']) && ($_GET['type'] == 'inbound_suggestions_page' ||  // on the Inbound Suggestions page
+            $_GET['type'] == 'click_details_page'  ||                                                                                           // or the Detailed Click Report page
+            $_GET['type'] == 'links') ||                                                                                                        // or the Links Report page
+            (!empty($current_screen) && ( // we have the current screen and
+                'post' === $current_screen->base || // this is a post edit screen OR
+                'page' === $current_screen->base || // this is a page edit screen OR
+                'term' === $current_screen->base)   // this is a term edit screen
+            )
+        ){
+            if(!$added_standard){
+                self::add_standard_admin_scripts();
+                $added_standard = true;
+            }
+            wp_register_style('wpil_daterange_picker_css', WP_INTERNAL_LINKING_PLUGIN_URL . 'css/daterangepicker.css');
+            wp_enqueue_style('wpil_daterange_picker_css');
+            wp_register_style('wpil_select2_css', WP_INTERNAL_LINKING_PLUGIN_URL . 'css/select2.min.css');
+            wp_enqueue_style('wpil_select2_css');
+            wp_register_script('wpil_moment', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/moment.js', array('jquery'), $ver, true);
+            wp_enqueue_script('wpil_moment');
+            wp_register_script('wpil_daterange_picker', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/daterangepicker.js', array('jquery', 'wpil_moment'), $ver, true);
+            wp_enqueue_script('wpil_daterange_picker');
+            wp_register_script('wpil_select2', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/select2.full.min.js', array('jquery'), $ver, true); // Todo: remove the select2.min.js file when we pass 2.2.0
+            wp_enqueue_script('wpil_select2');
+        }
+
+        if (isset($_GET['page']) && $_GET['page'] == 'link_whisper' && isset($_GET['type']) && $_GET['type'] == 'links') {
+            if(!$added_standard){
+                self::add_standard_admin_scripts();
+                $added_standard = true;
+            }
+            wp_register_script('wpil_report', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/wpil_report.js', array('jquery', 'wpil_helper'), $ver, true);
+            wp_enqueue_script('wpil_report');
+        }
+
+        if (isset($_GET['page']) && $_GET['page'] == 'link_whisper' && isset($_GET['type']) && $_GET['type'] == 'error') {
+            if(!$added_standard){
+                self::add_standard_admin_scripts();
+                $added_standard = true;
+            }
+            wp_register_script('wpil_error', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/wpil_error.js', array('jquery', 'wpil_helper'), $ver, true);
+            wp_enqueue_script('wpil_error');
+        }
+
+        if (isset($_GET['page']) && $_GET['page'] == 'link_whisper' && isset($_GET['type']) && $_GET['type'] == 'domains') {
+            if(!$added_standard){
+                self::add_standard_admin_scripts();
+                $added_standard = true;
+            }
+            wp_register_style('wpil_select2_css', WP_INTERNAL_LINKING_PLUGIN_URL . 'css/select2.min.css');
+            wp_enqueue_style('wpil_select2_css');
+            wp_register_script('wpil_select2', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/select2.full.min.js', array('jquery'), $ver, true); // Todo: remove the select2.min.js file when we pass 2.2.0
+            wp_enqueue_script('wpil_select2');
+            
+            wp_register_script('wpil_domains', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/wpil_domains.js', array('jquery', 'wpil_helper'), $ver, true);
+            wp_enqueue_script('wpil_domains');
+        }
+
+        if (isset($_GET['page']) && $_GET['page'] == 'link_whisper' && isset($_GET['type']) && ( $_GET['type'] == 'click_details_page' || $_GET['type'] == 'clicks')) {
+            if(!$added_standard){
+                self::add_standard_admin_scripts();
+                $added_standard = true;
+            }
+            wp_register_script('wpil_click', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/wpil_click.js', array('jquery', 'wpil_helper'), $ver, true);
+            wp_enqueue_script('wpil_click');
+        }
+
+        if (isset($_GET['page']) && $_GET['page'] == 'link_whisper' && isset($_GET['type']) && $_GET['type'] == 'sitemaps') {
+            if(!$added_standard){
+                self::add_standard_admin_scripts();
+                $added_standard = true;
+            }
+            wp_enqueue_script('wpil_sitemaps', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/sitemaps.min.js', array('jquery', 'wpil_helper'), $ver, true);
+            wp_register_script('wpil_papa_parse', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/papaparse.min.js', array('jquery'), $ver, true);
+            wp_enqueue_script('wpil_papa_parse');
+        }
+
+        if (isset($_GET['page']) && ($_GET['page'] == 'link_whisper_target_keywords' || $_GET['page'] == 'link_whisper' && isset($_GET['type']) && $_GET['type'] === 'inbound_suggestions_page') || ('post' === $current_screen->base || 'term' === $current_screen->base) ) {
+            if(!$added_standard){
+                self::add_standard_admin_scripts();
+                $added_standard = true;
+            }
+            wp_register_script('wpil_target_keyword', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/wpil_target_keyword.js', array('jquery', 'wpil_helper'), $ver, true);
+            wp_enqueue_script('wpil_target_keyword');
+        }
 
         if(isset($_GET['page']) && ($_GET['page'] == 'link_whisper_settings')){
+            if(!$added_standard){
+                self::add_standard_admin_scripts();
+                $added_standard = true;
+            }
             $js_path = 'js/wpil_admin_settings.js';
             $ver = filemtime(WP_INTERNAL_LINKING_PLUGIN_DIR.$js_path);
     
@@ -310,6 +534,25 @@ class Wpil_Base
             wp_enqueue_style('wpil_select2_css');
             wp_register_script('wpil_select2', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/select2.full.min.js', array('jquery'), $ver, true);
             wp_enqueue_script('wpil_select2');
+        }
+
+        if(isset($_GET['page']) && ($_GET['page'] == 'link_whisper_ai_subscription')){
+            if(!$added_standard){
+                self::add_standard_admin_scripts();
+                $added_standard = true;
+            }
+
+            wp_enqueue_script('stripe-js', 'https://js.stripe.com/v3/', [], null, true);
+
+
+            // TODO: ADD JS IN SPECIFIC FILES
+            /*
+            $js_path = 'js/wpil_admin_settings.js';
+            $f_path = WP_INTERNAL_LINKING_PLUGIN_DIR.$js_path;
+            $ver = filemtime($f_path);
+
+            wp_register_script('wpil_admin_settings_script', WP_INTERNAL_LINKING_PLUGIN_URL.$js_path, array('jquery', 'wpil_select2', 'wpil_helper'), $ver, true);
+            wp_enqueue_script('wpil_admin_settings_script');*/
         }
 
         $style_path = 'css/wpil_admin.css';
@@ -347,7 +590,7 @@ class Wpil_Base
         $script_params['dismiss_explain_page'] = false; $dismiss_explain_page;
 
         $script_params['wpil_timepicker_format'] = Wpil_Toolbox::convert_date_format_for_js();
-
+/*
         $script_params['wpil_help_overlay_controls'] =
         '<div id="wpil-floating-help-menu" class="button-wave-effect" style="display: flex; flex-direction: column; gap: 10px; position: fixed; bottom: 20px; right: 20px;">
             <input type="hidden" id="wpil-floating-help-menu-nonce" value="' . wp_create_nonce(get_current_user_id() . 'wpil-floating-help-menu-nonce') . '">
@@ -397,6 +640,31 @@ class Wpil_Base
                 </div>
             </div>
         </div>';
+*/
+
+        $script_params['wpil_help_overlay_controls'] =
+        '<div id="wpil-floating-help-menu" style="display: flex; flex-direction: column; gap: 10px; position: fixed; bottom: 20px; right: 20px;height: 0px;width: 0px; padding:0px;">
+            <input type="hidden" id="wpil-floating-help-menu-nonce" value="' . wp_create_nonce(get_current_user_id() . 'wpil-floating-help-menu-nonce') . '">
+            <div id="wpil-explain-page-control-wrapper">
+                <button id="wpil-explain-page-button" class="wpil-floating-button" style="display:none"></button>
+                <div id="wpil-help-overlay-controls" style="display:none; height: 0px;width: 0px; padding:0px;">
+                <span class="close-overlay dashicons dashicons-plus-alt2"></span>
+                    <div class="wpil-help-overlay-segment-container" style="position:fixed; left: calc(50% - 100px); width: 100px; background: #ffffff; bottom: 30px; padding: 5px 20px;">
+                        <div class="wpil-help-overlay-segment segments-completed"></div>
+                        <div>OF</div>
+                        <div class="wpil-help-overlay-segment segments-total"></div>
+                    </div>
+                    <div class="wpil-help-overlay-control-container">
+                        <div class="wpil-help-overlay-control wpil-help-backward" style="position:fixed; left: 50px; top:50%;">
+                            <button><span class="dashicons dashicons-arrow-left-alt2"></span></button>
+                        </div>
+                        <div class="wpil-help-overlay-control wpil-help-forward" style="position:fixed; right: 50px; top:50%; height: 60px; background: #cdcdcd; border-radius: 25px;">
+                            <button><span class="dashicons dashicons-arrow-right-alt2"></span></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>';
 
         if(null !== $current_screen && 'dashboard' === $current_screen->base){
             wp_register_script('wpil_convertkit_script', 'https://f.convertkit.com/ckjs/ck.5.js', array(), false, true);
@@ -426,13 +694,60 @@ class Wpil_Base
             wp_enqueue_style('wpil_convertkit_style');
         }
 
-        wp_localize_script('wpil_admin_script', 'wpil_ajax', $script_params);
+        // TODO: INSTALL AI NUDGE
+
+        if (isset($_GET['page']) && $_GET['page'] == 'link_whisper_wizard') {
+            if(!$added_standard){
+                self::add_standard_admin_scripts();
+                $added_standard = true;
+            }
+            wp_register_script('wpil_wizard', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/wpil_wizard.js', array('jquery', 'wpil_base64', 'wpil_tippy', 'wpil_popper', 'wpil_helper'), $ver, true);
+            wp_enqueue_script('wpil_wizard');
+        }
+
+        if($added_standard){
+            wp_localize_script('wpil_admin_script', 'wpil_ajax', $script_params);
+        }
+    }
+
+    public static function add_standard_admin_scripts(){
+        wp_register_script('wpil_helper', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/wpil_helper.js', array(), filemtime(WP_INTERNAL_LINKING_PLUGIN_DIR . '/js/wpil_helper.js'), true);
+
+        wp_register_script('wpil_base64', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/base64.js', array(), false, true);
+        wp_enqueue_script('wpil_base64');
+
+        wp_register_script('wpil_sweetalert_script_min', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/sweetalert.min.js', array('jquery'), $ver=false, true);
+        wp_enqueue_script('wpil_sweetalert_script_min');
+
+        $js_path = 'js/wpil_admin.js';
+        $f_path = WP_INTERNAL_LINKING_PLUGIN_DIR.$js_path;
+        $ver = filemtime($f_path);
+        $current_screen = get_current_screen();
+
+        wp_register_style('wpil_tippy_style', WP_INTERNAL_LINKING_PLUGIN_URL . 'css/tippy.css');
+        wp_enqueue_style('wpil_tippy_style');
+
+        wp_register_script('wpil_popper', WP_INTERNAL_LINKING_PLUGIN_URL.'js/popper.min.js', array(), $ver, true);
+        wp_enqueue_script('wpil_popper');
+
+        wp_register_script('wpil_tippy', WP_INTERNAL_LINKING_PLUGIN_URL.'js/tippy.umd.js', array(), $ver, true);
+        wp_enqueue_script('wpil_tippy');
+
+        wp_register_script('wpil_admin_script', WP_INTERNAL_LINKING_PLUGIN_URL.$js_path, array('jquery', 'wpil_base64', 'wpil_tippy', 'wpil_popper', 'wpil_helper'), $ver, true);
+        wp_enqueue_script('wpil_admin_script');
+
+        wp_register_script('wpil_help_overlay', WP_INTERNAL_LINKING_PLUGIN_URL.'js/wpil_help_overlay.js', array('jquery', 'wpil_base64', 'wpil_tippy', 'wpil_popper', 'wpil_helper'), $ver, true);
+        wp_enqueue_script('wpil_help_overlay');
     }
 
     /**
      * Gets the type of page that we're currently on
      **/
     public static function get_current_page(){
+        if(!function_exists('get_current_screen')){
+            return '';
+        }
+
         $current_page = get_current_screen();
         $page = '';
         if(isset($_GET['type'])){
@@ -459,6 +774,100 @@ class Wpil_Base
         $pages = array( 'links', 'dashboard',
                         'post-edit', 'term-edit');
         return $pages;
+    }
+
+    /**
+     * Enqueues the scripts to use on the frontend.
+     **/
+    public static function enqueue_frontend_scripts(){
+        global $wp_the_query, $post;
+
+        // if we're doing a preview of the settings
+        if( isset($_GET['wpil_related_post_preview_nonce']) &&
+            isset($_GET['nonce']) && 
+            wp_verify_nonce($_GET['nonce'], 'wpil-related-posts-preview-nonce'))
+        {
+            // inline a bit of JS to scroll the window to the RP widget
+            wp_register_script('link-whisper-related-post-preview-inline', '');
+            wp_enqueue_script('link-whisper-related-post-preview-inline');
+            wp_add_inline_script('link-whisper-related-post-preview-inline', 'window.location.hash = "#link-whisper-related-posts-widget";');
+        }
+
+        // TODO: Add an option to disable the frontend scripts.
+        if(empty($wp_the_query)){
+            return;
+        }
+
+        $posty = $wp_the_query->get_queried_object();
+
+        // if we're on a post type archive
+        if($wp_the_query->is_post_type_archive || is_a($posty, 'WP_Post_Type')){
+            // exit since we can't accurately assign clicks to a post
+            return;
+        }
+        
+        if(empty($posty)){
+            $posty = $post;
+        }
+
+        // get if the links are to be opened in new tabs
+        $open_with_js       = (!empty(get_option('wpil_js_open_new_tabs', false))) ? 1: 0;
+        $open_all_intrnl    = (!empty(get_option('wpil_open_all_internal_new_tab', false))) ? 1: 0;
+        $open_all_extrnl    = (!empty(get_option('wpil_open_all_external_new_tab', false))) ? 1: 0;
+
+        // and if the user has disabled click tracking or there isn't a valid post id
+        $dont_track_clicks = (!empty(get_option('wpil_disable_click_tracking', false)) || empty($posty)) ? 1: 0;
+
+        // if none of them are, exit
+        if( ($open_with_js == 0 || $open_all_intrnl == 0 && $open_all_extrnl == 0) && $dont_track_clicks == 1){
+            return;
+        }
+
+        // put together the ajax variables
+        $ajax_url = get_site_url(null, 'wp-admin/admin-ajax.php', 'relative');
+        $type = null; 
+        $id = null;
+        if(!empty($posty)){
+            $type = (is_a($posty, 'WP_Term')) ? 'term': 'post';
+            $id = ($type === 'post') ? $posty->ID: $posty->term_id;
+        }
+        $script_params = [];
+        $script_params['ajaxUrl'] = $ajax_url;
+        $script_params['postId'] = $id;
+        $script_params['postType'] = $type;
+        $script_params['openInternalInNewTab'] = $open_all_intrnl;
+        $script_params['openExternalInNewTab'] = $open_all_extrnl;
+        $script_params['disableClicks'] = $dont_track_clicks;
+        $script_params['openLinksWithJS'] = $open_with_js;
+        $script_params['trackAllElementClicks'] = !empty(get_option('wpil_track_all_element_clicks', 0)) ? 1: 0;
+
+
+        // output some actual localizations
+        $script_params['clicksI18n'] = array(
+            'imageNoText'   => __('Image in link: No Text', 'wpil'),
+            'imageText'     => __('Image Title: ', 'wpil'),
+            'noText'        => __('No Anchor Text Found', 'wpil'),
+        );
+
+        // enqueue the frontend scripts
+        $filename = 'frontend.min.js';
+
+        $file_path = WP_INTERNAL_LINKING_PLUGIN_DIR . 'js/' . $filename;
+        $url_path  = WP_INTERNAL_LINKING_PLUGIN_URL . 'js/' . $filename;
+        wp_enqueue_script('wpil-frontend-script', $url_path, array(), filemtime($file_path), true);
+
+        // output the ajax variables
+        wp_localize_script('wpil-frontend-script', 'wpilFrontend', $script_params);
+
+        // if we're supposed to add the frontend scripts and the user is able to see them
+        if( isset($_GET['wpil_admin_frontend']) && 
+            is_user_logged_in() && 
+            current_user_can(apply_filters('wpil_filter_main_permission_check', 'manage_categories', self::get_current_page())))
+        {
+            $file_path = WP_INTERNAL_LINKING_PLUGIN_DIR . 'js/admin-frontend.js';
+            $url_path  = WP_INTERNAL_LINKING_PLUGIN_URL . 'js/admin-frontend.js';
+            wp_enqueue_script('wpil-admin-frontend-script', $url_path, array('jquery'), filemtime($file_path), true);
+        }
     }
 
     /**
@@ -680,9 +1089,801 @@ class Wpil_Base
             // set the install date so we can tell how long the user has been with us
             update_option('wpil_free_install_date', current_time('mysql', true));
         }
-        if('' === get_option('wpil_free_update_count', '')){
-            // start counting the updates
-            update_option('wpil_free_update_count', 0);
+
+        // disabling in 2.5.6... Shouldn't need this anymore since it's been ~4 years since the class has been used.
+        //Wpil_Link::removeLinkClass();
+
+        // temp cleanup function, remove when we get to 2.7.0
+        Wpil_AI::clear_duplicate_calculated_embeddings();
+
+        self::createDatabaseTables();
+        self::updateTables();
+        // note the updated status
+        update_option('wpil_version_check_update', WPIL_PLUGIN_VERSION_NUMBER);
+    }
+
+    /**
+     * Runs any update routines after the plugin has been updated.
+     */
+    public static function upgrade_complete($upgrader_object, $options){
+        // If an update has taken place and the updated type is plugins and the plugins element exists
+        if( $options['action'] == 'update' && $options['type'] == 'plugin' && isset( $options['plugins'] ) ) {
+            // Go through each plugin to see if Link Whisper was updated
+            foreach( $options['plugins'] as $plugin ) {
+                if( $plugin == WPIL_PLUGIN_NAME ) {
+                    // create any tables that need creating
+                    self::createDatabaseTables(); // BOOK:
+                    // and make sure the existing tables are up to date
+                    self::updateTables();
+                    // note the updated status
+                    update_option('wpil_version_check_update', WPIL_PLUGIN_VERSION_NUMBER);
+                }
+            }
+        }
+    }
+
+    /**
+     * Updates the existing LW data tables with changes as we add them.
+     * Does a version check to see if any DB tables have been updated since the last time this was run.
+     * 
+     * @param bool $force_update Setting $force_update to true will ignore the version checks and run all update steps
+     */
+    public static function updateTables($force_update = false){
+        global $wpdb;
+
+        $autolink_tbl = $wpdb->prefix . 'wpil_keyword_links';
+        $autolink_rule_tbl = $wpdb->prefix . 'wpil_keywords';
+        $autolink_select_tbl = $wpdb->prefix . 'wpil_keyword_select_links';
+        $broken_link_tbl = $wpdb->prefix . 'wpil_broken_links';
+        $ignore_broken_link_tbl = $wpdb->prefix . 'wpil_ignore_links';
+        $report_links_tbl = $wpdb->prefix . 'wpil_report_links';
+        $target_keyword_tbl = $wpdb->prefix . 'wpil_target_keyword_data';
+        $url_changer_tbl = $wpdb->prefix . 'wpil_urls';
+        $url_links_tbl = $wpdb->prefix . 'wpil_url_links';
+        $click_tracking_tbl = $wpdb->prefix . 'wpil_click_data';
+        $related_posts_tbl = $wpdb->prefix . "wpil_related_posts";
+        $ai_embedding_tbl = $wpdb->prefix . "wpil_ai_embedding_data";
+        $ai_embedding_calc_tbl = $wpdb->prefix . "wpil_ai_embedding_calculation_data";
+        $ai_product_tbl = $wpdb->prefix . "wpil_ai_product_data";
+        $ai_keyword_tbl =  $wpdb->prefix . "wpil_ai_keyword_data";
+        $ai_suggestion_sentence_tbl = $wpdb->prefix . "wpil_ai_processed_sentences";
+        $ai_suggested_anchor_tbl = $wpdb->prefix . "wpil_ai_suggested_anchors";
+        $ai_credit_tbl = $wpdb->prefix . "wpil_ai_token_use_data";
+
+        $fresh_install = get_option('wpil_fresh_install', false);
+
+        // if the DB is up to date, exit
+        if(WPIL_STATUS_SITE_DB_VERSION === WPIL_STATUS_PLUGIN_DB_VERSION && !$force_update){
+            return;
+        }
+
+        // if this is a fresh install of the plugin and not a forced update
+        if($fresh_install && empty(WPIL_STATUS_SITE_DB_VERSION) && !$force_update){
+            // set the DB version as the latest since all the created tables will be up to date
+            update_option('wpil_site_db_version', WPIL_STATUS_PLUGIN_DB_VERSION);
+            update_option('wpil_fresh_install', false);
+            // and exit
+            return;
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 0.9 || $force_update){
+            // Added in v1.0.0
+            // if the error links table exists
+            $error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$broken_link_tbl}'");
+            if(!empty($error_tbl_exists)){
+                // find out if the table has a last_checked col
+                $col = $wpdb->query("SHOW COLUMNS FROM {$broken_link_tbl} LIKE 'last_checked'");
+                if(empty($col)){
+                    // if it doesn't, add it and a check_count col to the table
+                    $update_table = "ALTER TABLE {$broken_link_tbl} ADD COLUMN check_count INT(2) DEFAULT 0 AFTER created, ADD COLUMN last_checked DATETIME NOT NULL DEFAULT NOW() AFTER created";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            // update the state of the DB to this point
+            update_option('wpil_site_db_version', '0.9');
+        }
+
+        // if the current DB version is less than 1.0, run the 1.0 update
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.0 || $force_update){
+            /** added in v1.0.1 **/
+            // if the error links table exists
+            $error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$broken_link_tbl}'");
+            if(!empty($error_tbl_exists)){
+                // find out if the table has a ignore_link col
+                $col = $wpdb->query("SHOW COLUMNS FROM {$broken_link_tbl} LIKE 'ignore_link'");
+                if(empty($col)){
+                    // if it doesn't, update it with the "ignore_link" column
+                    $update_table = "ALTER TABLE {$broken_link_tbl} ADD COLUMN ignore_link tinyint(1) DEFAULT 0 AFTER `check_count`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            // update the state of the DB to this point
+            update_option('wpil_site_db_version', '1.0');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.16 || $force_update){
+            $error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$broken_link_tbl}'");
+            if(!empty($error_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$broken_link_tbl} LIKE 'sentence'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$broken_link_tbl} ADD COLUMN sentence varchar(1000) AFTER `ignore_link`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            $error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$report_links_tbl}'");
+            if(!empty($error_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'location'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN location varchar(20) AFTER `post_type`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.16');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.17 || $force_update){
+            $keywrd_url_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_tbl}'");
+            if(!empty($keywrd_url_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_tbl} LIKE 'anchor'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_tbl} ADD COLUMN anchor text AFTER `post_type`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.17');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.18 || $force_update){
+            $keywrd_url_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'");
+            if(!empty($keywrd_url_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'restrict_cats'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN restrict_cats tinyint(1) DEFAULT 0 AFTER `link_once`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            $keywrd_url_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'");
+            if(!empty($keywrd_url_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'restricted_cats'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN restricted_cats text AFTER `restrict_cats`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.18');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.19 || $force_update){
+            $keywrd_url_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'");
+            if(!empty($keywrd_url_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'restrict_date'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN restrict_date tinyint(1) DEFAULT 0 AFTER `link_once`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'restricted_date'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN restricted_date DATETIME AFTER `restrict_date`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.19');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.20 || $force_update){
+            $keywrd_url_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'");
+            if(!empty($keywrd_url_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'select_links'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN select_links tinyint(1) DEFAULT 0 AFTER `link_once`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            // make sure the possible links table is created too
+//            Wpil_Keyword::preparePossibleLinksTable();
+
+            update_option('wpil_site_db_version', '1.20');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.21 || $force_update){
+            $keywrd_url_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'");
+            if(!empty($keywrd_url_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'set_priority'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN set_priority tinyint(1) DEFAULT 0 AFTER `select_links`";
+                    $wpdb->query($update_table);
+                }
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'priority_setting'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN priority_setting int DEFAULT 0 AFTER `set_priority`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.21');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.22 || $force_update){
+            $changed_urls_exist = $wpdb->query("SHOW TABLES LIKE '{$url_links_tbl}'");
+            if(!empty($changed_urls_exist)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$url_links_tbl} LIKE 'relative_link'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$url_links_tbl} ADD COLUMN relative_link tinyint(1) DEFAULT 0 AFTER `anchor`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.22');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.23 || $force_update){
+            $error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$report_links_tbl}'");
+            if(!empty($error_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'broken_link_scanned'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN broken_link_scanned tinyint(1) DEFAULT 0 AFTER `location`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.23');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.24 || $force_update){
+            $trgt_kword_tbl_exists = $wpdb->query("SHOW TABLES LIKE '$target_keyword_tbl'");
+            if(!empty($trgt_kword_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM $target_keyword_tbl LIKE 'auto_checked'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE $target_keyword_tbl ADD COLUMN auto_checked tinyint(1) DEFAULT 0 AFTER `save_date`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.24');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.25 || $force_update){
+            $clk_tbl_exists = $wpdb->query("SHOW TABLES LIKE '$click_tracking_tbl'");
+            if(!empty($clk_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM $click_tracking_tbl LIKE 'link_location'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE $click_tracking_tbl ADD COLUMN link_location varchar(64) DEFAULT 'Body Content' AFTER `link_anchor`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.25');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.26 || $force_update){
+            $keywrd_url_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'");
+            if(!empty($keywrd_url_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'case_sensitive'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN case_sensitive tinyint(1) DEFAULT 0 AFTER `restricted_cats`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.26');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.27 || $force_update){
+            $keywrd_url_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'");
+            if(!empty($keywrd_url_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'force_insert'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN force_insert tinyint(1) DEFAULT 0 AFTER `case_sensitive`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.27');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.28 || $force_update){
+            $url_changer_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$url_changer_tbl}'");
+            if(!empty($url_changer_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$url_changer_tbl} LIKE 'wildcard_match'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$url_changer_tbl} ADD COLUMN wildcard_match tinyint(1) DEFAULT 0 AFTER `new`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            $url_links_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$url_links_tbl}'");
+            if(!empty($url_links_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$url_links_tbl} LIKE 'original_url'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$url_links_tbl} ADD COLUMN original_url text NOT NULL AFTER `anchor`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            $broken_link_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$broken_link_tbl}'");
+            if(!empty($broken_link_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$broken_link_tbl} LIKE 'anchor'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$broken_link_tbl} ADD COLUMN anchor text NOT NULL AFTER `sentence`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.28');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.29 || $force_update){
+            $autolink_rule_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'");
+            if(!empty($autolink_rule_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'link'"); // This time we have to make sure `link` _does_ exist
+                if(!empty($col)){
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} CHANGE `link` `link` VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.29');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.30 || $force_update){
+            $autolink_rule_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'");
+            if(!empty($autolink_rule_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'limit_inserts'"); // since we're adding cols, make sure it doens't already exist
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN limit_inserts tinyint(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `link_once`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'insert_limit'"); // since we're adding cols, make sure it doens't already exist
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN insert_limit INT(10) UNSIGNED NOT NULL DEFAULT 0 AFTER `limit_inserts`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'prioritize_longtail'"); // since we're adding cols, make sure it doens't already exist
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN prioritize_longtail tinyint(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `priority_setting`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'same_lang'"); // since we're adding cols, make sure it doens't already exist
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN same_lang tinyint(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `force_insert`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.30');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.31 || $force_update){
+            $link_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$report_links_tbl}'");
+            if(!empty($link_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'target_id'"); // since we're adding cols, make sure it doens't already exist
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN target_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 AFTER `post_id`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'target_type'"); // since we're adding cols, make sure it doens't already exist
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN target_type TEXT AFTER `target_id`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.31');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.32 || $force_update){
+            $keywrd_url_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_tbl}'");
+            if(!empty($keywrd_url_tbl_exists)) {
+                $index = $wpdb->query("SHOW INDEX FROM {$autolink_tbl} WHERE COLUMN_NAME = 'keyword_id'"); // since we're adding cols, make sure it doens't already exist
+                if(empty($index)){
+                    $update_table = "ALTER TABLE {$autolink_tbl} ADD INDEX(`keyword_id`)";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.32');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.33 || $force_update){
+            $link_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$report_links_tbl}'");
+            if(!empty($link_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'link_whisper_created'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN link_whisper_created tinyint(1) DEFAULT 0 AFTER `broken_link_scanned`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'is_autolink'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN is_autolink tinyint(1) DEFAULT 0 AFTER `link_whisper_created`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.33');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.34 || $force_update){
+            $error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$broken_link_tbl}'");
+            if(!empty($error_tbl_exists)){
+                // find out if the table has a ignore_link col
+                $row = $wpdb->get_row("SHOW COLUMNS FROM {$broken_link_tbl} LIKE 'post_id'");
+                if(!empty($row) && isset($row->Type) && is_string($row->Type) && false !== strpos($row->Type, 'int(10)')){
+                    // if it doesn't, update it with the "ignore_link" column
+                    $update_table = "ALTER TABLE {$broken_link_tbl} CHANGE `post_id` `post_id` BIGINT(20) UNSIGNED NOT NULL";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            $ignore_error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ignore_broken_link_tbl}'");
+            if(!empty($ignore_error_tbl_exists)){
+                // find out if the table has a ignore_link col
+                $row = $wpdb->get_row("SHOW COLUMNS FROM {$ignore_broken_link_tbl} LIKE 'post_id'");
+                if(!empty($row) && isset($row->Type) && is_string($row->Type) && false !== strpos($row->Type, 'int(10)')){
+                    // if it doesn't, update it with the "ignore_link" column
+                    $update_table = "ALTER TABLE {$ignore_broken_link_tbl} CHANGE `post_id` `post_id` BIGINT(20) UNSIGNED NOT NULL";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            if(!empty($wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'"))){
+                // find out if the table has a ignore_link col
+                $row = $wpdb->get_row("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'post_id'");
+                if(!empty($row) && isset($row->Type) && is_string($row->Type) && false !== strpos($row->Type, 'int(10)')){
+                    // if it doesn't, update it with the "ignore_link" column
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} CHANGE `post_id` `post_id` BIGINT(20) UNSIGNED NOT NULL";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            if(!empty($wpdb->query("SHOW TABLES LIKE '{$autolink_select_tbl}'"))){
+                // find out if the table has a ignore_link col
+                $row = $wpdb->get_row("SHOW COLUMNS FROM {$autolink_select_tbl} LIKE 'post_id'");
+                if(!empty($row) && isset($row->Type) && is_string($row->Type) && false !== strpos($row->Type, 'int(10)')){
+                    // if it doesn't, update it with the "ignore_link" column
+                    $update_table = "ALTER TABLE {$autolink_select_tbl} CHANGE `post_id` `post_id` BIGINT(20) UNSIGNED NOT NULL";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            if(!empty($wpdb->query("SHOW TABLES LIKE '{$url_links_tbl}'"))){
+                // find out if the table has a ignore_link col
+                $row = $wpdb->get_row("SHOW COLUMNS FROM {$url_links_tbl} LIKE 'post_id'");
+                if(!empty($row) && isset($row->Type) && is_string($row->Type) && false !== strpos($row->Type, 'int(10)')){
+                    // if it doesn't, update it with the "ignore_link" column
+                    $update_table = "ALTER TABLE {$url_links_tbl} CHANGE `post_id` `post_id` BIGINT(20) UNSIGNED NOT NULL";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            if(!empty($wpdb->query("SHOW TABLES LIKE '{$related_posts_tbl}'"))){
+                // find out if the table has a ignore_link col
+                $row = $wpdb->get_row("SHOW COLUMNS FROM {$related_posts_tbl} LIKE 'post_id'");
+                if(!empty($row) && isset($row->Type) && is_string($row->Type) && false !== strpos($row->Type, 'int(10)')){
+                    // if it doesn't, update it with the "ignore_link" column
+                    $update_table = "ALTER TABLE {$related_posts_tbl} CHANGE `post_id` `post_id` BIGINT(20) UNSIGNED NOT NULL";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.34');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.35 || $force_update){
+            if(!empty($wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'"))){
+                // find out if the table has a ignore_link col
+                $exists = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'restrict_to_live'");
+                if(empty($exists)){
+                    // if it doesn't, update it with the "ignore_link" column
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN restrict_to_live tinyint(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `link_once`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.35');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.36 || $force_update){
+            $clk_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$click_tracking_tbl}'");
+            if(!empty($clk_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$click_tracking_tbl} LIKE 'tracking_id'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$click_tracking_tbl} ADD COLUMN tracking_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 AFTER `link_location`, ADD INDEX (`tracking_id`)";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            $link_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$report_links_tbl}'");
+            if(!empty($link_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'tracking_id'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN tracking_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 AFTER `is_autolink`, ADD INDEX (`tracking_id`)";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'module_link'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN module_link tinyint(1) DEFAULT 0 AFTER `tracking_id`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'link_context'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN link_context tinyint(1) DEFAULT 0 AFTER `module_link`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.36');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.37 || $force_update){
+            $link_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$report_links_tbl}'");
+            if(!empty($link_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'post_type'");
+                if(!empty($col)){
+                    $index = $wpdb->query("SHOW INDEX FROM {$report_links_tbl} WHERE COLUMN_NAME = 'post_type'"); // since we're adding cols, make sure it doens't already exist
+                    if(empty($index)){
+                        $update_table = "ALTER TABLE {$report_links_tbl} ADD INDEX(`post_type`)";
+                        $wpdb->query($update_table);
+                    }
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.37');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.38 || $force_update){
+            $link_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$report_links_tbl}'");
+            if(!empty($link_tbl_exists)) {
+                $col = $wpdb->get_row("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'post_type'");
+                if(!empty($col) && isset($col->Type) && $col->Type === 'text'){
+                    $update_table = "ALTER TABLE {$report_links_tbl} MODIFY `post_type` VARCHAR(8)";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->get_row("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'target_type'");
+                if(!empty($col) && isset($col->Type) && $col->Type === 'text'){
+                    $update_table = "ALTER TABLE {$report_links_tbl} MODIFY `target_type` VARCHAR(8)";
+                    $wpdb->query($update_table);
+                }
+
+                // make sure it has an index too!
+                if(!empty($col)){
+                    $index = $wpdb->query("SHOW INDEX FROM {$report_links_tbl} WHERE COLUMN_NAME = 'target_type'"); 
+                    if(empty($index)){
+                        $update_table = "ALTER TABLE {$report_links_tbl} ADD INDEX(`target_type`)";
+                        $wpdb->query($update_table);
+                    }
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'target_id'");
+                if(!empty($col)){
+                    $index = $wpdb->query("SHOW INDEX FROM {$report_links_tbl} WHERE COLUMN_NAME = 'target_id'"); 
+                    if(empty($index)){
+                        $update_table = "ALTER TABLE {$report_links_tbl} ADD INDEX(`target_id`)";
+                        $wpdb->query($update_table);
+                    }
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.38');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.39 || $force_update){
+            $clk_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$click_tracking_tbl}'");
+            if(!empty($clk_tbl_exists)) {
+                $index = $wpdb->query("SHOW INDEX FROM {$click_tracking_tbl} WHERE COLUMN_NAME = 'post_type'"); 
+                if(empty($index)){
+                    $update_table = "ALTER TABLE {$click_tracking_tbl} ADD INDEX(`post_type`)";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.39');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.40 || $force_update){
+            $mbddng_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_embedding_tbl}'");
+            if(!empty($mbddng_tbl_exists)){
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_embedding_tbl} LIKE 'is_empty'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_embedding_tbl} ADD COLUMN `is_empty` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `embed_data`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            $mbddng_clc_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_embedding_calc_tbl}'");
+            if(!empty($mbddng_clc_tbl_exists)){
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_embedding_calc_tbl} LIKE 'calc_index'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_embedding_calc_tbl} ADD COLUMN `calc_index` BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 AFTER `calculation`, ADD COLUMN `calc_count` BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 AFTER `calc_index`;";
+                    $wpdb->query($update_table);
+
+                    if((float)WPIL_STATUS_SITE_DB_VERSION < 1.40){
+                        $last_ind = Wpil_AI::get_last_embedding_index();
+                        if(!empty($last_ind)){
+                            $wpdb->update($ai_embedding_calc_tbl, array('calc_index' => $last_ind), array('calc_index' => 0));
+                        }
+                    }
+                }
+            
+                if(empty(get_option('wpil_term_index_cleanup', '0')) && empty(Wpil_Settings::getTermTypes())){
+                    $wpdb->query("DELETE FROM {$ai_embedding_tbl} WHERE `post_type` = 'term'");
+                    $wpdb->query("DELETE FROM {$ai_embedding_calc_tbl} WHERE `post_type` = 'term'");
+                    $wpdb->query("DELETE FROM {$ai_product_tbl} WHERE `post_type` = 'term'");
+                    $wpdb->query("DELETE FROM {$ai_keyword_tbl} WHERE `post_type` = 'term'");
+                    update_option('wpil_term_index_cleanup', '1');
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.40');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.41 || $force_update){
+            $mbddng_clc_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_embedding_calc_tbl}'");
+            if(!empty($mbddng_clc_tbl_exists)){
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_embedding_calc_tbl} LIKE 'calc_index'");
+                if(!empty($col)){
+                    $index = $wpdb->query("SHOW INDEX FROM {$ai_embedding_calc_tbl} WHERE COLUMN_NAME = 'calc_index'"); 
+                    if(empty($index)){
+                        $update_table = "ALTER TABLE {$ai_embedding_calc_tbl} ADD INDEX(`calc_index`)";
+                        $wpdb->query($update_table);
+                    }
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.41');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.42 || $force_update){
+            $sggstn_sntnc_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_suggestion_sentence_tbl}'");
+            if(!empty($sggstn_sntnc_tbl_exists)){
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_suggestion_sentence_tbl} LIKE 'has_link'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_suggestion_sentence_tbl} ADD COLUMN has_link tinyint(1) DEFAULT 0 AFTER `data_type`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.42');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.43 || $force_update){
+            $sggstd_ncr_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_suggested_anchor_tbl}'");
+            if(!empty($sggstd_ncr_tbl_exists)){
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_suggested_anchor_tbl} LIKE 'link_score'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_suggested_anchor_tbl} ADD COLUMN link_score int(4) DEFAULT 0 AFTER `target_data_type`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.43');
+        }
+        
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.44 || $force_update){
+            $autolink_rule_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'");
+            if(!empty($autolink_rule_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'auto_imported'"); // since we're adding cols, make sure it doens't already exist
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN auto_imported tinyint(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `same_lang`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'auto_managed'"); // since we're adding cols, make sure it doens't already exist
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN auto_managed tinyint(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `auto_imported`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.44');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.45 || $force_update){
+            $link_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$report_links_tbl}'");
+            if(!empty($link_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'anchor_word_count'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN anchor_word_count INT(10) UNSIGNED NOT NULL DEFAULT 0 AFTER `anchor`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'ai_relation_score'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN ai_relation_score DOUBLE UNSIGNED NOT NULL DEFAULT '0' AFTER `link_context`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.45');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.46 || $force_update){
+            $link_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_credit_tbl}'");
+            if(!empty($link_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_credit_tbl} LIKE 'credits_used'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$ai_credit_tbl} 
+                                    ADD COLUMN credits_used DECIMAL(10,4) UNSIGNED NOT NULL DEFAULT 0.0000 
+                                    AFTER `total_tokens`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            $mbddng_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_embedding_tbl}'");
+            if(!empty($mbddng_tbl_exists)){
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_embedding_tbl} LIKE 'is_empty'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_embedding_tbl} ADD COLUMN `is_empty` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `embed_data`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.46');
+        }
+
+        // todo create a database index for click tracking's user_ip column if people find that it takes too long to load the user_ip view
+/*
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.23 || $force_update){
+            $error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$report_links_tbl}'");
+            if(!empty($error_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'broken_link_scanned'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN broken_link_scanned tinyint(1) DEFAULT 0 AFTER `location`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.23');
+        }*/
+    }
+
+    /**
+     * Runs our deactivation routines when the plugin is turned off
+     **/
+    public static function deactivate(){
+        // clear the cron schedules
+        Wpil_AI::clear_batch_process_cron();
+        Wpil_ClickTracker::clear_cron_schedules();
+        Wpil_Error::clearCronSchedules();
+        Wpil_TargetKeyword::clear_cron_schedules();
+    }
+
+    /**
+     * Modifies the post's row actions to add an "Add Inbound Links" button to the row actions.
+     * Only adds the link to post types that we create links for.
+     * 
+     * @param $actions
+     * @param $object
+     * @return $actions
+     **/
+    public static function modify_list_row_actions( $actions, $object ) {
+        $type = is_a($object, 'WP_Post') ? $object->post_type: $object->taxonomy;
+
+        if(!in_array($type, Wpil_Settings::getAllTypes())){
+            return $actions;
+        }
+
+        $page = (isset($_GET['paged']) && !empty($_GET['paged'])) ? '&paged=' . (int)$_GET['paged']: '';
+
+        if(is_a($object, 'WP_Post')){
+            //$actions['wpil-add-inbound-links'] = '<a target=_blank href="' . admin_url("admin.php?post_id={$object->ID}&page=link_whisper&type=inbound_suggestions_page&ret_url=" . base64_encode(admin_url("edit.php?post_type={$type}{$page}&direct_return=1"))) . '">Add Inbound Links</a>';
         }else{
             $update_count = get_option('wpil_free_update_count', 0);
             update_option('wpil_free_update_count', $update_count += 1);
@@ -712,7 +1913,7 @@ class Wpil_Base
 	}
 
     /**
-	 * Add content for custom column.
+	 * Add content for custom column in the posts && pages archives.
 	 *
 	 * @param string $column_name The name of the column to display.
 	 * @param int    $post_id     The current post ID.
@@ -952,23 +2153,6 @@ class Wpil_Base
     }
 
     /**
-     * Runs the update rountines when the plugin is updated.
-     */
-    function upgrade_complete($upgrader_object, $options){
-        // If an update has taken place and the updated type is plugins and the plugins element exists
-        if( $options['action'] == 'update' && $options['type'] == 'plugin' && isset( $options['plugins'] ) ) {
-            // Go through each plugin to see if Link Whisper was updated
-            foreach( $options['plugins'] as $plugin ) {
-                if( $plugin == WPIL_PLUGIN_NAME ) {
-                    // refire the activate routine if it was
-                    $this::activate();
-                    // 
-                }
-            }
-        }
-    }
-
-    /**
      * Removes a hooked function from the wp hook or filter.
      * We have to flip through the hooked functions because a lot of the methods use instantiated objects
      *
@@ -1199,6 +2383,23 @@ class Wpil_Base
     }
 
     /**
+     * Creates the database tables so we're sure that they're all set.
+     * I'll still use the old method of creation for a while as a fallback.
+     * But this will make LW more plug-n-play
+     **/
+    public static function createDatabaseTables(){
+        Wpil_ClickTracker::prepare_table();
+        Wpil_Error::prepareTable(false);
+        Wpil_Error::prepareIgnoreTable();
+        Wpil_TargetKeyword::prepareTable();
+        Wpil_AI::prepare_table();
+        Wpil_Sitemap::prepare_table();
+
+        // search console table not included because it's explicitly activated by the user
+        // linked site data table also not included because it's explicitly activated by the user
+    }
+
+    /**
      * Returns an array of all the tables created by Link Whisper.
      * @param bool $should_prefix Should the returned tables have the site's database prefix attached?
      * @return array
@@ -1214,6 +2415,27 @@ class Wpil_Base
 
         return array(
             "{$prefix}wpil_report_links",
+            "{$prefix}wpil_tracked_link_ids",
+            "{$prefix}wpil_search_console_data",
+            "{$prefix}wpil_site_linking_data",
+            "{$prefix}wpil_target_keyword_data",
+            "{$prefix}wpil_urls",
+            "{$prefix}wpil_url_links",
+            "{$prefix}wpil_related_posts",
+            "{$prefix}wpil_ai_post_data",
+            "{$prefix}wpil_ai_product_data",
+            "{$prefix}wpil_ai_keyword_data",
+            "{$prefix}wpil_ai_token_use_data",
+            "{$prefix}wpil_ai_embedding_data",
+            "{$prefix}wpil_ai_embedding_calculation_data",
+            "{$prefix}wpil_ai_embedding_phrase_data",
+            "{$prefix}wpil_ai_embedding_phrase_calculation_data",
+            "{$prefix}wpil_ai_suggested_anchors",
+            "{$prefix}wpil_ai_processed_sentences",
+            "{$prefix}wpil_ai_batch_log",
+            "{$prefix}wpil_ai_error_log",
+            "{$prefix}wpil_ai_system_error_log",
+            "{$prefix}wpil_ai_completed_batch_log",
         );
     }
 
@@ -1312,5 +2534,151 @@ class Wpil_Base
                 }
             }
         }
+    }
+
+    public static function ajax_save_wizard_settings(){
+        Wpil_Base::verify_nonce('wpil_wizard_save_nonce');
+
+        $response = array('status' => 'invalid', 'message' => 'please select all of the required options to proceed');
+        if(isset($_POST['settings']) && !empty($_POST['settings'])){
+            // verify the settings
+            $settings = array(
+                'wpil_setup_wizard_existing_user', 
+                'wpil_setup_wizard_configure_settings',
+                'wpil_setup_wizard_run_linking'
+            );
+
+            $acceptable_values = array(
+                'yes',
+                'no'
+            );
+
+            $save_settings = array();
+            foreach($_POST['settings'] as $key => $value){
+                if(in_array($key, $settings, true) && in_array($value, $acceptable_values, true)){
+                    $save_settings[$key] = $value;
+                }
+            }
+            
+            if(!empty($save_settings)){
+                update_option('wpil_wizard_settings_selected', $save_settings);
+                // if we're not just saving the settings
+                if(!isset($_POST['temp_save']) || empty($_POST['temp_save'])){
+                    self::configure_wizard_settings();
+                }
+            }
+
+            $response = array('status' => 'valid', 'message' => 'Settings Saved!');
+        }
+        wp_send_json($response);
+    }
+
+    public static function configure_wizard_settings(){
+        delete_option('wpil_wizard_import_autolink_rules');
+        $settings = get_option('wpil_wizard_settings_selected');
+        $preconfigured = array(
+            'wpil_add_destination_title' => '1',
+            'wpil_ignore_tags_from_linking' => array('code'),
+            'wpil_ignore_latest_posts' => '1',
+            'wpil_update_reusable_block_links' => '1',
+            'wpil_override_global_post_during_scan' => '1',
+            'wpil_use_link_data_table' => '1',
+            'wpil_make_suggestion_filtering_persistent' => '1',
+            'wpil_disable_click_tracking_info_gathering' => '1',
+            'wpil_override_global_post_during_scan' => '1',
+            'wpil_use_link_data_table' => '1',
+            'wpil_ignore_latest_posts' => '1',
+            'wpil_remove_noindex_post_suggestions' => '1',
+            'wpil_ignore_image_urls' => '1',
+            'wpil_suggestion_anchor_max_size' => '7',
+            'wpil_suggestion_anchor_min_size' => '3'
+        );
+
+        if(
+            isset($settings['wpil_setup_wizard_configure_settings']) && $settings['wpil_setup_wizard_configure_settings'] === 'yes' ||
+            isset($settings['wpil_setup_wizard_run_linking']) && $settings['wpil_setup_wizard_run_linking'] === 'yes' // if they're having us do the linking, assume they want us to do the settings too for the time being
+        ){
+            foreach($preconfigured as $key => $value){
+                update_option($key, $value);
+            }
+
+            $ignore_pages = Wpil_Settings::get_service_pages_to_ignore();
+
+            
+            if(!empty($ignore_pages)){
+                $links = get_option('wpil_ignore_pages_completely', '');
+                $links_array = explode("\n", $links);
+                foreach($ignore_pages as $id){
+                    $post = new Wpil_Model_Post($id);
+                    $post_link = $post->getViewLink();
+                    if(!empty($post_link) && !in_array($post_link, $links_array)){
+                        $links .= "\n" . $post_link;
+                    }
+                }
+
+                // clear any ignore link cache that exists
+                delete_transient('wpil_ignore_pages_completely');
+                // save the ignore link
+                update_option('wpil_ignore_pages_completely', $links);
+            }
+
+            update_option('wpil_wizard_import_autolink_rules', 1); // set the flag to say that we'll be importing autolinhk rules
+            delete_option('wpil_wizard_settings_selected'); // clear the setting data so we done redo the settings without the user selecting it
+        }
+    }
+
+    public static function ajax_wizard_save_oai_key(){
+        Wpil_Base::verify_nonce('wpil_wizard_save_nonce');
+
+        if(isset($_POST['key']) && !empty($_POST['key'])){
+            // update the api key
+            update_option('wpil_open_ai_api_key', Wpil_Toolbox::encrypt(trim(sanitize_text_field($_POST['key']))));
+            // and check if this is a free key
+            Wpil_AI::is_free_oai_subscription(true);
+        }
+
+        wp_send_json(array('status' => 'valid'));
+    }
+
+    public static function ajax_clear_process_tracker(){
+        delete_transient('wpil_loading_progress_tracker');
+        delete_transient('wpil_wizard_has_completed');
+        delete_transient('wpil_wizard_inserting_autolinks');
+        update_option('wpil_wizard_start_time', time()); // note the start time
+        wp_send_json(array('status' => 'tracker_cleared'));
+    }
+
+    /**
+     * Set a flahg so we know that the user has run the wizard
+     **/
+    public static function ajax_has_run_wizard(){
+        Wpil_Settings::set_run_wizard();
+    }
+    
+    /**
+     * Set a flahg so we know that the user has run the wizard
+     **/
+    public static function ajax_set_processing_complete_flag(){
+        // set the completion flag
+        set_transient('wpil_wizard_has_completed', 1, HOUR_IN_SECONDS);
+
+        // if the notification emails are enabled
+        if(Wpil_Settings::email_notifications_are_enabled()){
+            // send the completion email
+            Wpil_Email::send_email_notification('wizard-complete');
+        }
+    }
+
+    /**
+     * Checks to see how many links have been inserted since the wizard began
+     **/
+    public static function ajax_get_wizard_insert_count(){
+        self::verify_nonce('wpil_dashboard_loading_nonce');
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'wpil_tracked_link_ids';
+        $start_time = get_option('wpil_wizard_start_time', time());
+        $link_count = $wpdb->get_col("SELECT COUNT(*) FROM {$table} WHERE `creation_time` > {$start_time}");
+        wp_send_json(array('data' => array('link_inserts' => $link_count, 'finished' => (!empty(get_transient('wpil_wizard_has_completed')) || empty(get_transient('wpil_doing_ajax_autolinks'))))));
     }
 }

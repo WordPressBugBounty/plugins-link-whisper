@@ -25,6 +25,8 @@ class Wpil_Report
         add_filter('screen_settings', [ $this, 'showScreenOptions' ], 10, 2);
         add_filter('set_screen_option_report_options', [$this, 'saveOptions'], 12, 3);
         add_action('wp_ajax_get_link_report_dropdown_data', array(__CLASS__, 'ajax_assemble_link_report_dropdown_data'));
+        add_action('wp_ajax_get_link_report_link_data', array(__CLASS__, 'ajax_assemble_link_report_link_data'));
+        add_action('wp_ajax_get_domain_report_data', array('Wpil_Dashboard', 'ajax_get_domain_report_data'));
         add_action('wp_ajax_wpil_save_screen_options', array(__CLASS__, 'ajax_save_screen_options'));
         add_action('wp_ajax_wpil_dismiss_popup_notice', array(__CLASS__, 'ajax_dismiss_popup_notice'));
     }
@@ -49,12 +51,102 @@ class Wpil_Report
         if ($type == 'post_links_count_update' && !empty($post) && isset($_GET['nonce']) && $post->verify_post_nonce($_GET['nonce'])) {
             self::postLinksCountUpdate();
             return;
+        } elseif ($type == 'ignore_link') {
+            Wpil_Error::markLinkIgnored();
+            return;
+        } elseif ($type == 'stop_ignore_link') {
+            Wpil_Error::unmarkLinkIgnored();
+            return;
         }
 
-        //show table with reports if all reports are ready
-        $tbl = new Wpil_Table_Report();
-        $page = isset($_REQUEST['page']) ? sanitize_text_field($_REQUEST['page']) : 'link_whisper';
-        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/link_report_v2.php';
+        switch($type) {
+            case 'links':
+                Wpil_Settings::create_ai_credit_popup();
+                Wpil_Base::show_tawkto_widget();
+//                self::outputCustomTabStyles();
+                $tbl = new Wpil_Table_Report();
+                $page = isset($_REQUEST['page']) ? sanitize_text_field($_REQUEST['page']) : 'link_whisper';
+                $title = ''; // $title is title used in the link report
+                $report_description = '';
+                if(isset($_GET['orphaned'])){
+                    $title = __('Orphaned Posts Report', 'wpil');
+                }elseif(isset($_REQUEST['link_density'])){
+                    $title = __('Link Coverage Report', 'wpil');
+                    $report_description = 
+                    '<div style="float: left; background: #fff; padding: 10px; border-radius: 5px; border: 1px solid #cdcdcd; width:100%">
+                        <div style="font-size: 18px;">'. esc_html__('SEO best practices recommend posts have at least 1 Inbound Internal link, and 3 or more Outbound Internal links.', 'wpil') .'</div>'
+                        . '<br>
+                        <div style="font-size: 16px;">' . esc_html__('To help you meet these goals, this report will show you all the posts that could use some links, and give our recommendation on how many links to add!', 'wpil').'</div></div>';
+                }elseif(isset($_REQUEST['link_relation'])){
+                    $title = __('Link Quality Report', 'wpil');
+                    $report_description = 
+                    '<div style="float: left; background: #fff; padding: 10px; border-radius: 5px; border: 1px solid #cdcdcd; width:100%">
+                        <div style="font-size: 18px;">'. esc_html__('SEO best practices recommend linking between related posts, and avoiding links between unrelated posts.', 'wpil') .'</div>'
+                        . '<br>
+                        <div style="font-size: 16px;">' . sprintf(esc_html__('We recommended having at least 80%% of links going to related posts. We have %s all of posts that have a low proportion of related-post links.', 'wpil'), '<span style="background: #7645b1;border-radius: 10px;padding: 2px 6px;color: #fefefe;font-weight: bold;">highlighted</span>').'</div></div>';
+                }else{
+                    $title = __('Internal Links Report', 'wpil');
+                }
+                include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/link_report_v2.php';
+                break;
+            case 'domains':
+                Wpil_Settings::create_ai_credit_popup();
+                Wpil_Base::show_tawkto_widget();
+                $table = new Wpil_Table_Domain();
+                $table->prepare_items();
+                $report_description = "";
+                if(isset($_REQUEST['domain_focus'])){
+                    $report_description = 
+                    '<div style="float: left; background: #fff; padding: 10px; border-radius: 5px; border: 1px solid #cdcdcd; width:100%">
+                        <div style="font-size: 18px;">'. esc_html__('SEO best practices recommend creating a natural external link profile, and avoiding over-linking to a single domain.', 'wpil') .'</div>'
+                        . '<br>
+                        <div style="font-size: 16px;">' . sprintf(esc_html__('We recommended having no more than 60%% of all external links going to the same external site. We have %s any domains that exceed this.', 'wpil'), '<span style="background: #7645b1;border-radius: 10px;padding: 2px 6px;color: #fefefe;font-weight: bold;">highlighted</span>').'</div></div>';
+                }
+                include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/report_domains.php';
+                break;
+            case 'clicks':
+                Wpil_Settings::create_ai_credit_popup();
+                Wpil_Base::show_tawkto_widget();
+                $table = new Wpil_Table_Click();
+                $table->prepare_items();
+                include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/report_clicks.php';
+                break;
+            case 'click_details_page':
+                Wpil_Settings::create_ai_credit_popup();
+                Wpil_Base::show_tawkto_widget();
+                self::setup_click_details_page();
+                break;
+            case 'error':
+                Wpil_Settings::create_ai_credit_popup();
+                Wpil_Base::show_tawkto_widget();
+                $error_reset_run = get_option('wpil_error_reset_run', 0);
+                if ($error_reset_run) {
+                    include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/error_process_posts.php';
+                } else {
+                    $table = new Wpil_Table_Error();
+                    $table->prepare_items();
+                    include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/report_error.php';
+                }
+                break;
+            case 'sitemaps':
+                Wpil_Settings::create_ai_credit_popup();
+                Wpil_Base::show_tawkto_widget();
+                $table = new Wpil_Table_Sitemap();
+                $table->prepare_items();
+                include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/report_sitemaps.php';
+                break;
+            default:
+                Wpil_Settings::create_ai_credit_popup();
+                Wpil_Base::show_tawkto_widget();
+                $domains = Wpil_Dashboard::getTopDomains();
+                $top_domain = !empty($domains[0]->cnt) ? $domains[0]->cnt : 0;
+                wp_register_script('wpil_chart_js', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/jquery.jqChart.min.js', array('jquery'), false, false);
+                wp_enqueue_script('wpil_chart_js');
+                wp_register_style('wpil_chart_css', WP_INTERNAL_LINKING_PLUGIN_URL . 'css/jquery.jqChart.css');
+                wp_enqueue_style('wpil_chart_css');
+                include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/report_dashboard.php';
+                break;
+        }
     }
 
     /**
@@ -105,6 +197,15 @@ class Wpil_Report
                 ));
             }
 
+            // set the flag to say that the table has been created and the scan is considered to have started
+            update_option('wpil_has_run_initial_scan', true);
+            // say what version we ran the scan on
+            $plugin_data = get_plugin_data(WP_INTERNAL_LINKING_PLUGIN_DIR . 'link-whisper.php');
+            update_option('wpil_scan_last_plugin_version', $plugin_data['Version']);
+            // say when the scan was run too
+            update_option('wpil_scan_last_run_time', date('c'));
+            // clear any stored external site data
+            //Wpil_SiteConnector::clear_data_table();
             // clear redirect transients
             delete_transient('wpil_redirected_post_ids');
             delete_transient('wpil_redirected_post_urls');
@@ -238,13 +339,33 @@ class Wpil_Report
             wp_send_json($status);
         }
 
-        // refresh the posts inbound/outbound link stats
-        $refresh = self::refreshAllStat(true);
+        if(Wpil_Settings::use_link_table_for_data()){
+            // if we're just going to be running with the link table, check the process boxes now
+            $wpdb->update($wpdb->postmeta, ['meta_value' => '1'], ['meta_key' => 'wpil_sync_report3']);
+            $wpdb->update($wpdb->termmeta, ['meta_value' => '1'], ['meta_key' => 'wpil_sync_report3']);
+            $refresh = array(
+                'loaded' => $status['link_posts_processed'],
+                'processed' => $status['link_posts_processed'],
+                'finished' => true,
+                'remained' => 0
+            );
+        }else{
+            // refresh the posts inbound/outbound link stats
+            $refresh = self::refreshAllStat(true);
+        }
 
         // note how many posts have been refreshed
         $status['link_posts_processed'] = $refresh['loaded'];
         // and if we're done yet
         $status['processing_complete']  = $refresh['finished'];
+        // track the progress
+        Wpil_Toolbox::track_process_progress(
+            'post_scanning', 
+            'Scanning Posts', 
+            $refresh['processed'], 
+            $refresh['remained'], 
+            $status['link_posts_to_process_count']
+        );
 
         // if we are done with this stretch
         if(!empty($status['processing_complete'])){
@@ -641,15 +762,15 @@ class Wpil_Report
         $link_data = array();
 
         //get other internal links
-        $url = $post->getLinks()->view;
+        $url = Wpil_Link::filter_staging_to_live_domain($post->getLinks()->view);
         $cleaned_url = self::getCleanUrl($url);
         $cleaned_url = str_replace(['http://', 'https://'], '://', $cleaned_url);
-        $search_parameters = array( ('https'.$cleaned_url), ('http'.$cleaned_url));
+        $search_parameters = array( ('https'.$cleaned_url), ('http'.$cleaned_url), $post->id, $post->type);
 
         // account for ugly permalinks if this is a post
         $ugly_permalinks = "";
         if($post->type === 'post'){
-            $cleaned_home_url = trailingslashit(str_replace(['http://', 'https://'], '://', get_home_url()));
+            $cleaned_home_url = trailingslashit(str_replace(['http://', 'https://'], '://', Wpil_Link::filter_staging_to_live_domain(get_home_url())));
             $type = get_post_type($post->id);
             if($type === 'page'){
                 $ugly_urls = array(
@@ -685,7 +806,7 @@ class Wpil_Report
         }
 
         // get all the links from the link table that point at this post and are on the current site.
-        $results = $wpdb->get_results($wpdb->prepare("SELECT `post_id`, `post_type`, `host`, `anchor` FROM {$links_table} WHERE `clean_url` = '%s' OR `clean_url` = '%s' {$ugly_permalinks} {$redirected}", $search_parameters));
+        $results = $wpdb->get_results($wpdb->prepare("SELECT `post_id`, `post_type`, `host`, `anchor`, `link_whisper_created`, `is_autolink`, `tracking_id`, `module_link`, `link_context`, `ai_relation_score` FROM {$links_table} WHERE (`clean_url` = '%s' OR `clean_url` = '%s' {$ugly_permalinks} {$redirected}) OR (`target_id` = '%d' AND `target_type` = '%s')", $search_parameters));
 
         $post_objs = array();
         foreach($results as $data){
@@ -710,6 +831,7 @@ class Wpil_Report
                 'tracking_id' => (isset($data->tracking_id) && !empty($data->tracking_id)) ? $data->tracking_id: 0,
                 'module_link' => (isset($data->module_link) && !empty($data->module_link)) ? $data->module_link: 0,
                 'link_context' => (isset($data->link_context) && !empty($data->link_context)) ? $data->link_context: 0,
+                'ai_relation_score' => (isset($data->ai_relation_score) && !empty($data->ai_relation_score)) ? $data->ai_relation_score: 0,
             ]);
         }
 
@@ -845,6 +967,7 @@ class Wpil_Report
                     'tracking_id' => (isset($link->tracking_id) && !empty($link->tracking_id)) ? $link->tracking_id: 0,
                     'module_link' => (isset($link->module_link) && !empty($link->module_link)) ? $link->module_link: 0,
                     'link_context' => (isset($link->link_context) && !empty($link->link_context)) ? $link->link_context: 0,
+                    'ai_relation_score' => (isset($link->ai_relation_score) && !empty($link->ai_relation_score)) ? $link->ai_relation_score: 0,
             ]);
             
             if ($link->internal) {
@@ -1070,6 +1193,21 @@ class Wpil_Report
                 }
 
                 $meta_links[] = $link;
+                $new_link = new Wpil_Model_Link([
+                    'url' => $link->raw_url,
+                    'anchor' => $link->anchor,
+                    'host' => $link->host,
+                    'internal' => (bool) $link->internal,
+                    'post' => $link_post,
+                    'added_by_plugin' => false,
+                    'location' => $link->location,
+                    'link_whisper_created' => (isset($link->link_whisper_created) && !empty($link->link_whisper_created)) ? 1: 0,
+                    'is_autolink' => (isset($link->is_autolink) && !empty($link->is_autolink)) ? 1: 0,
+                    'tracking_id' => (isset($link->tracking_id) && !empty($link->tracking_id)) ? $link->tracking_id: 0,
+                    'module_link' => (isset($link->module_link) && !empty($link->module_link)) ? $link->module_link: 0,
+                    'link_context' => (isset($link->link_context) && !empty($link->link_context)) ? $link->link_context: 0,
+                    'ai_relation_score' => (isset($link->ai_relation_score) && !empty($link->ai_relation_score)) ? $link->ai_relation_score: 0,
+                ]);
 
                 if($link->post->type === 'post'){
                     Wpil_Toolbox::update_encoded_post_meta($link->post->id, 'wpil_links_inbound_internal_count_data', $meta_links);
@@ -1146,11 +1284,254 @@ class Wpil_Report
     public static function getContentLinks($post, $ignore_post = false, $content = '')
     {
         $data = [];
-        $my_host = parse_url(get_home_url(), PHP_URL_HOST);
-        $post_link = $post->getLinks()->view;
+        $compare_content = '';
+
+        if (Wpil_Settings::showAllLinks()) {
+            $site_url = site_url();
+            //get all links from page
+            $ch = curl_init();
+
+            $encoding = "gzip, deflate, br";
+            $curl_version = curl_version();
+            if(version_compare($curl_version['version'], '7.10.0') >= 0){
+                $encoding = "";
+            }
+
+            $request_headers = array(
+                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+                'Accept-Encoding: ' . $encoding,
+                'Accept-Language: en-US,en;q=0.9',
+                'Cache-Control: max-age=0, no-cache',
+                'Pragma: ',
+                'Sec-Fetch-Dest: document',
+                'Sec-Fetch-Mode: navigate',
+                'Sec-Fetch-Site: none',
+                'Sec-Fetch-User: ?0',
+                'Host: ' . parse_url($site_url, PHP_URL_HOST),
+                'Referer: ' . $site_url,
+                'User-Agent: ' . WPIL_DATA_USER_AGENT,
+                'Connection: close',
+            );
+            curl_setopt($ch, CURLOPT_HEADER, 0);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $request_headers);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+            curl_setopt($ch, CURLOPT_URL, $post->getLinks()->view);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
+            $content = curl_exec($ch);
+            curl_close($ch);
+
+            // remove any classed elements that the user doesn't want to count
+            $content = Wpil_Suggestion::removeClassedElements($content);
+
+            // remove any links inside HTML comments since those are only there for refrence
+            $content = mb_ereg_replace('<!--[\s\S]*?-->', '', $content);
+
+        }elseif(!empty($content)){ // if the content has been supplied
+            // do some light formatting to make sure we're maintaining consistency
+
+            $content = self::process_content($content, $post);
+
+            // replace stylized double quotes with standard versions so we can search
+            $content = str_replace(array('&#8221;'), '"', $content); // on a Thrive site, processing the content turned double quotes into stylized ones... 
+
+            if(Wpil_Settings::getCommentLinks()){
+                $content .= $post->getCommentContent();
+            }
+
+            // remove any classed elements that the user doesn't want to count
+            $content = Wpil_Suggestion::removeClassedElements($content);
+        }else{
+            $content = $post->getContentWithoutSetting(false);
+
+            if(Wpil_Settings::getContentFormattingLevel() > 0 && !empty(Wpil_Post::get_active_editors())){
+                $compare_content = self::process_content($content, $post, true);
+
+                // replace stylized double quotes with standard versions so we can search
+                $compare_content = str_replace(array('&#8221;'), '"', $content); // on a Thrive site, processing the content turned double quotes into stylized ones... 
+
+                if(Wpil_Settings::getCommentLinks()){
+                    $compare_content .= $post->getCommentContent();
+                }
+
+                // remove any classed elements that the user doesn't want to count
+                $compare_content = Wpil_Suggestion::removeClassedElements($compare_content);
+            }
+
+            $content = self::process_content($content, $post);
+
+            // replace stylized double quotes with standard versions so we can search
+            $content = str_replace(array('&#8221;'), '"', $content); // on a Thrive site, processing the content turned double quotes into stylized ones... 
+
+            if(Wpil_Settings::getCommentLinks()){
+                $content .= $post->getCommentContent();
+            }
+
+            // remove any classed elements that the user doesn't want to count
+            $content = Wpil_Suggestion::removeClassedElements($content);
+        }
+
+        $data = self::pull_links_from_content($content, $ignore_post, $post);
+
+        // if we have content to compare against
+        if(!empty($compare_content) && !empty($data)){
+            // pull links from the content that hasn't had the formatting applied to it
+            $compare_links = self::pull_links_from_content($compare_content, $ignore_post, $post);
+
+            if(!empty($compare_links)){
+                foreach($data as &$dat){
+                    $is_module = 1;
+                    foreach($compare_links as $compare_link){
+                        if(Wpil_Toolbox::compare_link_objects($dat, $compare_link)){
+                            $is_module = 0;
+                            break;
+                        }
+                    }
+
+                    $dat->module_link = $is_module;
+
+                    if($is_module){
+                        $dat->link_context = 3;
+                    }
+                }
+            }
+        }
+
+        // if we're not scanning the page directly for links
+        if(empty(Wpil_Settings::showAllLinks())){
+            // get any alternate links that the post may have
+            $alternate_links = self::getAlternateLinks($post);
+
+            if(!empty($alternate_links)){
+                $data = array_merge($data, $alternate_links);
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Processes post content so we can get links from dynamic elements like shortcodes
+     * @param string $content The post content to process
+     * @param object $wpil_post The post that the content came from
+     **/
+    public static function process_content($content = '', $wpil_post = array(), $return_unformatted = false){
+        global $post;
+
+        // if the user is ignoring latest post blocks/widgets, remove the blocks if present
+        if(Wpil_Settings::ignore_latest_post_links()){
+            // remove default Gutenberg
+            if(false !== strpos($content, '<!-- wp:latest-posts')){
+                $content = mb_ereg_replace('<!-- wp:latest-posts(?:.*?)\/-->', '', $content);
+            }
+
+            // remove Gutenberg query/query-loop
+            if(false !== strpos($content, '<!-- wp:query')){
+                $content = mb_ereg_replace('<!-- wp:query(?:[^>]*?)-->(?:.*?)<!-- \/wp:query -->', '', $content);
+            }
+
+            // remove Yoast Related Posts
+            if(false !== strpos($content, '<!-- wp:yoast-seo/related-links')){
+                $content = mb_ereg_replace('<!-- wp:yoast-seo/related-links(?:.*?) -->(?:.*?)<!-- /wp:yoast-seo/related-links -->', '', $content);
+            }
+
+            // remove our related posts
+            if(false !== strpos($content, '[link-whisper-related-posts')){
+                $content = mb_ereg_replace('\[link-whisper-related-posts(?:.*?)\]', '', $content);
+            }
+        }
+
+        // get the content formatting level
+        $formatting_level = Wpil_Settings::getContentFormattingLevel();
+
+        // if the user has disabled formatting or we're supposed to return the content early
+        if(empty($formatting_level) || $return_unformatted){
+            // return the content unchanged
+            return $content;
+        }
+
+        // save a version of the content just in case the processing wipes it
+        $old_content = $content;
+
+        // remove any shortcodes that the user wants to ignore
+        $content = Wpil_Suggestion::removeShortcodes($content);
+
+        // get the currently active theme
+        $theme = wp_get_theme();
+
+        // figure out if we're already inside someone's output buffer
+        $currently_buffering = (ob_get_level() > 2) ? true: false;
+
+        // if we're not inside someone else's buffer
+        if(!$currently_buffering){
+            // start buffering the output to catch content echoes
+            ob_start();
+        }
+
+        // if this is a post and the user has chosen to override the global $post
+        $old_post = 'not-set';
+        if($wpil_post->type === 'post' && Wpil_Settings::overrideGlobalPost()){
+            // try getting the wp_post object for the current post that we're processing
+            $new_post = get_post($wpil_post->id);
+            // if we were successful
+            if(!empty($new_post)){
+                // save the current post for later
+                $old_post = $post;
+                // and override the global with this new post
+                $post = $new_post;
+            }
+        }
+
+        // remove any content formatting applied by LinkWhisper
+        remove_filter('the_content', ['Wpil_Base', 'remove_link_whisper_attrs']);
+        remove_filter('the_content', ['Wpil_Base', 'add_link_icons'], 100);
+
+        if(!empty($theme) && $theme->exists() &&                                    // if we've gotten the theme without issue
+            false === stripos($theme->name, 'Acabado') &&                           // and it isn't the acabado theme
+            false === stripos($theme->parent_theme, 'Acabado') &&                   // and it's not an acabado child theme
+            !empty($wpil_post) && 'elementor' !== $wpil_post->getContentEditor() && // and it's not an Elementor post
+            $formatting_level === 2                                                 // and the formatting level is set to full
+        ){
+            // run the content through the_content
+            $content = apply_filters('the_content', $content);
+        }else{
+            // try to processing shortcodes so we can get any links created with them
+            $content = do_shortcode($content); // NOTE: if we ever have more than 3 processing options, do something about this. The current system has this defaulting to 1 because 0 & 2 are eliminated elsewhere, so 1 is not eplicitly called here
+        }
+
+        // reset the global $post if we overrode it
+        if($old_post !== 'not-set'){
+            $post = $old_post;
+        }
+
+        if(!$currently_buffering){
+            // clear the output so no echoes mess up the json
+            ob_end_clean(); // we could log this, but for the time being, we'll just clear it
+        }
+
+        // if there's no content after processing
+        if(empty($content) && !empty($old_content)){
+            // revert to the old content
+            $content = $old_content;
+        }
+
+        return $content;
+    }
+
+    /**
+     * Processes post content so we can get links from dynamic elements like shortcodes
+     * @param string $content The post content to process
+     * @param bool $ignore_post Should we not trace inbound internal links back to their target posts?
+     * @param Wpil_ModelPost $wpil_post The post that the content came from
+     **/
+    public static function pull_links_from_content($content = '', $ignore_post = false, $wpil_post = array()){
+        $data = [];
+
+        $my_host = parse_url(str_replace('www.', '', Wpil_Link::filter_staging_to_live_domain(get_home_url())), PHP_URL_HOST);
+        $post_link = Wpil_Link::filter_staging_to_live_domain($wpil_post->getLinks()->view);
         $location = 'content';
-        $content = $post->getContentWithoutSetting(false);
-        $content = self::process_content($content, $post);
+        $content = $wpil_post->getContentWithoutSetting(false);
+        $content = self::process_content($content, $wpil_post);
         $include_image_src = false;
 
         // replace stylized double quotes with standard versions so we can search
@@ -1246,6 +1627,9 @@ class Wpil_Report
                 }
             }
 
+            // remove `www.` from the host and my host
+            $host = str_replace('www.', '', $host);
+
             // if the link is internal and we're supposed to trace it back to it's target post
             if ($host == $my_host && !$ignore_post) {
                 $p = Wpil_Post::getPostByLink($url);
@@ -1254,7 +1638,7 @@ class Wpil_Report
             $data[] = new Wpil_Model_Link([
                 'url' => $url,
                 'anchor' => $anchor,
-                'host' => str_replace('www.', '', $host),
+                'host' => $host,
                 'internal' => Wpil_Link::isInternal($url),
                 'post' => $p,
                 'added_by_plugin' => false,
@@ -1265,84 +1649,6 @@ class Wpil_Report
         }
 
         return $data;
-    }
-
-    /**
-     * Processes post content so we can get links from dynamic elements like shortcodes
-     * @param string $content The post content to process
-     * @param object $wpil_post The post that the content came from
-     **/
-    public static function process_content($content = '', $wpil_post = array()){
-        global $post;
-
-        // get the content formatting level
-        $formatting_level = Wpil_Settings::getContentFormattingLevel();
-
-        // if the user has disabled formatting
-        if(empty($formatting_level)){
-            // return the content unchanged
-            return $content;
-        }
-
-        // save a version of the content just in case the processing wipes it
-        $old_content = $content;
-
-        // get the currently active theme
-        $theme = wp_get_theme();
-
-        // figure out if we're already inside someone's output buffer
-        $currently_buffering = (ob_get_level() > 2) ? true: false;
-
-        // if we're not inside someone else's buffer
-        if(!$currently_buffering){
-            // start buffering the output to catch content echoes
-            ob_start();
-        }
-
-        // if this is a post and the user has chosen to override the global $post
-        $old_post = 'not-set';
-        if($wpil_post->type === 'post' && Wpil_Settings::overrideGlobalPost()){
-            // try getting the wp_post object for the current post that we're processing
-            $new_post = get_post($wpil_post->id);
-            // if we were successful
-            if(!empty($new_post)){
-                // save the current post for later
-                $old_post = $post;
-                // and override the global with this new post
-                $post = $new_post;
-            }
-        }
-
-        if(!empty($theme) && $theme->exists() &&                                    // if we've gotten the theme without issue
-            false === stripos($theme->name, 'Acabado') &&                           // and it isn't the acabado theme
-            false === stripos($theme->parent_theme, 'Acabado') &&                   // and it's not an acabado child theme
-            !empty($wpil_post) && 'elementor' !== $wpil_post->getContentEditor() && // and it's not an Elementor post
-            $formatting_level === 2                                                 // and the formatting level is set to full
-        ){
-            // run the content through the_content
-            $content = apply_filters('the_content', $content);
-        }else{
-            // try processing shortcodes so we can get any links created with them
-            $content = do_shortcode($content);
-        }
-
-        // reset the global $post if we overrode it
-        if($old_post !== 'not-set'){
-            $post = $old_post;
-        }
-
-        if(!$currently_buffering){
-            // clear the output so no echoes mess up the json
-            ob_end_clean(); // we could log this, but for the time being, we'll just clear it
-        }
-
-        // if there's no content after processing
-        if(empty($content) && !empty($old_content)){
-            // revert to the old content
-            $content = $old_content;
-        }
-
-        return $content;
     }
 
     public static function isJumpLink($link = '', $post_url = ''){
@@ -1369,6 +1675,51 @@ class Wpil_Report
     }
 
     /**
+     * Pulls in links from alternate sources like related post plugins or page builders with complex data structures
+     **/
+    public static function getAlternateLinks($post){
+        $data = array();
+        $get_related = Wpil_Settings::get_related_post_links();
+
+        if($get_related){
+            // if YARPP is active and this is a post
+            if(defined('YARPP_VERSION') && $post->type === 'post'){
+                // check for the yarpp global
+                global $yarpp;
+
+                if(!empty($yarpp) && method_exists($yarpp, 'get_related')){
+                    $posts = $yarpp->get_related($post->id);
+
+                    if(!empty($posts)){
+                        $host = parse_url(Wpil_Link::filter_staging_to_live_domain(get_home_url()), PHP_URL_HOST);
+                        foreach($posts as $p){
+                            if(!isset($p->ID)){
+                                continue;
+                            }
+
+                            $url = get_permalink($p);
+                            $data[] = new Wpil_Model_Link([
+                                'url' => $url,
+                                'anchor' => $p->post_title,
+                                'host' => str_replace('www.', '', $host),
+                                'internal' => true,
+                                'post' => new Wpil_Model_Post($p->ID),
+                                'added_by_plugin' => false,
+                                'location' => 'content',
+                                'module_link' => 1,
+                                'link_context' => 2,
+                            ]);
+                        }
+                    }
+                }
+            }
+        }
+
+
+        return $data;
+    }
+
+    /**
      * Get all post outbound links
      *
      * @param $post
@@ -1392,6 +1743,75 @@ class Wpil_Report
         }
 
         return $data;
+    }
+
+    /**
+     * Set up and display the click details page
+     */
+    public static function setup_click_details_page()
+    {
+        //prepare variables for template
+        $return_url = !empty($_GET['ret_url']) ? base64_decode(urldecode($_GET['ret_url'])) : admin_url('admin.php?page=link_whisper&type=clicks&direct_return=1');
+
+        if(isset($_GET['post_type']) && ($_GET['post_type'] === 'url' || $_GET['post_type'] === 'user_ip') && isset($_GET['post_id']) && !empty($_GET['post_id'])){
+            if($_GET['post_type'] === 'url'){
+                $id = esc_url_raw($_GET['post_id']);
+            }else{
+                $id = filter_var($_GET['post_id'], FILTER_VALIDATE_IP);
+            }
+
+            $type = $_GET['post_type'];
+        }else{
+            $post = Wpil_Base::getPost();
+            $id = $post->id;
+            $type = $post->type;
+        }
+
+        $page = isset($_REQUEST['page']) ? $_REQUEST['page'] : 1;
+        $sub_title = ($type === 'url' || $type === 'user_ip') ? '<a href="' . esc_url($id) . '">' . esc_html($id) . '</a>': '<a href="' . esc_url($post->getViewLink()) . '">' . esc_html($post->getTitle()) . '</a>';
+        $start_date = strtotime('30 days ago');
+        if(isset($_GET['start_date']) && !empty($_GET['start_date'])){
+            $start_string = preg_replace('/([^0-9-TZ:\/])/', '', $_GET['start_date']);
+
+            if(!empty(DateTime::createFromFormat('Y-m-d', $start_string))){
+                $date = new DateTime($start_string);
+                $start_date = $date->getTimestamp();
+            }
+        }
+
+        $end_date = strtotime('now');
+        if(isset($_GET['end_date']) && !empty($_GET['end_date'])){
+            $end_string = preg_replace('/([^0-9-TZ:\/])/', '', $_GET['end_date']);
+
+            if(!empty(DateTime::createFromFormat('Y-m-d', $end_string))){
+                $date = new DateTime($end_string);
+                $end_date = $date->getTimestamp();
+            }
+        }
+
+        $date_format = Wpil_Toolbox::convert_date_format_from_js();
+
+        $click_data = Wpil_ClickTracker::get_detailed_click_data($id, $type, array('start' => $start_date, 'end' => $end_date));
+        $click_chart_data = array();
+
+        foreach($click_data as $data){
+            $time = date($date_format, strtotime($data->click_date));
+
+            if(!isset($click_chart_data[$time])){
+                $click_chart_data[$time] = 1;
+            }else{
+                $click_chart_data[$time] += 1;
+            }
+        }
+
+        $total_clicks = count($click_data);
+
+        wp_register_script('wpil_chart_js', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/jquery.jqChart.min.js', array('jquery'), false, false);
+        wp_enqueue_script('wpil_chart_js');
+        wp_register_style('wpil_chart_css', WP_INTERNAL_LINKING_PLUGIN_URL . 'css/jquery.jqChart.css');
+        wp_enqueue_style('wpil_chart_css');
+
+        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/click_details_page.php';
     }
 
     /**
@@ -1439,7 +1859,7 @@ class Wpil_Report
         include dirname(__DIR__).'/../templates/post_links_count_update.php';
     }
 
-    /**
+/**
      * Get report data
      *
      * @param int $start
@@ -1449,7 +1869,7 @@ class Wpil_Report
      * @param int $limit
      * @return array
      */
-    public static function getData($start = 0, $orderby = '', $order = 'DESC', $search='', $limit=20, $orphaned = false)
+    public static function getData($start = 0, $orderby = '', $order = 'DESC', $search='', $limit=20, $orphaned = false, $link_density_report = false)
     {
         global $wpdb;
         $link_table = $wpdb->prefix . "wpil_report_links";
@@ -1457,10 +1877,13 @@ class Wpil_Report
         //check if it need to show categories in the list
         $options = get_user_meta(get_current_user_id(), 'report_options', true);
         $show_categories = (!empty($options['show_categories']) && $options['show_categories'] == 'off') ? false : true;
-        $show_traffic = false; // Free doesn't support GSC-based traffic
-        $hide_ignored = false; // Or ignoring posts
-        $hide_noindex = false; // It also doesn't support hiding no index
+        $show_traffic = (isset($options['show_traffic'])) ? ( ($options['show_traffic'] == 'off') ? false : true) : false;
+        $hide_ignored = Wpil_Settings::hideIgnoredPosts();
+        $hide_noindex = (isset($options['hide_noindex'])) ? ( ($options['hide_noindex'] == 'off') ? false : true) : false;
         $process_terms = !empty(Wpil_Settings::getTermTypes());
+
+        // get if GSC has been authenticated
+        $authenticated = Wpil_Settings::HasGSCCredentials();
 
         // sanitize the inputs
         $order = (!empty($order)) ? ((strtolower($order) === 'desc') ? 'DESC': 'ASC'): ""; 
@@ -1469,7 +1892,8 @@ class Wpil_Report
         //calculate offset
         $offset = $start > 0 ? (((int)$start - 1) * $limit) : 0;
 
-        $post_types = "'" . implode("','", Wpil_Settings::getPostTypes()) . "'";
+        $post_type_list = Wpil_Settings::getPostTypes();
+        $post_types = "'" . implode("','", $post_type_list) . "'";
 
         //create search query requests
         $term_search = '';
@@ -1478,7 +1902,7 @@ class Wpil_Report
         if (!empty($search)) {
             $is_internal = Wpil_Link::isInternal($search);
             $search_post = Wpil_Post::getPostByLink($search);
-            if ($is_internal && $search_post && ($search_post->type != 'term' || ($show_categories && $process_terms))) {
+            if ($is_internal && $search_post && (empty($post_type_list) || $search_post->type == 'post' && in_array($search_post->getRealType(), $post_type_list)) && ($search_post->type != 'term' || ($show_categories && $process_terms))) {
                 if ($search_post->type == 'term') {
                     $term_search = " AND t.term_id = {$search_post->id} ";
                     $search = " AND 2 > 3 ";
@@ -1495,8 +1919,29 @@ class Wpil_Report
             }
         }
 
+        //filters
+        $post_ids = Wpil_Filter::getLinksLocationIDs();
+        if (Wpil_Filter::linksCategory()) {
+            $process_terms = false;
+            if (!empty($post_ids)) {
+                $post_ids = array_intersect($post_ids, Wpil_Filter::getLinksCatgeoryIDs());
+            } else {
+                $post_ids = Wpil_Filter::getLinksCatgeoryIDs();
+                // if there are no posts in this category
+                if(empty($post_ids)){
+                    // save everyone's time by returning nothing now
+                    return array( 'data' => array() , 'total_items' => 0);
+                }
+            }
+        }
+
         if (!empty($post_ids)) {
             $search .= " AND p.ID IN (" . implode(', ', $post_ids) . ") ";
+        }
+
+        if ($post_type = Wpil_Filter::linksPostType()) {
+            $term_search .= " AND tt.taxonomy = '$post_type' ";
+            $search .= " AND p.post_type = '$post_type' ";
         }
 
         //sorting
@@ -1512,11 +1957,47 @@ class Wpil_Report
                 case 'post_title':
                 case 'post_type':
                 case 'title_search':
-//                case 'organic_traffic':
-                case 'wpil_links_inbound_internal_count':
-                case 'wpil_links_outbound_internal_count':
-                case 'wpil_links_outbound_external_count':
+                case 'organic_traffic':
                     // no worries mon
+                    break;
+                case 'wpil_links_inbound_internal_count':
+                    $post_link_table_query = "
+                        SELECT target_id AS id, COUNT(*) AS meta_value
+                        FROM {$link_table}
+                        WHERE target_type = 'post' AND has_links > 0
+                        GROUP BY target_id";
+
+                    $term_link_table_query = "
+                        SELECT target_id AS id, COUNT(*) AS meta_value
+                        FROM {$link_table}
+                        WHERE target_type = 'term' AND has_links > 0
+                        GROUP BY target_id";
+                    break;
+                case 'wpil_links_outbound_internal_count':
+                    $post_link_table_query = "
+                        SELECT post_id AS id, COUNT(*) AS meta_value
+                        FROM {$link_table}
+                        WHERE post_type = 'post' AND internal = 1
+                        GROUP BY post_id";
+
+                    $term_link_table_query = "
+                        SELECT post_id AS id, COUNT(*) AS meta_value
+                        FROM {$link_table}
+                        WHERE post_type = 'term' AND internal = 1
+                        GROUP BY post_id";
+                    break;
+                case 'wpil_links_outbound_external_count':
+                    $post_link_table_query = "
+                        SELECT post_id AS id, COUNT(*) AS meta_value
+                        FROM {$link_table}
+                        WHERE post_type = 'post' AND internal = 0 AND has_links > 0
+                        GROUP BY post_id";
+
+                    $term_link_table_query = "
+                        SELECT post_id AS id, COUNT(*) AS meta_value
+                        FROM {$link_table}
+                        WHERE post_type = 'term' AND internal = 0 AND has_links > 0
+                        GROUP BY post_id";
                     break;
                 default:
                     $orderby = 'post_date';
@@ -1529,9 +2010,45 @@ class Wpil_Report
         $report_post_ids = Wpil_Query::reportPostIds($orphaned);
         $report_term_ids = Wpil_Query::reportTermIds($orphaned, $hide_noindex);
 
-        // hide ignored
-        $ignored_posts = ''; // Free doesn't support ignored posts
-        $ignored_terms = ''; // Or terms
+        $post_filter_query = "";
+        $link_filters = Wpil_Filter::filterLinkCount();
+        if($link_filters && !$link_density_report){
+            switch($link_filters['link_type']){
+                case 'inbound-internal':
+                    $post_filter_group_query = "select a.ID AS 'ID' from {$wpdb->posts} a left join {$link_table} b on a.ID = b.target_id and b.target_type = 'post' and b.has_links > 0 where 1";
+                    $term_filter_group_query = "select a.term_id as 'ID' from {$wpdb->terms} a left join {$link_table} b on a.term_id = b.target_id and b.target_type = 'term' and b.has_links > 0 where 1";
+                    $post_group_filter_by = " group by a.ID having count(b.target_id) >= {$link_filters['link_min_count']}";
+                    $term_group_filter_by = " group by a.term_id having count(b.target_id) >= {$link_filters['link_min_count']}";
+                    break;
+                case 'outbound-internal':
+                    $post_filter_group_query = "select a.ID AS 'ID' from {$wpdb->posts} a left join {$link_table} b on a.ID = b.post_id and b.post_type = 'post' and b.internal = 1 where 1";
+                    $term_filter_group_query = "select a.term_id as 'ID' from {$wpdb->terms} a left join {$link_table} b on a.term_id = b.post_id and b.post_type = 'term' and b.internal = 1 where 1";
+                    $post_group_filter_by = " group by a.ID having count(b.post_id) >= {$link_filters['link_min_count']}";
+                    $term_group_filter_by = " group by a.term_id having count(b.post_id) >= {$link_filters['link_min_count']}";
+                    break;
+                case 'outbound-external':
+                default:
+                    $post_filter_group_query = "select a.ID AS 'ID' from {$wpdb->posts} a left join {$link_table} b on a.ID = b.post_id and b.post_type = 'post' and internal = 0 and b.has_links > 0 where 1";
+                    $term_filter_group_query = "select a.term_id as 'ID' from {$wpdb->terms} a left join {$link_table} b on a.term_id = b.post_id and b.post_type = 'term' and internal = 0 and b.has_links > 0 where 1";
+                    $post_group_filter_by = " group by a.ID having count(b.post_id) >= {$link_filters['link_min_count']}";
+                    $term_group_filter_by = " group by a.term_id having count(b.post_id) >= {$link_filters['link_min_count']}";
+                    break;
+            }
+
+            $post_filter_query = " AND p.ID IN ({$post_filter_group_query}";
+            $post_group_filter_by .= ($link_filters['link_max_count'] !== null) ? " and count(b.post_id) <= {$link_filters['link_max_count']})": ')';
+            $post_filter_query .= $post_group_filter_by;
+
+            $term_group_filter_by .= ($link_filters['link_max_count'] !== null) ? " AND count(b.post_id) <= {$link_filters['link_max_count']}": '';
+            $term_filter_group_query .= $term_group_filter_by;
+
+            if(!empty($report_term_ids)){
+                $report_term_ids = "term_id IN ($report_term_ids) AND term_id IN ({$term_filter_group_query})";
+                $report_term_ids = $wpdb->get_col("SELECT `term_id` FROM $wpdb->terms WHERE $report_term_ids");
+                $report_term_ids = implode(',', $report_term_ids);
+            }
+        }
+
         $collation = "";
 
         // if we're processing terms in the report too
@@ -1554,11 +2071,35 @@ class Wpil_Report
             }
         }
 
+        // if we're showing the link density report
+        if($link_density_report){
+            // override the filter settings with the density filters
+            $post_inbound_group_query = "select a.ID AS 'ID' from {$wpdb->posts} a left join {$link_table} b on a.ID = b.target_id and b.target_type = 'post' and b.has_links > 0 where 1 group by a.ID having count(b.post_id) <= 0";
+            $term_inbound_group_query = "select a.term_id as 'ID' from {$wpdb->terms} a left join {$link_table} b on a.term_id = b.target_id and b.target_type = 'term' and b.has_links > 0 where 1 group by a.term_id having count(b.post_id) <= 0";
+
+            $post_outbound_group_query = "select a.ID AS 'ID' from {$wpdb->posts} a left join {$link_table} b on a.ID = b.post_id and b.post_type = 'post' and b.internal = 1 where 1 group by a.ID having count(b.post_id) < 3";
+            $term_outbound_group_query = "select a.term_id as 'ID' from {$wpdb->terms} a left join {$link_table} b on a.term_id = b.post_id and b.post_type = 'term' and b.internal = 1 where 1 group by a.term_id having count(b.post_id) < 3";
+
+            $post_filter_query = " AND (p.ID IN ({$post_inbound_group_query}) OR p.ID IN ({$post_outbound_group_query}))";
+            if(!empty($report_term_ids)){
+                $report_term_ids = "term_id IN ($report_term_ids) AND (term_id IN ({$term_inbound_group_query}) OR term_id IN ({$term_outbound_group_query}))";
+                $report_term_ids = $wpdb->get_col("SELECT `term_id` FROM {$wpdb->terms} WHERE $report_term_ids");
+                $report_term_ids = implode(',', $report_term_ids);
+            }
+        }
+
+        // hide ignored
+        $ignored_posts = Wpil_Query::get_all_report_ignored_post_ids('p', array('orphaned' => $orphaned, 'hide_noindex' => $hide_noindex));
+        $ignored_terms = '';
+        if($hide_ignored && $show_categories){
+            $ignored_terms = Wpil_Query::ignoredTermIds();
+        }
+
         if ($orderby == 'post_date' || $orderby == 'post_title' || $orderby == 'post_type' || $orderby == 'title_search') {
             //create query for order by title or date
             $query = "SELECT DISTINCT p.ID, p.post_title {$collation} AS 'post_title', p.post_type {$collation} AS 'post_type', p.post_date as `post_date`, 'post' as `type` $title_search 
-                        FROM {$wpdb->posts} p LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
-                            WHERE 1 = 1 $report_post_ids $statuses_query $ignored_posts AND p.post_type IN ($post_types) $search AND pm.meta_key = 'wpil_sync_report3' AND pm.meta_value = '1'";
+                        FROM {$wpdb->posts} p 
+                            WHERE 1 = 1 $report_post_ids $statuses_query $ignored_posts AND p.post_type IN ($post_types) $search {$post_filter_query} AND p.ID IN (select distinct `post_id` from {$link_table} where `post_type` = 'post')";
 
             if ($processing_terms) {
                 $taxonomies = Wpil_Settings::getTermTypes();
@@ -1570,35 +2111,46 @@ class Wpil_Report
 
             $query .= " ORDER BY $orderby $order 
                         LIMIT {$limit} OFFSET {$offset}";
-        } else {
-            //create query for other orders
-            $query = "SELECT DISTINCT p.ID, p.post_title {$collation} AS 'post_title', p.post_type {$collation} AS 'post_type', p.post_date as `post_date`, m.meta_value {$collation} AS 'meta_value', 'post' as `type` $title_search  
-                        FROM {$wpdb->prefix}posts p RIGHT JOIN {$wpdb->prefix}postmeta m ON p.ID = m.post_id
-                        WHERE 1 = 1 $report_post_ids $statuses_query $ignored_posts AND p.post_type IN ($post_types) AND m.meta_key LIKE '$orderby' $search";
+
+        } elseif($orderby === 'organic_traffic') {
+            $target_keyword_table = $wpdb->prefix . 'wpil_target_keyword_data';
+
+            $query = "SELECT DISTINCT `ID`, a.post_type {$collation} AS 'post_type', a.post_title {$collation} AS 'post_title', `post_date`, SUM(`clicks`) as county, 'post' as `type` FROM 
+            (SELECT p.ID, 'post' AS post_type, p.post_title, p.post_date as `post_date` FROM {$wpdb->posts} p WHERE 1 = 1 $report_post_ids $statuses_query $ignored_posts AND p.post_type IN ($post_types) $search AND p.ID IN (select distinct `post_id` from {$link_table} where `post_type` = 'post')  {$post_filter_query}";
 
             if ($processing_terms) {
                 $taxonomies = Wpil_Settings::getTermTypes();
-                $query .= " UNION 
-                    SELECT t.term_id as `ID`, CONVERT(t.name USING {$post_charset}) {$collation} as `post_title`, CONVERT(tt.taxonomy USING {$post_charset}) {$collation} as `post_type`, '1970-01-01 00:00:00' as `post_date`, m.meta_value {$collation} AS 'meta_value', 'term' as `type` $term_title_search  
-                    FROM {$wpdb->termmeta} m INNER JOIN {$wpdb->terms} t ON m.term_id = t.term_id INNER JOIN {$wpdb->term_taxonomy} tt ON t.term_id = tt.term_id
-                    WHERE t.term_id in ($report_term_ids) $ignored_terms AND tt.taxonomy IN ('" . implode("', '", $taxonomies) . "') AND m.meta_key LIKE '$orderby' $term_search";
+                $query .= " UNION
+                SELECT t.term_id as `ID`, 'term' as `post_type`, CONVERT(t.name USING {$post_charset}) {$collation} as `post_title`, '1970-01-01 00:00:00' as `post_date`, 'term' as `type
+                FROM {$wpdb->termmeta} m INNER JOIN {$wpdb->terms} t ON m.term_id = t.term_id INNER JOIN {$wpdb->term_taxonomy} tt ON t.term_id = tt.term_id 
+                WHERE t.term_id in ($report_term_ids) $ignored_terms AND tt.taxonomy IN ('" . implode("', '", $taxonomies) . "') $term_search";
+            }
+    
+            $query .= ") a LEFT JOIN {$target_keyword_table} k ON k.post_id = a.ID GROUP BY ID ORDER BY `county` {$order} LIMIT {$limit} OFFSET {$offset}";
+
+        } else {
+            //create query for other orders
+            $query = "(SELECT DISTINCT p.ID, p.post_title {$collation} AS 'post_title', p.post_type {$collation} AS 'post_type', p.post_date as `post_date`, IFNULL(post_counts.meta_value, 0) AS 'meta_value', 'post' as `type` {$title_search}
+                        FROM {$wpdb->posts} p LEFT JOIN ({$post_link_table_query}) AS post_counts ON p.ID = post_counts.id
+                        WHERE 1 = 1 $report_post_ids $statuses_query $ignored_posts AND p.post_type IN ($post_types) {$post_filter_query} $search
+                        GROUP BY p.ID";
+            if ($processing_terms) {
+                $taxonomies = Wpil_Settings::getTermTypes();
+                $query .= ") UNION (
+                    SELECT t.term_id as `ID`, CONVERT(t.name USING {$post_charset}) {$collation} as `post_title`, CONVERT(tt.taxonomy USING {$post_charset}) {$collation} as `post_type`, '1970-01-01 00:00:00' as `post_date`, IFNULL(term_counts.meta_value, 0) AS 'meta_value', 'term' as `type` {$term_title_search}
+                        FROM {$wpdb->terms} t INNER JOIN {$wpdb->term_taxonomy} tt ON t.term_id = tt.term_id
+                            LEFT JOIN ({$term_link_table_query}) AS term_counts ON t.term_id = term_counts.id
+                    WHERE t.term_id in ($report_term_ids) $ignored_terms AND tt.taxonomy IN ('" . implode("', '", $taxonomies) . "') $term_search 
+                    GROUP BY t.term_id";
                 }
 
-                $query .= "
+                $query .= ") 
                         ORDER BY meta_value $order 
                         LIMIT {$limit} OFFSET {$offset}";
         }
 
         //calculate total count
-        $posts_count = $wpdb->get_var("SELECT count(DISTINCT p.ID) 
-            FROM {$wpdb->prefix}postmeta m INNER JOIN {$wpdb->prefix}posts p ON m.post_id = p.ID 
-            WHERE m.meta_key = 'wpil_sync_report3' AND m.meta_value = '1' AND p.post_status = 'publish' AND p.post_type IN ($post_types) $search");
-
-        $terms_count = $wpdb->get_var("SELECT count(DISTINCT t.term_id) 
-            FROM {$wpdb->prefix}termmeta m INNER JOIN {$wpdb->prefix}terms t ON m.term_id = t.term_id LEFT JOIN {$wpdb->prefix}term_taxonomy tt ON t.term_id = tt.term_id 
-            WHERE m.meta_key = 'wpil_sync_report3' AND m.meta_value = '1' $term_search");
-
-        $total_items = $posts_count + $terms_count;
+        $total_items = self::getTotalItems($query);
 
         $result = $wpdb->get_results($query);
 
@@ -1616,12 +2168,31 @@ class Wpil_Report
             $item = [
                 'post' => $p,
                 'links_inbound_page_url' => $inbound,
-                'date' => $post->type == 'post' ? date(get_option('date_format', 'F d, Y'), strtotime($post->post_date)) : 'not set'
+                'date' => $post->type == 'post' ? date(str_replace('F', 'M', get_option('date_format', 'F d, Y')), strtotime($post->post_date)) : 'not set'
             ];
 
             //get meta data
             foreach (self::$meta_keys as $meta_key) {
                 $item[$meta_key] = $p->getLinksData($meta_key, true);
+            }
+
+            // if we're we're supposed to show the click traffic and GSC has been authenticated
+            if($show_traffic && $authenticated){
+                $keywords = Wpil_TargetKeyword::get_post_keywords_by_type($item['post']->id, $item['post']->type, 'gsc-keyword', false);
+                $clicks = 0;
+                $position = 0;
+                foreach($keywords as $keyword){
+                    $clicks += $keyword->clicks;
+                    $position += floatval($keyword->position);
+                }
+
+                if($position > 0){
+                    $position = round($position/count($keywords), 2);
+                }
+
+                $item['organic_traffic'] = $clicks;
+                $item['position'] = $position;
+
             }
 
             $data[$key] = $item;
@@ -1644,6 +2215,102 @@ class Wpil_Report
         $limit = strpos($query, ' ORDER');
         $query = "SELECT count(*) FROM (" . substr($query, 0, $limit) . ") as t1";
         return $wpdb->get_var($query);
+    }
+
+    /**
+     * Gets all the AI detected suggestions that have been discovered for the specific post
+     * @param Wpil_ModelPost $wpil_post
+     **/
+    public static function get_ai_detected_suggestions($post = array(), $inbound = false, $return_count = false, $group = true){
+        global $wpdb;
+        $suggestion_table = $wpdb->prefix . "wpil_ai_suggested_anchors";
+        $sentence_table = $wpdb->prefix . "wpil_ai_processed_sentences";
+
+        //TODO: MAKE THIS WORK WITH THIS: Wpil_Settings::getOutboundSuggestionPostIds();
+
+        if(empty($post) || !is_a($post, 'Wpil_Model_Post')){
+            return ($return_count) ? 0: array();
+        }
+
+        $ignore_ids = Wpil_Settings::getAllIgnoredPosts();
+        $ignore_posts = array();
+        $ignore_terms = array();
+        if(!empty($ignore_ids)){
+            foreach($ignore_ids as $id){
+                if(!is_string($id) || false === strpos($id, '_')){
+                    continue;
+                }
+                $bits = explode('_', $id);
+                if($bits[0] === 'post'){
+                    $ignore_posts[] = $bits[1];
+                }elseif($bits[0] === 'term'){
+                    $ignore_terms[] = $bits[1];
+                }
+            }
+        }
+
+        $post_types = Wpil_Query::postTypes('');
+        $status = Wpil_Query::postStatuses('');
+        $age_string = Wpil_Query::getPostDateQueryLimit('');
+
+        $taxonomies = Wpil_Query::taxonomyTypes('tt');
+
+        $ignore_posts = (!empty($ignore_posts)) ? " AND ID NOT IN (".implode(',', $ignore_posts).")": '';
+        $ignore_terms = (!empty($ignore_terms)) ? " AND t.term_id NOT IN (".implode(',', $ignore_terms).")": '';
+
+        $post_query = "(select ID from {$wpdb->posts} where 1=1 {$post_types} {$status} {$age_string} {$ignore_posts})";
+        $term_query = "(select tt.term_taxonomy_id from {$wpdb->terms} t left join {$wpdb->term_taxonomy} tt on t.term_id = tt.term_id where 1=1 {$taxonomies} {$ignore_terms})";
+
+        // todo: setup caching so we don't have to hit the database multiple times!
+        // if we're getting the inbound suggestion count
+        if($inbound){
+            $query = $wpdb->prepare(
+                " FROM {$suggestion_table} a LEFT JOIN {$sentence_table} b 
+                    ON a.post_id = b.post_id 
+                    AND a.data_type = b.data_type 
+                    AND a.sentence_id = b.sentence_id 
+                WHERE a.ignore_suggestion < 1 
+                AND b.has_link < 1
+                AND a.target_id = %d
+                AND a.target_type = %s
+                AND ((a.data_type = 1 AND a.post_id IN {$post_query}) OR (a.data_type = 0 AND a.post_id IN {$term_query}))", $post->id, $post->type);
+                if($group){
+                    $query .= " GROUP BY a.post_id, a.post_type";
+                }
+        }else{
+            $query = $wpdb->prepare(
+                " FROM {$suggestion_table} a LEFT JOIN {$sentence_table} b 
+                    ON a.post_id = b.post_id 
+                    AND a.data_type = b.data_type 
+                    AND a.sentence_id = b.sentence_id 
+                WHERE a.ignore_suggestion < 1 
+                AND b.has_link < 1
+                AND a.post_id = %d
+                AND a.post_type = %s
+                AND ((a.target_data_type = 1 AND a.target_id IN {$post_query}) OR (a.target_data_type = 0 AND a.target_id IN {$term_query}))", $post->id, $post->type);
+
+            if($group){
+                $query .= " GROUP BY a.target_id, a.target_type";
+            }
+        }
+
+        $suggestions = ($return_count) ?  
+            $wpdb->get_results("SELECT COUNT(*) as county" . $query):  
+            $wpdb->get_results("SELECT *" . $query);
+
+        if($return_count && !empty($suggestions)){
+            $count = 0;
+            foreach($suggestions as $suggestion){
+                if($group){
+                    $count++;
+                }else{
+                    $count += $suggestion->county;
+                }
+            }
+            $suggestions = $count;
+        }
+
+        return $suggestions;
     }
 
     /**
@@ -1673,8 +2340,10 @@ class Wpil_Report
                 $hide_ignore = !empty($options['hide_ignore']) && $options['hide_ignore'] != 'off';
                 $hide_noindex = !empty($options['hide_noindex']) && $options['hide_noindex'] != 'off';
                 $show_click_traffic = !empty($options['show_click_traffic']) && $options['show_click_traffic'] != 'off';
+                $show_broken_link_type = !empty($options['show_broken_link_type']) && $options['show_broken_link_type'] != 'off';
+                $show_broken_link_discovered = !empty($options['show_broken_link_discovered']) && $options['show_broken_link_discovered'] != 'off';
             } else {
-                $show_categories = true;
+                $show_categories = false;
                 $show_date = true;
                 $show_type = false;
                 $per_page = 20;
@@ -1682,6 +2351,8 @@ class Wpil_Report
                 $hide_ignore = false;
                 $hide_noindex = false;
                 $show_click_traffic = false;
+                $show_broken_link_type = false;
+                $show_broken_link_discovered = false;
             }
 
             //get apply button
@@ -1765,23 +2436,28 @@ class Wpil_Report
                 $links_data = $post->getInboundInternalLinks();
                 $count = 0;
                 foreach ($links_data as $link) {
-                    $count++;
-                    if($count <= $current){
-                        continue;
-                    }
-                    if (!empty($link->post)) {
-                        $rep .= '<li>
-                                    <div>
-                                        <div style="margin: 3px 0;"><b>Origin Post Title:</b> ' . esc_html($link->post->getTitle()) . '</div>
-                                        <div style="margin: 3px 0;"><b>Anchor Text:</b> ' . esc_html(strip_tags($link->anchor)) . '</div>';
-                        $rep .=         self::get_dropdown_icons($link->post, $link, 'inbound-internal');
-                        $rep .=         '<a href="' . admin_url('post.php?post=' . $link->post->id . '&action=edit') . '" target="_blank">[edit]</a> 
-                                        <a href="' . esc_url($link->post->getLinks()->view) . '" target="_blank">[view]</a>
-                                        <br>
-                                    </div>
-                                </li>';
-                    } else {
-                        $rep .= '<li><div><b>[' . esc_html(strip_tags($link->anchor)) . ']</b><br>[' . $link->location . ']<br><br></div></li>';
+                    if (!Wpil_Filter::linksLocation() || $link->location == Wpil_Filter::linksLocation()) {
+                        $count++;
+                        if($count <= $current){
+                            continue;
+                        }
+                        if (!empty($link->post)) {
+                            $rep .= '<li>
+                                        <input type="checkbox" class="wpil_link_select" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="'.base64_encode($link->anchor).'" data-url="'.base64_encode($link->url).'">
+                                        <div>
+                                            <div style="margin: 3px 0;"><b>Origin Post Title:</b> ' . esc_html($link->post->getTitle()) . '</div>
+                                            <div style="margin: 3px 0;"><b>Anchor Text:</b> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $link->post->getLinks()->view)) . '" target="_blank">' . esc_html($link->anchor) . ' <span class="dashicons dashicons-external" style="position: relative;top: 3px;"></span></a></div>
+                                            <div style="margin: 3px 0;"><b>Content Relatedness:</b> ' . esc_html($link->get_ai_relation_percent()) . '</div>';
+                            $rep .= ($get_all_links) ? '<div style="margin: 3px 0;"><b>Link Location:</b> ' . $link->location . '</div>' : '';
+                            $rep .= self::get_dropdown_icons($link->post, $link, 'inbound-internal');
+                            $rep .=         '<a href="' . admin_url('post.php?post=' . $link->post->id . '&action=edit') . '" target="_blank">[edit]</a> 
+                                            <a href="' . esc_url($link->post->getLinks()->view) . '" target="_blank">[view]</a>
+                                            <br>
+                                        </div>
+                                    </li>';
+                        } else {
+                            $rep .= '<li><div><b>[' . esc_html(strip_tags($link->anchor)) . ']</b><br>[' . $link->location . ']<br><br></div></li>';
+                        }
                     }
                 }
 
@@ -1790,9 +2466,35 @@ class Wpil_Report
                 $links_data = $post->getOutboundInternalLinks();
                 $count = 0;
                 foreach ($links_data as $link) {
-                    $count++;
-                    if($count <= $current){
-                        continue;
+                    if (!Wpil_Filter::linksLocation() || $link->location == Wpil_Filter::linksLocation()) {
+                        $count++;
+                        if($count <= $current){
+                            continue;
+                        }
+
+                        $primary_category_note = '';
+                        if(!empty($link->post) && $link->post->type === 'post') {
+                            // Get the main term
+                            $post_type = $link->post->getRealType();
+                            $primary_term = Wpil_Post::get_primary_term_for_main_taxonomy($link->post->id, $post_type);
+
+                            if ($primary_term instanceof WP_Term) {
+                                $primary_category_note = '<div style="margin: 3px 0;"><b>Main Category:</b> ' . esc_html($primary_term->name) . '</div>';
+                            } else {
+                                $primary_category_note = '<div style="margin: 3px 0;"><b>Main Category:</b> None assigned.</div>';
+                            }
+                        }
+                        $rep .= '<li>
+                                    <input type="checkbox" class="wpil_link_select" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->anchor) . '" data-url="' . base64_encode($link->url) . '">
+                                    <div>
+                                        <div style="margin: 3px 0;"><b>Link:</b> <a href="' . esc_url($link->url) . '" target="_blank" style="text-decoration: underline">' . esc_html($link->url) . '</a></div>
+                                        <div style="margin: 3px 0;"><b>Anchor Text:</b> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $post->getLinks()->view)) . '" target="_blank">' . esc_html($link->anchor) . ' <span class="dashicons dashicons-external" style="position: relative;top: 3px;"></span></a></div>
+                                        <div style="margin: 3px 0;"><div class="content-relatedness-score"><b>Content Relatedness:</b> ' . esc_html($link->get_ai_relation_percent()) . '</div></div>';
+                        $rep .= ($get_all_links) ? '<div style="margin: 3px 0;"><b>Link Location:</b> ' . $link->location . '</div>' : '';
+                        $rep .= $primary_category_note;
+                        $rep .= self::get_dropdown_icons($post, $link, 'outbound-internal');
+                        $rep .=     '</div>
+                                </li>';
                     }
 
                     $primary_category_note = '';
@@ -1840,6 +2542,232 @@ class Wpil_Report
         wp_send_json(array('success' => array('item_data' => $rep, 'item_count' => $count)));
     }
 
+    public static function ajax_assemble_link_report_link_data(){
+        Wpil_Base::verify_nonce('wpil_report_link_nonce');
+
+        if(!isset($_POST['link_type']) || !isset($_POST['post_id']) || !isset($_POST['post_type'])){
+            wp_send_json(array('error' => array('title' => __('Data Missing', 'wpil'), 'text' => __('Some of the data required to load the links is missing. Please reload the page and try again.', 'wpil'))));
+        }
+
+        $table = '';
+        $rep = '';
+        $get_all_links = Wpil_Settings::showAllLinks();
+        $post_id = (int)$_POST['post_id'];
+        $post_type = ($_POST['post_type'] === 'post') ? 'post': 'term';
+
+        $post = new Wpil_Model_Post($post_id, $post_type);
+
+        $activity_tooltip = __('Upgrade Link Whisper with AI and see how relevant your links really are.', 'wpil');
+        $ai_not_enabled = (!Wpil_Settings::has_ai_enabled()) ? '<div class="wpil-activity-upgrade-ai"><span>93%</span> <a href="'.admin_url('admin.php?page=link_whisper_ai_subscription').'" target="_blank" class="button-primary wpil-tippy-tooltipped" data-wpil-tooltip-theme="link-whisper-report-tippy" data-wpil-tooltip-interactive="1" data-wpil-tooltip-content="'.$activity_tooltip.'">Upgrade</a></div>': '';
+        $last_col = ($get_all_links) ? '': 'wpil-activity-last-col';
+
+        $header = ['<th class="wpil-activity-panel-checkbox panel-checkall wpil-activity-panel-fixed-th"><input class="wpil-activity-panel-checkall" type="checkbox"/></th>'];
+        switch ($_POST['link_type']) {
+            case 'inbound-internal':
+                $links_data = $post->getInboundInternalLinks();
+                $header = array_merge($header, [
+                    '<th class="wpil-activity-panel-post">Origin Post Title</th>',
+                    '<th>Anchor Text</th>',
+                    '<th>URL</th>',
+                    '<th class="wpil-activity-panel-content-related '.$last_col.'">AI Content Relatedness</th>'
+                ]);
+
+                if($get_all_links){
+                    $header = array_merge($header, [
+                        '<th class="wpil-activity-panel-link-location wpil-activity-last-col">Link Location</th>'
+                    ]);
+                }
+                /*$header = array_merge($header, [
+                    '<th class="wpil-link-status-icon-header wpil-activity-panel-fixed-th">Status</th>'
+                ]);*/
+
+                foreach ($links_data as $link) {
+                    if (!Wpil_Filter::linksLocation() || $link->location == Wpil_Filter::linksLocation()) {
+                        if (!empty($link->post)) {
+                            $related = (!empty($link->get_ai_relation_percent(true)) && $link->get_ai_relation_percent(true) < 50) ? 'ai-not-related': '';
+                            $edit_link = '';
+                            $rep .= '<tr class="wpil-activity-panel-edit inactive">
+                                        <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="'.base64_encode($link->anchor).'" data-url="'.base64_encode($link->url).'" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
+                                        <td class="wpil-activity-panel-post wpil-activity-panel-limited-text-cell"><div style="margin: 3px 0;"> ' . esc_html($link->post->getTitle()) . '</div></td>
+                                        <td class="wpil-activity-panel-limited-text-cell">
+                                            <div style="margin: 3px 0; display:flex;">
+                                                '.$edit_link.'
+                                                <div class="wpil-report-edit-display wpil-activity-panel-anchor-display">
+                                                    <div class="wpil-anchor-display-text">' . esc_html($link->anchor) . '</div> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $link->post->getLinks()->view)) . '" class="wpil-report-edit-display wpil-activity-panel-anchor-display" target="_blank"><span class="dashicons dashicons-external" title="'.esc_attr__('View On Page','wpil').'" style="position: relative;top: 3px;"></span></a>
+                                                </div>';
+                            if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
+                            $rep .=        '<input class="wpil-activity-panel-anchor-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->anchor) . '">';
+                            }
+                            $rep .=         '</div>
+                                        </td>
+                                        <td class="wpil-activity-panel-limited-text-cell">
+                                        <div style="margin: 3px 0; display:flex;">
+                                            '.$edit_link.'
+                                            <div href="' . esc_url($link->url) . '" target="_blank" class="wpil-report-edit-display wpil-activity-panel-url-display" style="text-decoration: underline">
+                                                <div class="wpil-url-display-text">' . esc_html($link->url) . '</div>
+                                            </div>';
+                        if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
+                        $rep .=            '<input class="wpil-activity-panel-url-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->url) . '">';
+                        }
+                        $rep .=         '</div>
+                                    </td>
+                                        <td class="'.$related.'"><div style="margin: 3px 0;"> ' . ((empty($ai_not_enabled)) ? esc_html($link->get_ai_relation_percent()): $ai_not_enabled) . '</div></td>';
+                            $rep .= ($get_all_links) ? '<td><div style="margin: 3px 0;">' . $link->location . '</div></td>' : '';
+//                            $rep .= '<td class="wpil-status-icon-cell">' . self::get_dropdown_icons($link->post, $link, 'inbound-internal', true) . '</td>';
+                            $rep .= '</tr>';
+                        } else {
+                            $rep .= '<tr>
+                                        <td>
+                                            <b>' . esc_html(strip_tags($link->anchor)) . '</b><br>' . $link->location . '<br><br>
+                                        </td>
+                                    </tr>';
+                        }
+                    }
+                }
+
+                break;
+            case 'outbound-internal':
+                $header = array_merge($header, [
+                    '<th>Target Post Title</th>',
+                    '<th>Anchor Text</th>',
+                    '<th>URL</th>',
+                    '<th class="wpil-activity-panel-content-related '.$last_col.'">AI Content Relatedness</th>'
+                ]);
+
+                if($get_all_links){
+                    $header = array_merge($header, [
+                        '<th class="wpil-activity-panel-link-location wpil-activity-last-col">Link Location</th>'
+                    ]);
+                }
+                /*$header = array_merge($header, [
+                    //'<th>Primary Category</th>',
+                    '<th class="wpil-link-status-icon-header wpil-activity-panel-fixed-th">Status</th>'
+                ]);*/
+
+                $links_data = $post->getOutboundInternalLinks();
+                foreach ($links_data as $link) {
+                    if (!Wpil_Filter::linksLocation() || $link->location == Wpil_Filter::linksLocation()) {
+                        $target_post = (isset($link->target_id) && !empty($link->target_id)) ? new Wpil_Model_Post($link->target_id, $link->target_type): Wpil_Post::getPostByLink($link->url);
+                        $edit_link = '';
+                        $related = (!empty($link->get_ai_relation_percent(true)) && $link->get_ai_relation_percent(true) < 50) ? 'ai-not-related': '';
+                        
+                        /*
+                        $primary_category_note = '<td><div style="margin: 3px 0;">None assigned</div></td>';
+                        if(!empty($link->post) && $link->post->type === 'post') {
+                            // Get the main term
+                            $primary_term = Wpil_Post::get_primary_term_for_main_taxonomy($link->post->id, $link->post->getRealType());
+
+                            if ($primary_term instanceof WP_Term) {
+                                $primary_category_note = '<td><div style="margin: 3px 0;">' . esc_html($primary_term->name) . '</div></td>';
+                            } else {
+                                $primary_category_note = '<td><div style="margin: 3px 0;">None assigned</div></td>';
+                            }
+                        }elseif(!empty($link->post) && $link->post->type === 'term'){
+                            $primary_category_note = '<td><div style="margin: 3px 0;">None</div></td>';
+                        }*/
+
+                        $rep .= '<tr class="wpil-activity-panel-edit inactive">
+                                    <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
+                                    <td class="wpil-activity-panel-post wpil-activity-panel-limited-text-cell"><div style="margin: 3px 0;"> ' . ((!empty($target_post)) ? esc_html($target_post->getTitle()): 'Unknown Post') . '</div></td>
+                                    <td class="wpil-activity-panel-limited-text-cell">
+                                        <div style="margin: 3px 0; display:flex">
+                                            '.$edit_link.'
+                                            <div class="wpil-report-edit-display wpil-activity-panel-anchor-display"><div class="wpil-anchor-display-text">' . esc_html($link->anchor) . '</div> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $post->getLinks()->view)) . '" target="_blank"><span class="dashicons dashicons-external" title="'.esc_attr__('View On Page','wpil').'" style="position: relative;top: 3px;"></span></a></div>';
+                        if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
+                        $rep .=            '<input class="wpil-activity-panel-anchor-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->anchor) . '">';
+                        }
+                        $rep .=         '</div>
+                                    </td>
+                                    <td class="wpil-activity-panel-limited-text-cell">
+                                        <div style="margin: 3px 0; display:flex">
+                                            '.$edit_link.'
+                                            <div href="' . esc_url($link->url) . '" target="_blank" class="wpil-report-edit-display wpil-activity-panel-url-display" style="text-decoration: underline">
+                                                <div class="wpil-url-display-text">' . esc_html($link->url) . '</div>
+                                            </div>';
+                        if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
+                        $rep .=            '<input class="wpil-activity-panel-url-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->url) . '">';
+                        }
+                        $rep .=         '</div>
+                                    </td>
+                                    <td><div class="'.$related.'" style="margin: 3px 0;"><div class="content-relatedness-score">' . ((empty($ai_not_enabled)) ? esc_html($link->get_ai_relation_percent()): $ai_not_enabled) . '</div></div></td>';
+                        $rep .= ($get_all_links) ? '<td><div style="margin: 3px 0;">' . $link->location . '</div></td>' : '';
+//                        $rep .= $primary_category_note;
+//                        $rep .= '<td class="wpil-status-icon-cell">' . self::get_dropdown_icons($post, $link, 'outbound-internal', true) . '</td>';
+                        $rep .= '</tr>';
+                    }
+                }
+
+                break;
+            case 'outbound-external':
+                $header = array_merge($header, [
+                    '<th>Anchor Text</th>',
+                    '<th>URL</th>',
+                ]);
+
+                if($get_all_links){
+                    $header = array_merge($header, [
+                        '<th class="wpil-activity-panel-link-location wpil-activity-last-col">Link Location</th>'
+                    ]);
+                }
+
+                /*$header = array_merge($header, [
+                    '<th class="wpil-link-status-icon-header wpil-activity-panel-fixed-th">Status</th>'
+                ]);*/
+
+                $links_data = $post->getOutboundExternalLinks();
+                foreach ($links_data as $link) {
+                    if (!Wpil_Filter::linksLocation() || $link->location == Wpil_Filter::linksLocation()) {
+                        $edit_link = '';
+
+                        $rep .= '<tr class="wpil-activity-panel-edit inactive">
+                                    <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $post->id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $post->id . '_nonce_' . $post->id) . '"></td>
+                                    <td class="wpil-activity-panel-limited-text-cell">
+                                        <div style="margin: 3px 0; display:flex">
+                                            '.$edit_link.'
+                                            <div class="wpil-report-edit-display wpil-activity-panel-anchor-display"><div class="wpil-anchor-display-text">' . esc_html($link->anchor) . '</div> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $post->getLinks()->view)) . '" target="_blank"><span class="dashicons dashicons-external" title="'.esc_attr__('View On Page','wpil').'" style="position: relative;top: 3px;"></span></a></div>';
+                        if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
+                        $rep .=        '<input class="wpil-activity-panel-anchor-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->anchor) . '">';
+                        }
+                        $rep .=         '</div>
+                                    </td>
+                                    <td class="wpil-activity-panel-limited-text-cell">
+                                        <div style="margin: 3px 0; display:flex">
+                                            '.$edit_link.'
+                                            <div href="' . esc_url($link->url) . '" target="_blank" class="wpil-report-edit-display wpil-activity-panel-url-display" style="text-decoration: underline">
+                                                <div class="wpil-url-display-text">' . esc_html($link->url) . '</div>
+                                            </div>';
+                        if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
+                        $rep .=        '<input class="wpil-activity-panel-url-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->url) . '">';
+                        }
+                        $rep .=         '</div>
+                                    </td>';
+                        $rep .= ($get_all_links) ? '<td><div style="margin: 3px 0;">' . $link->location . '</div></td>' : '';
+//                        $rep .= '<td class="wpil-status-icon-cell">' . self::get_dropdown_icons(array(), $link, 'outbound-external', true) . '</td>';
+                        $rep .= '</tr>';
+                    }
+                }
+
+                break;
+        }
+
+        $table .= '
+            <table class="wpil-activity-table widefat" style="width:100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="text-align: left;">' . implode('', $header) . '</tr>
+                </thead>
+                <tbody>' . $rep . '</tbody>
+            </table>';
+        $table .= '
+            <div class="wpil-update-activity-items" style="display: flex; justify-content: space-between;">
+                <a href="#" class="wpil-edit-selected-activity-items inactive" style="margin: 0 0 0 10px;" data-nonce="' . wp_create_nonce(wp_get_current_user()->ID . 'activity-item-action') . '"><span class="wpil-edit-inactive">📝 Edit Selected</span><span class="wpil-edit-active">🛑Stop Editing</span></a>
+                <a href="#" class="wpil-update-selected-activity-items wpil_link_edit_update disabled" style="margin: 0 0 0 10px;" data-nonce="' . wp_create_nonce(wp_get_current_user()->ID . 'activity-item-action') . '">' . __('🔄 Update Selected', 'wpil') . '</a>
+                <a href="#" class="wpil-delete-selected-activity-items disabled" style="margin: 0 0 0 10px;" data-nonce="' . wp_create_nonce(wp_get_current_user()->ID . 'delete-selected-links') . '">' . __('🗑️ Delete Selected', 'wpil') . '</a>
+            </div>';
+
+        wp_send_json(array('success' => array('link_table' => $table)));
+    }
+
+
     /**
      * Saves the screen options via ajax
      **/
@@ -1874,6 +2802,8 @@ class Wpil_Report
                 'hide_noindex' => 'on/off',
                 'show_link_attrs' => 'on/off',
                 'show_click_traffic' => 'on/off',
+                'show_broken_link_type' => 'on/off',
+                'show_broken_link_discovered' => 'on/off',
 
                 // autolinking report
                 'hide_select_links_column' => 'on/off',
@@ -1962,7 +2892,7 @@ class Wpil_Report
      * @param object $post
      * @param object $link
      **/
-    public static function get_dropdown_icons($post = array(), $link = array(), $disposition = 'inbound-internal'){
+    public static function get_dropdown_icons($post = array(), $link = array(), $disposition = 'inbound-internal', $hide_header = false){
         $icons = '';
         $stats = array();
 
@@ -2055,7 +2985,11 @@ class Wpil_Report
         }
 
         if(!empty($stats)){
-            $icons = '<div class="wpil-link-status-icon-container" style="margin: 3px 0;"><b>Status:</b> ' . implode('', $stats) . '</div>';
+            if(!$hide_header){
+                $icons = '<div class="wpil-link-status-icon-container" style="margin: 3px 0;"><b>Status:</b> ' . implode('', $stats) . '</div>';
+            }else{
+                $icons = '<div class="wpil-link-status-icon-container" style="margin: 3px 0;">' . implode('', $stats) . '</div>';
+            }
         }
 
         return $icons;
@@ -2122,6 +3056,7 @@ class Wpil_Report
                                     raw_url text,
                                     host text,
                                     anchor text,
+                                    anchor_word_count int(10) NOT NULL DEFAULT 0,
                                     internal tinyint(1) DEFAULT 0,
                                     has_links tinyint(1) NOT NULL DEFAULT 0,
                                     post_type varchar(8),
@@ -2132,6 +3067,7 @@ class Wpil_Report
                                     tracking_id bigint(20) UNSIGNED NOT NULL DEFAULT 0,
                                     module_link tinyint(1) UNSIGNED NOT NULL DEFAULT 0,
                                     link_context tinyint(1) UNSIGNED NOT NULL DEFAULT 0,
+                                    ai_relation_score double UNSIGNED NOT NULL DEFAULT 0,
                                     PRIMARY KEY  (link_id),
                                     INDEX (post_id),
                                     INDEX (post_type),
@@ -2173,6 +3109,7 @@ class Wpil_Report
         $links_table = $wpdb->prefix . "wpil_report_links";
         $count = 0;
         $memory_break_point = self::get_mem_break_point();
+        $speed_optimize = Wpil_Settings::optimize_link_scan_for_speed();
 
         // get the ids that haven't been added to the link table yet
         $unprocessed_ids = self::get_all_unprocessed_link_post_ids();
@@ -2208,6 +3145,16 @@ class Wpil_Report
                     }
                 }
 
+                // track the progress
+                $total = (isset($_POST['link_posts_to_process_count'])) ? (int)$_POST['link_posts_to_process_count'] : self::get_total_post_count();
+                Wpil_Toolbox::track_process_progress(
+                    'link_scanning', 
+                    'Searching for Links', 
+                    $term_update_count, 
+                    count($terms), 
+                    $total
+                );
+
                 // if all the found cats have had their links loaded in the database
                 if(count($terms) === $term_update_count){
                     // return success
@@ -2221,6 +3168,9 @@ class Wpil_Report
             return array('completed' => true, 'inserted_posts' => 0);
         }
 
+        $interval = microtime(true);
+        $old_count = 0;
+        $posts = [];
         foreach($unprocessed_ids as $key => $id){
             // exit the loop if we've been at this for 30 seconds or we've passed the memory breakpoint
             if(Wpil_Base::overTimeLimit(15, 30) || ('disabled' !== $memory_break_point && memory_get_usage() > $memory_break_point)){
@@ -2236,8 +3186,23 @@ class Wpil_Report
                 unset($unprocessed_ids[$key]);
             }
 
-            // update the stored list of unprocessed ids as they're checked off so we stay up to date
-            set_transient('wpil_stored_unprocessed_link_ids', $unprocessed_ids, MINUTE_IN_SECONDS * 5);
+            // if we've been at this for over 5 seconds
+            if(microtime(true) - $interval > 5){
+                $interval = microtime(true);
+                $total = (isset($_POST['link_posts_to_process_count'])) ? (int)$_POST['link_posts_to_process_count'] : self::get_total_post_count();
+                
+                $diff = ($count - $old_count);
+                $old_count = $count;
+
+                // track the progress
+                Wpil_Toolbox::track_process_progress(
+                    'link_scanning', 
+                    'Searching for Links', 
+                    $diff, 
+                    count($unprocessed_ids), 
+                    $total
+                );
+            }
 
             // check to see if the user has set a limit on the max number of posts to process at one go
             if(apply_filters('wpil_fill_link_table_post_limit_break', false, $count)){
@@ -2245,6 +3210,22 @@ class Wpil_Report
                 break; 
             }
         }
+
+        if($speed_optimize){
+            // update the stored list of unprocessed ids as they're checked off so we stay up to date
+            set_transient('wpil_stored_unprocessed_link_ids', $unprocessed_ids, MINUTE_IN_SECONDS * 5);
+        }
+
+        // track the progress
+        $total = (isset($_POST['link_posts_to_process_count'])) ? (int)$_POST['link_posts_to_process_count'] : self::get_total_post_count();
+        $diff = ($count - $old_count);
+        Wpil_Toolbox::track_process_progress(
+            'link_scanning', 
+            'Searching for Links', 
+            $diff, 
+            count($unprocessed_ids), 
+            $total
+        );
 
         return array('completed' => false, 'inserted_posts' => $count);
     }
@@ -2437,26 +3418,95 @@ class Wpil_Report
     public static function insert_links_into_link_table($post, $posts = array()){
         global $wpdb;
         $links_table = $wpdb->prefix . "wpil_report_links";
+        $speed_optimize = Wpil_Settings::optimize_link_scan_for_speed();
 
         $count = 0;
-        $links = self::getContentLinks($post);
-        $insert_query = "INSERT INTO {$links_table} (post_id, clean_url, raw_url, host, anchor, internal, has_links, post_type) VALUES ";
+        $insert_query = "INSERT INTO {$links_table} (post_id, target_id, target_type, clean_url, raw_url, host, anchor, anchor_word_count, internal, has_links, post_type, location, broken_link_scanned, link_whisper_created, is_autolink, tracking_id, module_link, link_context, ai_relation_score) VALUES ";
         $links_data = array();
         $place_holders = array();
-        foreach($links as $link){
-            array_push (
-                $links_data,
-                $post->id,
-                self::getCleanUrl($link->url),
-                $link->url,
-                $link->host,
-                $link->anchor,
-                $link->internal,
-                1,
-                $post->type
-            );
 
-            $place_holders [] = "('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%s')";
+        if(empty($posts)){
+            $posts = array($post);
+        }
+
+        foreach($posts as $post){
+            $ai_relation_data = Wpil_AI::get_embedding_relatedness_data($post->id, $post->type);
+
+            if($speed_optimize){
+                $links = self::getContentLinks($post, false, $post->getContent()); 
+            }else{
+                $links = self::getContentLinks($post); 
+            }
+
+            foreach($links as $link){
+                $ai_relation_score = 0;
+                if(!empty($ai_relation_data) && isset($link->post) && !empty($link->post)){
+                    $pid = $link->post->get_pid();
+                    if(isset($ai_relation_data->$pid) && !empty($ai_relation_data->$pid)){
+                        $ai_relation_score = $ai_relation_data->$pid;
+                    }
+                }
+
+                array_push (
+                    $links_data,
+                    $post->id,
+                    !empty($link->post) ? $link->post->id: 0,
+                    !empty($link->post) ? $link->post->type: '',
+                    self::getCleanUrl($link->url),
+                    $link->url,
+                    $link->host,
+                    $link->anchor,
+                    Wpil_Word::getWordCount($link->anchor),
+                    $link->internal,
+                    1,
+                    $post->type,
+                    $link->location,
+                    0,
+                    $link->link_whisper_created,
+                    $link->is_autolink,
+                    $link->tracking_id,
+                    $link->module_link,
+                    $link->link_context,
+                    $ai_relation_score
+                );
+
+                $place_holders [] = "('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%f')";
+            }
+
+            // if there are no links, update the link table with null values to remove it from processing
+            if(empty($links)){
+                $insert = $wpdb->insert(
+                    $links_table,
+                    array(
+                        'post_id' => $post->id,
+                        'target_id' => 0,
+                        'target_type' => null,
+                        'clean_url' => null,
+                        'raw_url' => null,
+                        'host' => null,
+                        'anchor' => null,
+                        'anchor_word_count' => 0,
+                        'internal' => null,
+                        'has_links' => 0,
+                        'post_type' => $post->type,
+                        'location' => 'content',
+                        'broken_link_scanned' => 0,
+                        'link_whisper_created' => 0,
+                        'is_autolink' => 0,
+                        'tracking_id' => 0,
+                        'module_link' => 0,
+                        'link_context' => 0,
+                        'ai_relation_score' => 0
+                    )
+                );
+
+                // if the insert was successful
+                if(false !== $insert){
+                    // increase the insert count
+                    $count += 1;
+                }
+            }
+
         }
 
         if (count($place_holders) > 0) {
@@ -2501,7 +3551,7 @@ class Wpil_Report
      * Gets all post ids from the post table and returns an array of ids.
      * @return array $all_post_ids (an array of all post ids from the post table. Categories aren't included. We're focusing on post ids since they make up the bulk of the ids)
      **/
-    public static function get_all_post_ids(){
+    public static function get_all_post_ids($age_limit = null){
         if (empty(self::$all_post_ids)){
             global $wpdb;
 
@@ -2511,7 +3561,32 @@ class Wpil_Report
                 $post_type_replace_string = " AND post_type IN ('" . implode("', '", $post_types) . "') ";
             }
 
-            self::$all_post_ids = $wpdb->get_col("SELECT ID FROM {$wpdb->posts} WHERE `post_status` = 'publish' $post_type_replace_string");
+            // get the ids that aren't supposed to be processed
+            $ignored_pages = Wpil_Settings::get_completely_ignored_pages();
+            $completely_ignore = '';
+            if(!empty($ignored_pages)){
+                $data = array();
+                foreach($ignored_pages as $id){
+                    if(false !== strpos($id, 'post')){
+                        $dat = explode('_', $id);
+                        $data[] = $dat[1];
+                    }
+                }
+
+                if(!empty($data)){
+                    $completely_ignore = " AND ID NOT IN (" . implode(", ", $data) . ") ";
+                }
+            }
+
+            $max_age = "";
+            if(!empty($age_limit)){
+                if($age_limit === 'ai'){ // TODO: Create case switch if we need more limit settings
+                    $max_age = Wpil_Query::getPostDateQueryLimit('', $age_limit);
+                }
+            }
+
+            $statuses_query = Wpil_Query::postStatuses();
+            self::$all_post_ids = $wpdb->get_col("SELECT ID FROM {$wpdb->posts} WHERE 1=1 {$statuses_query} {$post_type_replace_string} {$completely_ignore} {$max_age}");
         }
 
         return self::$all_post_ids;
@@ -2732,6 +3807,22 @@ class Wpil_Report
     }
 
     /**
+     * Outputs some custom styling when specific report tabs
+     **/
+    public static function outputCustomTabStyles(){
+        if(isset($_GET['type']) && $_GET['type'] === 'links'){
+            ?>
+            <style>
+                #toplevel_page_link_whisper .wp-submenu li:nth-of-type(3) a{
+                    color: #fff !important;
+                    font-weight: 600;
+                }
+            </style>
+            <?php
+        }
+    }
+
+    /**
      * Resets the number of items to display in the report tables back to the default 20
      **/
     public static function reset_display_counts(){
@@ -2742,5 +3833,25 @@ class Wpil_Report
             $report_options['per_page'] = 20;
             update_user_meta($user_id, 'report_options', $report_options);
         }
+    }
+
+    /**
+     * Gets the total number of columns to display on a table
+     **/
+    public static function get_report_dropdown_column_count(){
+        $column_count = 0;
+        if(isset($_GET['page']) && $_GET['page'] === 'link_whisper'){
+            if($_GET['type'] && $_GET['type'] === 'links'){
+                if(isset($_GET['orphaned']) || isset($_GET['link_relation'])){
+                    $column_count = 1;
+                }elseif(isset($_GET['link_density'])){
+                    $column_count = 2;
+                }else{
+                    $column_count = 3;
+                }
+            }
+        }
+
+        return $column_count;
     }
 }

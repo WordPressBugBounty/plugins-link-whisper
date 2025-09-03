@@ -75,6 +75,9 @@ if (!class_exists('HTMLPurifier_AttrDef_CSS_Number', false) && !interface_exists
 if (!class_exists('HTMLPurifier_AttrDef_CSS_Percentage', false) && !interface_exists('HTMLPurifier_AttrDef_CSS_Percentage', false) && !trait_exists('HTMLPurifier_AttrDef_CSS_Percentage', false)) {
     spl_autoload_call('LWVendor\HTMLPurifier_AttrDef_CSS_Percentage');
 }
+if (!class_exists('HTMLPurifier_AttrDef_CSS_Ratio', false) && !interface_exists('HTMLPurifier_AttrDef_CSS_Ratio', false) && !trait_exists('HTMLPurifier_AttrDef_CSS_Ratio', false)) {
+    spl_autoload_call('LWVendor\HTMLPurifier_AttrDef_CSS_Ratio');
+}
 if (!class_exists('HTMLPurifier_AttrDef_CSS_TextDecoration', false) && !interface_exists('HTMLPurifier_AttrDef_CSS_TextDecoration', false) && !trait_exists('HTMLPurifier_AttrDef_CSS_TextDecoration', false)) {
     spl_autoload_call('LWVendor\HTMLPurifier_AttrDef_CSS_TextDecoration');
 }

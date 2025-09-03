@@ -1,12 +1,14 @@
 <?php
 
-declare(strict_types=1);
+declare (strict_types=1);
+namespace LWVendor\ZipStream;
 
-namespace ZipStream;
-
-enum Version: int
+enum Version : int
 {
-    case STORE = 0x000A; // 1.00
-    case DEFLATE = 0x0014; // 2.00
-    case ZIP64 = 0x002D; // 4.50
+    case STORE = 0xa;
+    // 1.00
+    case DEFLATE = 0x14;
+    // 2.00
+    case ZIP64 = 0x2d;
+    // 4.50
 }

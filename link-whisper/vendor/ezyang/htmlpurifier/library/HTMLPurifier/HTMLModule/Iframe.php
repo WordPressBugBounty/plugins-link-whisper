@@ -27,7 +27,11 @@ class HTMLPurifier_HTMLModule_Iframe extends HTMLPurifier_HTMLModule
         if ($config->get('HTML.SafeIframe')) {
             $this->safe = \true;
         }
-        $this->addElement('iframe', 'Inline', 'Flow', 'Common', array('src' => 'URI#embedded', 'width' => 'Length', 'height' => 'Length', 'name' => 'ID', 'scrolling' => 'Enum#yes,no,auto', 'frameborder' => 'Enum#0,1', 'longdesc' => 'URI', 'marginheight' => 'Pixels', 'marginwidth' => 'Pixels'));
+        $attrs = array('src' => 'URI#embedded', 'width' => 'Length', 'height' => 'Length', 'name' => 'ID', 'scrolling' => 'Enum#yes,no,auto', 'frameborder' => 'Enum#0,1', 'longdesc' => 'URI', 'marginheight' => 'Pixels', 'marginwidth' => 'Pixels');
+        if ($config->get('HTML.Trusted')) {
+            $attrs['allowfullscreen'] = 'Bool#allowfullscreen';
+        }
+        $this->addElement('iframe', 'Inline', 'Flow', 'Common', $attrs);
     }
 }
 /**

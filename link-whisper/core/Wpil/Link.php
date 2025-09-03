@@ -6,6 +6,7 @@
 class Wpil_Link
 {
     static $url_redirect_cache = array();
+    static $cleaned_url_redirect_cache = array();
 
     /**
      * Register services
@@ -13,6 +14,7 @@ class Wpil_Link
     public function register()
     {
         add_action('wp_ajax_wpil_get_link_title', ['Wpil_Link', 'getLinkTitle']);
+        add_action('wp_ajax_wpil_add_link_to_ignore', [$this, 'addLinkToIgnore']);
     }
 
     /**
@@ -112,6 +114,437 @@ class Wpil_Link
     }
 
     /**
+     * Checks to see if the given url goes to a sponsored domain
+     **/
+    public static function isSponsoredLink($url){
+        $domains = Wpil_Settings::getSponsoredDomains();
+
+        // if there are no sponsored domains, return false now
+        if(empty($domains)){
+            return false;
+        }
+
+        // get the url's domain
+        $url_domain = wp_parse_url(str_replace('://www.', '://', $url), PHP_URL_HOST);
+
+        if(empty($url_domain)){
+            return false;
+        }
+
+        return (in_array($url_domain, $domains, true)) ? true: false;
+    }
+
+    /**
+     * Check if link is broken
+     *
+     * @param $url
+     * @return bool|int
+     */
+    public static function getResponseCode($url)
+    {
+        // if a url was provided and it's formatted correctly
+        if(!empty($url) && (parse_url($url, PHP_URL_SCHEME) || substr($url, 0, 1) == '/') ){
+
+            // make sure the url is absolute so cURL doesn't have a problem with it
+            $url = Wpil_Settings::makeLinkAbsolute($url);
+
+            // make the call
+            return self::getResponseCodeCurl($url);
+        }
+
+        return 925;
+    }
+
+    public static function getResponseCodeCurl($url, $follow_youtube_redirects = true) {
+        $c = curl_init(html_entity_decode($url));
+        $user_ip = get_transient('wpil_site_ip_address');
+        
+        // if the ip transient isn't set yet
+        if(empty($user_ip)){
+            // get the site's ip
+            $host = gethostname();
+            $user_ip = gethostbyname($host);
+
+            // if that didn't work
+            if(empty($user_ip)){
+                // get the curent user's ip as best we can
+                if (!empty($_SERVER['HTTP_CLIENT_IP'])){
+                    $user_ip = $_SERVER['HTTP_CLIENT_IP'];
+                }elseif(!empty($_SERVER['HTTP_X_FORWARDED_FOR'])){
+                    $user_ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+                }else{
+                    $user_ip = $_SERVER['REMOTE_ADDR'];
+                }
+            }
+        }
+
+        // save the ip so we don't have to look it up next time
+        set_transient('wpil_site_ip_address', $user_ip, (10 * MINUTE_IN_SECONDS));
+
+        // create the list of headers to make the cURL request with
+        $request_headers = array(
+            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+//            'Accept-Encoding: gzip, deflate, br',
+            'Accept-Language: en-US,en;q=0.9',
+            'Cache-Control: max-age=0, no-cache',
+            'Keep-Alive: 300',
+            'Pragma: ',
+            'Sec-Fetch-Dest: document',
+            'Sec-Fetch-Mode: navigate',
+            'Sec-Fetch-Site: none',
+            'Sec-Fetch-User: ?0',
+            'Host: ' . parse_url($url, PHP_URL_HOST),
+            'Referer: ' . site_url(),
+            'User-Agent: ' . WPIL_DATA_USER_AGENT,
+        );
+
+        // if this isn't a youtube link
+        if(!self::is_youtube_link($url)){
+            // set the encoding headers
+            $request_headers[] = 'Accept-Encoding: gzip, deflate, br';
+        }
+
+        if(!empty($user_ip)){
+            $request_headers[] = 'X-Real-Ip: ' . $user_ip;
+        }
+
+        curl_setopt($c, CURLOPT_HTTPHEADER, $request_headers);
+        curl_setopt($c, CURLOPT_HEADER, true);
+        curl_setopt($c, CURLOPT_FILETIME, true);
+        curl_setopt($c, CURLOPT_HTTPGET, true);
+        curl_setopt($c, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($c, CURLOPT_MAXREDIRS, 30);
+        curl_setopt($c, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($c, CURLOPT_CONNECTTIMEOUT, 20);
+        curl_setopt($c, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($c, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($c, CURLOPT_TIMEOUT, 20);
+        curl_setopt($c, CURLOPT_COOKIEFILE, null);
+
+        // if this isn't a youtube link
+        if(!self::is_youtube_link($url)){
+            // don't include the response body
+            curl_setopt($c, CURLOPT_NOBODY, true);
+        }
+
+        $curl_version = curl_version();
+        if (defined('CURLOPT_SSL_FALSESTART') && version_compare(phpversion(), '7.0.7') >= 0 && version_compare($curl_version['version'], '7.42.0') >= 0) {
+            curl_setopt($c, CURLOPT_SSL_FALSESTART, true);
+        }
+
+        //Set the proxy configuration. The user can provide this in wp-config.php
+        if(defined('WP_PROXY_HOST')){
+            curl_setopt($c, CURLOPT_PROXY, WP_PROXY_HOST);
+        }
+        if(defined('WP_PROXY_PORT')){
+            curl_setopt($c, CURLOPT_PROXYPORT, WP_PROXY_PORT);
+        }
+        if(defined('WP_PROXY_USERNAME')){
+            $auth = WP_PROXY_USERNAME;
+            if(defined('WP_PROXY_PASSWORD')){
+                $auth .= ':' . WP_PROXY_PASSWORD;
+            }
+            curl_setopt($c, CURLOPT_PROXYUSERPWD, $auth);
+        }
+
+        //Make CURL return a valid result even if it gets a 404 or other error.
+        curl_setopt($c, CURLOPT_FAILONERROR, false);
+
+        $headers = curl_exec($c);
+        if(defined('CURLINFO_RESPONSE_CODE')){
+            $http_code = intval(curl_getinfo($c, CURLINFO_RESPONSE_CODE));
+        }else{
+            $info = curl_getinfo($c);
+            if(isset($info['http_code']) && !empty($info['http_code'])){
+                $http_code = intval($info['http_code']);
+            }else{
+                $http_code = 0;
+            }
+        }
+
+        if(self::is_youtube_link($url)){
+            $http_code = self::check_youtube_content($headers, $url, $c, $follow_youtube_redirects);
+        }
+
+        $curl_error_code = curl_errno($c);
+        $return_code = 0;
+        // if the curl request ultimately got a http code
+        if(!empty($http_code)){
+            // return the code
+            $return_code = $http_code;
+        }elseif(!empty($curl_error_code)){
+            // if we got a curl error, return that
+            $return_code = $curl_error_code;
+        }
+
+        if($return_code > 0 && ($return_code < 200 || $return_code > 399) && preg_match('/\.jpg|\.jpeg|\.svg|\.png|\.gif|\.ico|\.webp/i', $http_code)){
+            return 888;
+        }
+
+
+        return !empty($return_code) ? $return_code: 925;
+    }
+
+    /**
+     * Check if link is broken
+     *
+     * @param $url
+     * @return array
+     */
+    public static function getResponseCodes($urls = array(), $head_call = false)
+    {
+        $site_protocol = (is_ssl()) ? 'https:': 'http:';
+        $return_urls = array();
+        $good_urls = array();
+        foreach($urls as $url){
+            $decoded = urldecode($url); // TODO: review and make sure that there aren't a lot of false positive results after the 2.5.8 update // remove this note when we get to 2.6.3
+            if(!empty($decoded) && $decoded !== $url){
+                $url = $decoded;
+            }
+
+            // if a url was provided and it's formatted correctly, add it to the list to process
+            if(!empty($url) && (parse_url($url, PHP_URL_SCHEME) || substr($url, 0, 2) == '//') && parse_url($url, PHP_URL_HOST)){
+                // the current URL is using a relative protocol
+                if(strpos($url, '//') === 0){
+                    // add the current site's protocol to it so cURL doesn't have a problem with it
+                    $url = $site_protocol . $url;
+                }
+                $good_urls[] = $url;
+            }elseif(!empty($url) && strpos($url, '/') === 0){
+                // if the URL is relative, make it absolute for the so we can scan it
+                $good_urls[] = Wpil_Settings::makeLinkAbsolute($url);
+            }else{
+                // if it wasn't, add it to the return list as a 925
+                $return_urls[$url] = 925;
+            }
+        }
+
+        // if there are good urls
+        if(!empty($good_urls)){
+            // get the curl response codes for each of them
+            $codes = self::getResponseCodesCurl($good_urls, $head_call);
+            // and merge the reponses into the return links
+            $return_urls = array_merge($return_urls, $codes);
+        }
+
+        return $return_urls;
+    }
+
+    public static function getResponseCodesCurl($urls, $head_call = false) {
+        $start = microtime(true);
+        $redirect_codes = array(301, 302, 307);
+        $user_ip = get_transient('wpil_site_ip_address');
+        $return_urls = array();
+
+        // if the ip transient isn't set yet
+        if(empty($user_ip)){
+            // get the site's ip
+            $host = gethostname();
+            $user_ip = gethostbyname($host);
+
+            // if that didn't work
+            if(empty($user_ip)){
+                // get the curent user's ip as best we can
+                if (!empty($_SERVER['HTTP_CLIENT_IP'])){
+                    $user_ip = $_SERVER['HTTP_CLIENT_IP'];
+                }elseif(!empty($_SERVER['HTTP_X_FORWARDED_FOR'])){
+                    $user_ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+                }else{
+                    $user_ip = $_SERVER['REMOTE_ADDR'];
+                }
+            }
+        }
+
+        // save the ip so we don't have to look it up next time
+        set_transient('wpil_site_ip_address', $user_ip, (10 * MINUTE_IN_SECONDS));
+
+        // create the multihandle
+        $mh = curl_multi_init();
+
+        // if we're debugging curl
+        if(WPIL_DEBUG_CURL){
+            // setup the log files
+            $verbose = fopen(trailingslashit(WP_CONTENT_DIR) . 'curl_connection_log.log', 'a');     // logs the actions that curl goes through in contacting the server
+            $connection = fopen(trailingslashit(WP_CONTENT_DIR) . 'curl_connection_info.log', 'a'); // logs the result of contacting the server.
+        }
+
+        $handles = array();
+        foreach($urls as $url){
+            // create the curl handle and add it to the list keyed with the url its using
+            $handles[$url] = curl_init(html_entity_decode($url));
+
+            // create the list of headers to make the cURL request with
+            $request_headers = array(
+                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+//                'Accept-Encoding: gzip, deflate, br',
+                'Accept-Language: en-US,en;q=0.9',
+                'Cache-Control: max-age=0, no-cache',
+                'Pragma: ',
+                'Sec-Fetch-Dest: document',
+                'Sec-Fetch-Mode: navigate',
+                'Sec-Fetch-Site: none',
+                'Sec-Fetch-User: ?0',
+                'Host: ' . parse_url($url, PHP_URL_HOST),
+                'Referer: ' . site_url(),
+                'User-Agent: ' . WPIL_DATA_USER_AGENT,
+            );
+
+            // if this isn't a youtube link
+            if(!self::is_youtube_link($url)){
+                // set the encoding headers
+                $request_headers[] = 'Accept-Encoding: gzip, deflate, br';
+            }
+
+            if(!empty($user_ip)){
+                $request_headers[] = 'X-Real-Ip: ' . $user_ip;
+            }
+
+            if($head_call){
+                $request_headers[] = 'Connection: close';
+            }else{
+                $request_headers[] = 'Connection: keep-alive';
+                $request_headers[] = 'Keep-Alive: 300';
+            }
+
+            curl_setopt($handles[$url], CURLOPT_HTTPHEADER, $request_headers);
+            curl_setopt($handles[$url], CURLOPT_HEADER, true);
+            curl_setopt($handles[$url], CURLOPT_FILETIME, true);
+            curl_setopt($handles[$url], CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($handles[$url], CURLOPT_MAXREDIRS, 10);
+            curl_setopt($handles[$url], CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($handles[$url], CURLOPT_CONNECTTIMEOUT, 15);
+            curl_setopt($handles[$url], CURLOPT_SSL_VERIFYHOST, 0);
+            curl_setopt($handles[$url], CURLOPT_TIMEOUT, 15);
+            curl_setopt($handles[$url], CURLOPT_COOKIEFILE, null);
+            curl_setopt($handles[$url], CURLOPT_FORBID_REUSE, true);
+            curl_setopt($handles[$url], CURLOPT_FRESH_CONNECT, true);
+            curl_setopt($handles[$url], CURLOPT_COOKIESESSION, true);
+            curl_setopt($handles[$url], CURLOPT_SSL_VERIFYPEER, false);
+
+            // if this isn't a youtube link
+            if(!self::is_youtube_link($url)){
+                // don't include the response body
+                curl_setopt($handles[$url], CURLOPT_NOBODY, true);
+            }
+
+            $curl_version = curl_version();
+            if (defined('CURLOPT_SSL_FALSESTART') && version_compare(phpversion(), '7.0.7') >= 0 && version_compare($curl_version['version'], '7.42.0') >= 0) {
+                curl_setopt($handles[$url], CURLOPT_SSL_FALSESTART, true);
+            }
+
+            if(false === $head_call){
+                curl_setopt($handles[$url], CURLOPT_HTTPGET, true);
+            }
+
+            //Set the proxy configuration. The user can provide this in wp-config.php
+            if(defined('WP_PROXY_HOST')){
+                curl_setopt($handles[$url], CURLOPT_PROXY, WP_PROXY_HOST);
+            }
+            if(defined('WP_PROXY_PORT')){
+                curl_setopt($handles[$url], CURLOPT_PROXYPORT, WP_PROXY_PORT);
+            }
+            if(defined('WP_PROXY_USERNAME')){
+                $auth = WP_PROXY_USERNAME;
+                if(defined('WP_PROXY_PASSWORD')){
+                    $auth .= ':' . WP_PROXY_PASSWORD;
+                }
+                curl_setopt($handles[$url], CURLOPT_PROXYUSERPWD, $auth);
+            }
+
+            //Make CURL return a valid result even if it gets a 404 or other error.
+            curl_setopt($handles[$url], CURLOPT_FAILONERROR, false);
+
+            // if we're debugging curl
+            if(WPIL_DEBUG_CURL){
+                // set curl to verbose logging and set where to write it to
+                curl_setopt($handles[$url], CURLOPT_VERBOSE, true);
+                curl_setopt($handles[$url], CURLOPT_STDERR, $verbose);
+            }
+
+            // and add it to the multihandle
+            curl_multi_add_handle($mh, $handles[$url]);
+        }
+
+        // if there are handles, execute the multihandle
+        if(!empty($handles)){
+            do {
+                $status = curl_multi_exec($mh, $active);
+                if ($active) {
+                    curl_multi_select($mh);
+                }
+            } while ($active && $status == CURLM_OK);
+        }
+
+        // get any error codes from the operations
+        $curl_codes = array();
+        foreach($handles as $handle){
+            $info = curl_multi_info_read($mh);
+            $handle_int = intval($info['handle']);
+            if(isset($info['result'])){
+                $curl_codes[$handle_int] = $info['result'];
+            }else{
+                $curl_codes[$handle_int] = 0;
+            }
+        }
+
+        // when the multihandle is finished, go over the handles and process the responses
+        foreach($handles as $handle_url => $handle){
+            $handle_int = intval($handle);
+            $http_code = intval(curl_getinfo($handle, CURLINFO_RESPONSE_CODE));
+            $curl_error_code = (isset($curl_codes[$handle_int])) ? $curl_codes[$handle_int]: 0;
+
+            if(self::is_youtube_link($handle_url)){
+                $http_code = self::check_youtube_content(curl_multi_getcontent($handle), $handle_url, $handle);
+            }
+
+            // if we're debugging curl
+            if(WPIL_DEBUG_CURL){
+                // save the results of the connection
+                fwrite($connection, print_r(curl_getinfo($handle),true));
+            }
+
+            // if the curl request ultimately got a http code
+            if(!empty($http_code)){
+                // if the code is for a redirect and we have some time to chase it
+                if(in_array($http_code, $redirect_codes) && (microtime(true) - $start) < 15){
+                    // get the url from the curl data
+                    $new_url = trim(curl_getinfo($handle, CURLINFO_EFFECTIVE_URL));
+                    if(!empty($new_url)){
+                        // call _that_ url to see what happens and add the response to the link list
+                        $return_urls[$handle_url] = self::getResponseCodeCurl($new_url);
+                    }
+                }else{
+                    // if the code wasn't a redirect or we don't have the time to check, add the code to the list
+                    $return_urls[$handle_url] =  $http_code;
+                }
+            }elseif(!empty($curl_error_code)){
+                // curl error list: https://curl.haxx.se/libcurl/c/libcurl-errors.html
+                // useful for diagnosing errors < 100
+                $return_urls[$handle_url] = $curl_error_code;
+            }
+
+            if(isset($return_urls[$handle_url]) && ($return_urls[$handle_url] < 200 || $return_urls[$handle_url] > 399) && preg_match('/\.jpg|\.jpeg|\.svg|\.png|\.gif|\.ico|\.webp/i', $handle_url)){
+                $return_urls[$handle_url] = 888;
+            }
+
+            // if a status hasn't been added to the link yet
+            if(!isset($return_urls[$handle_url])){
+                // mark it as 925
+                $return_urls[$handle_url] = 925;
+            }
+
+            // close the current handle
+            curl_multi_remove_handle($mh, $handle);
+            curl_close($handle);
+        }
+
+        // close the multi handle
+        curl_multi_close($mh);
+
+        return $return_urls;
+    }
+
+    /**
      * Get link title by URL
      */
     public static function getLinkTitle()
@@ -167,6 +600,77 @@ class Wpil_Link
     }
 
     /**
+     * Add link to ignore list
+     */
+    public static function addLinkToIgnore()
+    {
+        $error = false;
+        if(!isset($_POST['multiple_links'])){
+            $id = !empty($_POST['id']) ? (int)$_POST['id'] : null;
+            $type = !empty($_POST['type']) ? sanitize_text_field($_POST['type']) : null;
+            $site_url = (isset($_POST['site_url']) && !empty($_POST['site_url'])) ? esc_url_raw($_POST['site_url']): null;
+            $origin = (isset($_POST['post_origin'])) ? $_POST['post_origin']: null;
+
+            if ($id && $type) {
+                $error = self::ignore_link($id, $type, $site_url, $origin);
+            } else {
+                $error = 'Wrong data';
+            }
+        }elseif(!empty($_POST['multiple_links'])){
+            foreach($_POST['multiple_links'] as $link){
+                $id = !empty($link['id']) ? (int)$link['id'] : null;
+                $type = !empty($link['type']) ? sanitize_text_field($link['type']) : null;
+                $site_url = (isset($link['site_url']) && !empty($link['site_url'])) ? esc_url_raw($link['site_url']): null;
+                $origin = (isset($link['post_origin'])) ? $link['post_origin']: null;
+
+                if ($id && $type) {
+                    $error = self::ignore_link($id, $type, $site_url, $origin);
+                } else {
+                    $error = 'Wrong data';
+                }
+            }
+        }
+
+        echo json_encode(['error' => $error]);
+        die;
+    }
+
+    /**
+     * Registers a url in the list of posts to be ignored from the suggestions
+     **/
+    public static function ignore_link($id, $type, $site_url, $origin){
+        $error = false;
+
+        // otherwise, assume it's an internal post object
+        $post = new Wpil_Model_Post($id, $type);
+
+        $link = $post->getLinks()->view;
+        if(empty(Wpil_Post::getPostByLink($link))){
+            $link = $post->getViewLink(false, true); // if we can't turn the url into a viable post, go with the "Ugly" url instead.;
+        }
+
+        if (!empty($link)) {
+            $links = get_option('wpil_ignore_links');
+            if (!empty($links)) {
+                $links_array = explode("\n", $links);
+                if (!in_array($link, $links_array)) {
+                    $links .= "\n" . $link;
+                }
+            } else {
+                $links = $link;
+            }
+            // clear any ignore link cache that exists
+            delete_transient('wpil_ignore_links');
+            // save the ignore link
+            update_option('wpil_ignore_links', $links);
+        } else {
+            $error = 'Empty post link';
+        }
+
+        return $error;
+    }
+
+    /**
      * Clean link from trash symbols
      *
      * @param $link
@@ -200,6 +704,161 @@ class Wpil_Link
     }
 
     /**
+     * Check if link was marked as external
+     *
+     * @param $link
+     * @return bool
+     */
+    public static function markedAsExternal($link)
+    {
+        $external_links = Wpil_Settings::getMarkedAsExternalLinks();
+
+        if (in_array($link, $external_links)) {
+            return true;
+        }
+
+        foreach ($external_links as $external_link) {
+            if (substr($external_link, -1) == '*' && strpos($link, substr($external_link, 0, -1)) === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Checks if the given post is at the outbound link limit
+     *
+     * @param $post
+     * @return bool Returns true if the post is at the limit and false if it is not.
+     */
+    public static function at_max_outbound_links($post)
+    {
+        if(empty($post)){
+            return false;
+        }
+
+        $max_outbound_links = get_option('wpil_max_links_per_post', 0);
+
+        if(empty($max_outbound_links)){
+            return false;
+        }
+
+        $post_link = $post->getLinks()->view;
+        $ignore_image_urls = true;//!empty(get_option('wpil_ignore_image_urls', false));
+        $ignored_links = Wpil_Settings::getIgnoreLinks();
+        $content = $post->getContent();
+
+        //get all links from content
+        preg_match_all('`<a[^>]*?href=(\"|\')([^\"\']*?)(\"|\')[^>]*?>([\s\w\W]*?)<\/a>|<!-- wp:core-embed\/wordpress {"url":"([^"]*?)"[^}]*?"} -->|(?:>|&nbsp;|\s)((?:(?:http|ftp|https)\:\/\/)(?:[\w_-]+(?:(?:\.[\w_-]+)+))(?:[\w.,@?^=%&:/~+#-]*[\w@?^=%&/~+#-]))(?:<|&nbsp;|\s)`i', $content, $matches);
+        // if there are encoded links
+        if(false !== strpos($content, '&lt;a') && false !== strpos($content, '&lt;/a&gt;')){
+            // try getting encoded links too
+            preg_match_all('`&lt;a[^&]*?href=(\"|\')([^\"\']*?)(\"|\')[^&]*?&gt;([\s\w\W]*?)&lt;\/a&gt;`i', $content, $matches2);
+            if(!empty($matches2) && !empty($matches2[0])){
+                foreach($matches2 as $key => $values){
+                    $matches[$key] = array_merge($matches[$key], $values);
+                }
+
+                $m_count = count($matches2[0]);
+                for($i = 0; $i < $m_count; $i++){
+                    $matches[5][] = '';
+                    $matches[6][] = '';
+                }
+            }
+        }
+
+        // make a counter for the links
+        $outbound_count = 0;
+
+        //make array with results
+        foreach ($matches[0] as $key => $value) {
+            $url = '';
+            if (!empty($matches[2][$key]) && !empty($matches[4][$key]) && !Wpil_Report::isJumpLink($matches[2][$key], $post_link)) {
+                $url = trim($matches[2][$key]);
+            }elseif(!empty($matches[5][$key]) && !Wpil_Report::isJumpLink($matches[5][$key], $post_link) ||  // if this is an embed link
+                    !empty($matches[6][$key]) && !Wpil_Report::isJumpLink($matches[6][$key], $post_link))    // if this is a link that is inserted in the content as a straight url // Mostly this means its an embed but as case history grows I'll come up with a better notice for the user
+            {
+                if(!empty($matches[5][$key])){
+                    $url = trim($matches[5][$key]);
+                }else{
+                    $url = trim($matches[6][$key]);
+                }
+            }
+
+            // skip if the url is empty
+            if(empty($url)){
+                continue;
+            }
+
+            // ignore any links that are being used as buttons
+            if(false !== strpos($url, 'javascript:void(0)')){
+                continue;
+            }
+
+            // if we're making a point to ignore image urls
+            if($ignore_image_urls){
+                // if the link is an image url, skip to the next match
+                if(preg_match('/\.jpg|\.jpeg|\.svg|\.png|\.gif|\.ico|\.webp/i', $url)){
+                    continue;
+                }
+            }
+
+            // if we're ignoring links
+            if(!empty($ignored_links)){
+                // check to see if this link is on the ignore list
+                if(!empty(array_intersect($ignored_links, array($url)))){
+                    // if it is, skip to the next
+                    continue;
+                }else{
+                    // if the link wasn't detected with the simple check, see if there's a partial match possible. Mostly this is to allow domain-based ignoring
+                    foreach($ignored_links as $link){
+                        if(false !== strpos($url, $link)){
+                            continue 2;
+                        }
+                    }
+                }
+            }
+
+            // filter the URLs with an internal check so users can choose to ignore outbound external or outbound internal if they wish.
+            /**
+             * @param bool $count_link Should the link be counted in the total? Default is true.
+             * @param bool $internal If the current link is internal or not.
+             * @param string $url The URL we're currently looking at
+             **/
+            if(!apply_filters('wpil_max_outbound_links_filter_internal', true, self::isInternal($url), $url)){
+                continue;
+            }
+
+            $outbound_count++;
+        }
+
+        return ($outbound_count >= $max_outbound_links) ? true: false;
+    }
+
+    /**
+     * Checks to see if the current post is at the limit for Inbound Internal links
+     * @param $post
+     * @return bool
+     **/
+    public static function at_max_inbound_links($post){
+        if(empty($post)){
+            return false;
+        }
+
+        $max_inbound_links = get_option('wpil_max_inbound_links_per_post', 0);
+
+        if(empty($max_inbound_links)){
+            return false;
+        }
+
+        // get the inbound link counts from the stored data
+        $inbound_count = $post->getInboundInternalLinks(true);
+
+        return ($inbound_count >= $max_inbound_links) ? true: false;
+    }
+
+    /**
      * Checks to see if the supplied text contains a link.
      * The check is pretty simple at this point, just seeing if the form of an opening tag or a closing tag is present in the text
      * 
@@ -209,17 +868,17 @@ class Wpil_Link
     public static function hasLink($text = '', $replace_text = ''){
 
         // if there's no link anywhere to be seen, return false
-        if(empty(preg_match('/<a [^><]*?(href|src)[^><]*?>|<\/a>/i', $text))){
+        if(empty(preg_match('/<a [^><]*?(href|src)[^><]*?>|<\/a>|&lt;a [^><]*?(href|src)[^><]*?&gt;|&lt;\/a&gt;/i', $text))){
             return false;
         }
 
         // if there is a link in the replace text, return true
-        if(preg_match('/<a [^><]*?(href|src)[^><]*?>|<\/a>/i', $replace_text)){
+        if(preg_match('/<a [^><]*?(href|src)[^><]*?>|<\/a>|&lt;a [^><]*?(href|src)[^><]*?&gt;|&lt;\/a&gt;/i', $replace_text)){
             return true;
         }
 
         // if there is a link, see if it ends before the replace text
-        $replace_start = mb_strpos($text, $replace_text);
+        $replace_start = (!empty($replace_text)) ? mb_strpos($text, $replace_text): 0;
         if(preg_match('/<\/a>/i', mb_substr($text, 0, $replace_start)) ){
             // if it does, no worries!
             return false;
@@ -365,6 +1024,170 @@ class Wpil_Link
     }
 
     /**
+     * Filters the supplied link to change the domain from staging to live.
+     * Only changes the site's domain & scheme, otherwise leaves the rest of the URL as is
+     * 
+     * @param string $url The url to filter
+     * @return string $url The filtered URL if it's supposed to be filtered.
+     **/
+    public static function filter_staging_to_live_domain($url = ''){
+        // if there's no url, the user isn't filtering staging urls out or relative link mode is active
+        if(empty($url) || !get_option('wpil_filter_staging_url', false) || !empty(get_option('wpil_insert_links_as_relative', false)))
+        {
+            // return the url
+            return $url;
+        }
+
+        // get the live site's url
+        $live_site_url = trailingslashit(trim(get_option('wpil_live_site_url', false)));
+        $staging_site_url = trailingslashit(trim(get_option('wpil_staging_site_url', false)));
+        $home_url = get_home_url();
+
+        // if there's no live site url entered, we're actually on the live site, or this isn't a staging site url
+        if( empty($live_site_url) ||
+            empty($staging_site_url) ||
+            $live_site_url === $staging_site_url || // if the urls are the same
+            false !== strpos($home_url, $live_site_url) || // if the current site is the live site
+            false !== strpos($live_site_url, $home_url) || // if the current site is the live site from a different direction
+            false === strpos($url, $staging_site_url) || // if the url isn't pointed at the staging site
+            false === strpos($url, $home_url) || // if the url isn't pointed to the current site
+            self::isRelativeLink($url) // or if the link is relative
+        ){
+            // return the url without changing it
+            return $url;
+        }
+
+        // let's give the user a chance to filter the URL
+        $new_url = apply_filters('wpil_filter_staging_url_to_live', $url, $live_site_url, $staging_site_url);
+        // if he's changed the URL
+        if($new_url !== $url){
+            // return it with the changes
+            return $new_url;
+        }
+
+        // now that we've made it past the checks, lets change the staging domain for the live one
+        // first, lets try a simple URL replace and see if it's valid
+        $test_url = str_replace($staging_site_url, $live_site_url, $url);
+
+        // if there's a url and it's not changed by sending it through esc_url_raw
+        if(!empty($test_url) && $test_url === esc_url_raw($test_url)){
+            // it's good
+            return $test_url;
+        }
+
+        // break it into pieces
+        $live_site_url = wp_parse_url(sanitize_text_field($live_site_url));
+
+        // break the staging site url into pieces
+        $staging_site_url = wp_parse_url(sanitize_text_field($staging_site_url));
+
+        // exit if either url has no host
+        if( !isset($live_site_url['host']) || empty($live_site_url['host']) ||
+            !isset($staging_site_url['host']) || empty($staging_site_url['host'])
+        ){
+            return $url;
+        }
+
+        $url = str_replace($staging_site_url['host'], $live_site_url['host'], $url);
+
+        // if the scheme was included in both urls, and they are different
+        if( isset($live_site_url['scheme']) && !empty($live_site_url['scheme']) &&
+            isset($staging_site_url['scheme']) && !empty($staging_site_url['scheme']) &&
+            ($live_site_url['host'] !== $staging_site_url['scheme'])
+        ){
+            // replace the scheme
+            $pos = strpos($url, $staging_site_url['scheme']);
+            if($pos !== false){
+                $url = substr_replace($url, $live_site_url['scheme'], $pos, strlen($staging_site_url['scheme']));
+            }
+        }
+
+        return $url;
+    }
+
+    /**
+     * Filters the supplied link to change the domain from live to staging.
+     * Only changes the site's domain & scheme, otherwise leaves the rest of the URL as is
+     * 
+     * @param string $url The url to filter
+     * @return string $url The filtered URL if it's supposed to be filtered.
+     **/
+    public static function filter_live_to_staging_domain($url = ''){
+        // if there's no url, the user isn't filtering staging urls out or relative link mode is active
+        if(empty($url) || !get_option('wpil_filter_staging_url', false) || !empty(get_option('wpil_insert_links_as_relative', false)))
+        {
+            // return the url
+            return $url;
+        }
+
+        // get the live site's url
+        $live_site_url = trailingslashit(trim(get_option('wpil_live_site_url', false)));
+        $staging_site_url = trailingslashit(trim(get_option('wpil_staging_site_url', false)));
+        $home_url = get_home_url();
+
+        // if there's no live site url entered, we're actually on the live site, or this isn't a staging site url
+        if( empty($live_site_url) ||
+            empty($staging_site_url) ||
+            $live_site_url === $staging_site_url || // if the urls are the same
+            false !== strpos($home_url, $live_site_url) || // if the current site is the live site
+            false !== strpos($live_site_url, $home_url) || // if the current site is the live site from a different direction
+            false === strpos($url, $live_site_url) || // if the url isn't pointed at the live site
+            false !== strpos($url, $home_url) || // if the url is pointed to the current site
+            self::isRelativeLink($url) // or if the link is relative
+        ){
+            // return the url without changing it
+            return $url;
+        }
+
+        // let's give the user a chance to filter the URL
+        $new_url = apply_filters('wpil_filter_live_url_to_staging', $url, $live_site_url, $staging_site_url);
+        // if he's changed the URL
+        if($new_url !== $url){
+            // return it with the changes
+            return $new_url;
+        }
+
+        // now that we've made it past the checks, lets change the live domain for the staging one
+        // first, lets try a simple URL replace and see if it's valid
+        $test_url = str_replace($live_site_url, $staging_site_url, $url);
+
+        // if there's a url and it's not changed by sending it through esc_url_raw
+        if(!empty($test_url) && $test_url === esc_url_raw($test_url)){
+            // it's good
+            return $test_url;
+        }
+
+        // break it into pieces
+        $live_site_url = wp_parse_url(sanitize_text_field($live_site_url));
+
+        // break the staging site url into pieces
+        $staging_site_url = wp_parse_url(sanitize_text_field($staging_site_url));
+
+        // exit if either url has no host
+        if( !isset($live_site_url['host']) || empty($live_site_url['host']) ||
+            !isset($staging_site_url['host']) || empty($staging_site_url['host'])
+        ){
+            return $url;
+        }
+
+        $url = str_replace($live_site_url['host'], $staging_site_url['host'], $url);
+
+        // if the scheme was included in both urls, and they are different
+        if( isset($live_site_url['scheme']) && !empty($live_site_url['scheme']) &&
+            isset($staging_site_url['scheme']) && !empty($staging_site_url['scheme']) &&
+            ($live_site_url['host'] !== $staging_site_url['scheme'])
+        ){
+            // replace the scheme
+            $pos = strpos($url, $live_site_url['scheme']);
+            if($pos !== false){
+                $url = substr_replace($url, $staging_site_url['scheme'], $pos, strlen($live_site_url['scheme']));
+            }
+        }
+
+        return $url;
+    }
+
+    /**
      * Checks if the link is relative
      * 
      * @param string $link
@@ -432,7 +1255,26 @@ class Wpil_Link
      * @param string $url The url to check
      * @return string|bool Returns the redirected URL if a redirect is active, and FALSE if there's no redirect
      **/
-    public static function get_url_redirection($url = ''){
+    public static function get_url_redirection($url = '', $max_depth = 5) {
+        $original_url = $url;
+        $depth = 0;
+
+        while ($depth < $max_depth) {
+            $redirect = self::get_nested_url_redirection($url);
+
+            if ($redirect === false) {
+                // No more redirects found
+                break;
+            }
+
+            $url = $redirect;
+            $depth++;
+        }
+
+        return ($url !== $original_url) ? $url : false;
+    }
+
+    private static function get_nested_url_redirection($url = ''){
         if(empty($url)){
             return false;
         }
@@ -452,11 +1294,23 @@ class Wpil_Link
 
         // if that didn't work, try cleaning up the url a bit to see if that makes the difference
         $url = trailingslashit(strtok($url, '?#'));
-        
+
         // if that works
         if(isset(self::$url_redirect_cache[$url])){
             // return the redirect location
             return self::$url_redirect_cache[$url];
+        }
+
+        if (0 !== strpos(parse_url($url, PHP_URL_HOST), 'www.')) {
+            if(empty(self::$cleaned_url_redirect_cache)){
+                foreach(self::$url_redirect_cache as $key => $value){
+                    self::$cleaned_url_redirect_cache[str_replace('://www.', '://', $key)] = $value;
+                }
+            }
+
+            if(isset(self::$cleaned_url_redirect_cache[$url])){
+                return self::$cleaned_url_redirect_cache[$url];
+            }
         }
 
         // otherwise, the url is not being redirected as far as we can tell
@@ -494,5 +1348,197 @@ class Wpil_Link
 
         // if we haven't caught it, the url probably isn't pointing to the site home url
         return false;
+    }
+
+    /**
+     * Creates and returns the next tracking id for a link we create.
+     * Also notes the time that the id was created and the author id for the user that created it
+     **//*
+    public static function create_next_tracked_link_id(){
+        global $wpdb;
+        $table = $wpdb->prefix . 'wpil_tracked_link_ids';
+
+        $author = get_current_user_id();
+        if(empty($author)){
+            $author = 0;
+        }
+
+        $wpdb->insert($table, ['creation_time' => current_time('timestamp', 1), 'author_id' => $author]);
+        return !empty($wpdb->insert_id) ? $wpdb->insert_id: 0;
+    }*/
+
+    /**
+     * Checks to see if the link is one that points to youtube.
+     * Works for both full and shortened links
+     **/
+    public static function is_youtube_link($url = ''){
+        if(empty($url)){
+            return false;
+        }
+
+        if( false !== strpos($url, 'https://www.youtube.com') || 
+            false !== strpos($url, 'https://youtube.com') || 
+            false !== strpos($url, 'https://youtu.be/'))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Checks to see if the youtube page content contains a video.
+     * @param string $content
+     * @param string $url
+     * @param CurlHandle $handle
+     **/
+    public static function check_youtube_content($content = '', $url = '', $handle = '', $follow = true){
+        if(empty($content) || empty($url) || empty($handle)){
+            return false;
+        }
+
+        // if the URL points directly to youtube
+        $slashed = trailingslashit($url);
+        if( $slashed === 'https://www.youtube.com/' || 
+            $slashed === 'https://youtube.com/' || 
+            $slashed === 'https://youtu.be/'
+        ){
+            // clearly it's a good link!
+            return 200;
+        }
+
+        $code = 825;
+
+        // pull the url meta property to check it for the link's ID
+        preg_match('/<meta property="og:url"[^>]*?>/', $content, $meta_url);
+        preg_match('/<meta property="og:video:url"[^>]*?>/', $content, $meta_video_url);
+        preg_match('/\?v=([0-9a-zA-Z\-_]*)|\/embed\/([0-9a-zA-Z\-_]*)|youtu\.be\/([0-9a-zA-Z\-_]*)\?/', $url, $matches);
+        preg_match('/previewPlayabilityStatus\\\":{\\\"status\\\":\\\"([a-zA-Z]*?)\\\"/', $content, $play_status);
+
+        if(!empty($play_status)){
+            $play_status = end($play_status);
+        }else{
+            $play_status = false;
+        }
+
+        // if we do have the proper info
+        if(!empty($meta_video_url) && !empty($matches)){
+            $video_id = end($matches);
+            $meta = end($meta_video_url);
+
+            // and the video key is in the meta
+            if(false !== strpos($meta, $video_id)){
+                // say the video is good!
+                $code = 200;
+            }
+
+            // if the video is set to be unlisted
+            if(false && false !== strpos($content, '"isUnlisted":true')){
+                // list it as unlisted in the system
+                $code = 826;
+            }
+        }elseif(false !== strpos($url, 'youtube.com/embed/')){
+            if(!empty($play_status) && strtolower($play_status) === 'ok'){
+                $code = 200;
+            }
+
+        }else if(false !== strpos($url, 'youtube.com/channel/')){ // if the link is supposed to be pointing to a channel
+            // check the last available URL to see if it still points to the channel
+            $last_url = curl_getinfo($handle, CURLINFO_EFFECTIVE_URL);
+
+            // if they are pointing to the same url
+            if(!empty($last_url) && trailingslashit($last_url) === trailingslashit($url)){
+
+                // if we have a metatag for the page's url
+                if(!empty($meta_url)){
+                    $meta = end($meta_url);
+
+                    // parse the url from the meta tag
+                    if(!empty($meta)){
+                        // pull the url out of the meta tag
+                        preg_match('/content="(.*?)"/', $meta, $meta_url_s);
+                        
+                        if(!empty($meta_url_s)){
+                            $meta_url_s = end($meta_url_s);
+                            if(!empty($meta_url_s)){
+                                $meta = $meta_url_s;
+                            }
+                        }
+                    }
+
+                    // if the url is inside the metatag
+                    if(!empty($meta) && is_string($meta) && false !== strpos($url, $meta)){
+                        // the channel exists!
+                        $code = 200;
+                    }else{
+                        // the channel seems to be gone
+                        $code = 827;
+                    }
+                }else{
+                    // if we don't, it seems the channel was removed
+                    $code = 827;
+                }
+            }else{
+                // if it doesn't, it seems it was removed
+                $code = 827;
+            }
+        }else if(false !== strpos($url, 'youtube.com/@')){ // if the link is supposed to be pointing to a channel
+            // check the last available URL to see if it still points to the channel
+            $last_url = curl_getinfo($handle, CURLINFO_EFFECTIVE_URL);
+
+            // if they are pointing to the same url
+            if(!empty($last_url) && trailingslashit(str_replace('www.', '', $last_url)) === trailingslashit(str_replace('www.', '', $url))){
+                // extract the baseURL if possible
+                preg_match('/"canonicalBaseUrl":"(\/@[^"]*?)"/', $content, $base_url);
+
+                // if we have a metatag for the page's url
+                if(!empty($base_url)){
+                    $meta = end($base_url);
+
+                    // if the url is inside the metatag
+                    if(!empty($meta) && is_string($meta) && false !== strpos($url, $meta)){
+                        // the channel exists!
+                        $code = 200;
+                    }else{
+                        // the channel seems to be gone
+                        $code = 827;
+                    }
+                }else{
+                    // if we don't, it seems the channel was removed
+                    $code = 827;
+                }
+            }else{
+                // if it doesn't, it seems it was removed
+                $code = 827;
+            }
+        }
+
+        // if the url appears broken
+        if($code === 825 && $follow){
+            // get the headers to see if the page is a redirect that wasn't chased
+            $headerSize = curl_getinfo($handle, CURLINFO_HEADER_SIZE);
+            $headers = substr($content, 0, $headerSize);
+            if(!empty($headers)){
+                $headers = array_map('trim', explode("\r\n", trim($headers)));
+                // if this is a redirected page
+                if(in_array('HTTP/2 303', $headers)){
+                    // see if there's a location to redirect to
+                    foreach($headers as $header){
+                        // if there is
+                        if(false !== strpos($header, 'location:')){
+                            // see if it's to a youtube video
+                            $bits = explode('location:', $header);
+                            $possible_url = trim($bits[1]);
+                            if(self::is_youtube_link($possible_url)){
+                                // if it is, try pulling the code from the new location and return the result of that
+                                return self::getResponseCodeCurl($possible_url, false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return $code;
     }
 }

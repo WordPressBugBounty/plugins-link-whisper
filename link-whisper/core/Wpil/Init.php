@@ -16,6 +16,11 @@ final class Wpil_Init
             Wpil_StemmerLoader::class,
             Wpil_Term::class,
             Wpil_Toolbox::class,
+            Wpil_TargetKeyword::class,
+//            Wpil_Widgets::class,
+            Wpil_AI::class,
+            Wpil_Sitemap::class,
+            Wpil_Email::class,
         ];
     }
 

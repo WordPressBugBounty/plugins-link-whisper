@@ -9,6 +9,7 @@ class Wpil_Settings
     public static $stemmed_ignore_phrases = null;
     public static $ignore_words = null;
     public static $stemmed_ignore_words = null;
+    public static $wpml_enabled = null;
     public static $keys = [
         'wpil_2_ignore_numbers',
         'wpil_2_post_types',
@@ -24,9 +25,114 @@ class Wpil_Settings
         'wpil_ignore_categories',
         'wpil_show_all_links',
         'wpil_make_suggestion_filtering_persistent',
+        'wpil_max_suggestion_post_count',
+        'wpil_force_keyword_exact_matches_word_limit',
+        'wpil_suggestion_anchor_max_size',
+        'wpil_suggestion_anchor_min_size',
+        'wpil_full_html_suggestions',
+        'wpil_ignore_keywords_posts',
+        'wpil_ignore_keywords_posts_by_category',
+        'wpil_ignore_orphaned_posts',
+        'wpil_ignore_orphaned_posts_by_category',
+        'wpil_nofollow_ignore_domains',
+        'wpil_new_tab_ignore_domains',
+        'wpil_same_tab_ignore_domains',
+        'wpil_chat_gpt_api',
+        'wpil_ai_batch_processing_limits',
+        'wpil_open_ai_api_monthly_limit',
+        'wpil_enable_ai_batch_processing',
+        'wpil_selected_ai_batch_processes',
+        'wpil_ai_generated_keyword_max_count',
+        'wpil_use_ai_suggestions',
+        'wpil_disable_ai_anchor_building',
+        'wpil_restrict_to_top_ai_suggestions',
+        'wpil_disable_ai_suggestions_cron',
+        'wpil_ai_max_processing_age',
+        'wpil_suggestion_relatedness_threshold',
+        'wpil_sitemap_embedding_relatedness_threshold',
+        'wpil_new_tab_domains',
+        'wpil_same_tab_domains',
+        'wpil_links_to_ignore',
+        'wpil_broken_links_to_ignore',
+        'wpil_ignore_elements_by_class',
+        'wpil_ignore_shortcodes_by_name',
+        'wpil_ignore_linking_roles',
+        'wpil_ignore_tags_from_linking',
+        'wpil_ignore_elementor_from_linking',
+        'wpil_ignore_pages_completely',
+        'wpil_marked_as_external',
         'wpil_disable_acf',
         'wpil_count_related_post_links',
         'wpil_domains_marked_as_internal',
+        'wpil_custom_fields_to_process',
+        'wpil_acf_post_reference_fields',
+        'wpil_add_icon_to_external_link',
+        'wpil_external_link_icon',
+        'wpil_external_link_icon_title',
+        'wpil_external_link_icon_size',
+        'wpil_external_link_icon_color',
+        'wpil_external_link_icon_html_exclude',
+        'wpil_external_link_icon_inner_html_exclude',
+        'wpil_external_link_icon_post_ignore',
+        'wpil_internal_link_icon_post_ignore',
+        'wpil_add_icon_to_internal_link',
+        'wpil_internal_link_icon',
+        'wpil_internal_link_icon_title',
+        'wpil_internal_link_icon_size',
+        'wpil_internal_link_icon_color',
+        'wpil_internal_link_icon_html_exclude',
+        'wpil_internal_link_icon_inner_html_exclude',
+        'wpil_process_these_acf_fields',
+        'wpil_link_to_yoast_cornerstone',
+        'wpil_suggest_to_outbound_posts',
+        'wpil_sponsored_domains',
+        'wpil_nofollow_domains',
+        'wpil_dofollow_domains',
+        'wpil_only_match_target_keywords',
+        'wpil_add_noreferrer',
+        'wpil_add_nofollow',
+        'wpil_filter_staging_url',
+        'wpil_live_site_url',
+        'wpil_staging_site_url',
+        'wpil_delete_all_data',
+        'wpil_email_notifications_enabled',
+        'wpil_remote_dashboard',
+        'wpil_external_links_open_new_tab',
+        'wpil_insert_links_as_relative',
+        'wpil_prevent_two_way_linking',
+        'wpil_disable_autolinking_on_post_update',
+        'wpil_enable_autolink_cron_task',
+        'wpil_disable_autolink_insert_run',
+        'wpil_ignore_image_urls',
+        'wpil_include_image_src',
+        'wpil_use_ugly_permalinks',
+        'wpil_delete_link_inner_html',
+        'wpil_delete_links_to_post_on_delete',
+        'wpil_include_post_meta_in_support_export',
+        'wpil_ignore_acf_fields',
+        'wpil_ignore_small_acf_text_fields',
+        'wpil_ignore_click_links',
+        'wpil_open_all_internal_new_tab',
+        'wpil_open_all_external_new_tab',
+        'wpil_open_all_internal_same_tab',
+        'wpil_open_all_external_same_tab',
+        'wpil_js_open_new_tabs',
+        'wpil_add_destination_title',
+        'wpil_disable_tawkto_widget',
+        'wpil_disable_broken_link_cron_check',
+        'wpil_disable_click_tracking',
+        'wpil_delete_old_click_data',
+        'wpil_max_links_per_post',
+        'wpil_max_inbound_links_per_post',
+        'wpil_max_linking_age',
+        'wpil_max_suggestion_count',
+        'wpil_disable_click_tracking_info_gathering',
+        'wpil_autotag_gsc_keywords',
+        'wpil_autotag_gsc_keyword_count',
+        'wpil_autotag_gsc_keyword_basis',
+        'wpil_show_comment_links',
+        'wpil_ignore_latest_posts',
+        'wpil_update_reusable_block_links',
         'wpil_content_formatting_level',
         'wpil_delete_all_data',
         'wpil_include_post_meta_in_support_export',
@@ -63,9 +169,1847 @@ class Wpil_Settings
             'draft'
         ];
         $statuses_active = Wpil_Settings::getPostStatuses();
-
+        Wpil_Base::show_tawkto_widget();
         include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wpil_settings_v2.php';
     }
+
+    public static function ai_init(){
+        if (!empty($_GET['ai_auth_complete'])){ ?>
+            <script>
+            // This page is now in the popup window
+            window.addEventListener("load", () => {
+                // Optionally notify parent window
+                if (window.opener) {
+                    try {
+                        window.opener.postMessage({ type: "AI_AUTH_COMPLETE" }, "*");
+                    } catch (e) {
+                        console.warn("Could not notify parent:", e);
+                    }
+                }
+
+                // Close after a short delay to ensure REST hit has time to process
+                setTimeout(() => {
+                window.close();
+                }, 1000);
+            });
+            </script>
+            <?php
+            return;
+        }
+?>
+        <div class="wrap wpil-report-page wpil_styles">
+            <h1 class="wp-heading-inline"><?php esc_html_e('AI Subscription','wpil'); ?></h1>
+            <hr class="wp-header-end">
+        </div>
+<?php
+        $ai_id = get_user_meta(get_current_user_id(), 'wpil_ai_access_user_id', true);
+        $uemail = get_user_meta(get_current_user_id(), 'wpil_ai_access_user_email', true);
+        $ai_user_id = Wpil_Settings::get_linkwhisper_ai_user_id();
+        if(!isset($_GET['no_account']) && (empty($ai_user_id) || empty($ai_id) || $ai_id !== $ai_user_id || empty($uemail))){
+            ?>
+                <style>
+                    .wpil-ai-not-connected-container{
+                        background: #fff;
+                        border: 2px solid #ccc;
+                        border-radius: 8px;
+                        padding: 1.5rem;
+                        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+                        display: flex;
+                        flex-direction: column;
+                        justify-content: space-between;
+                        position: relative;
+                        max-width: 550px;
+                        max-height: 500px;
+                        margin: 100px auto;
+                        text-align: center;
+                    }
+                    .wpil-ai-not-connected-title{
+                        font-size: 1.35rem;
+                        font-weight: 600;
+                        margin-bottom: 25px;
+                    }
+                    .wpil-ai-not-connected-content{
+                        font-size: 1rem;
+                    }
+                </style>
+            <div class="wpil-ai-not-connected-container">
+                <div class="wpil-ai-not-connected">
+                    <h3 class="wpil-ai-not-connected-title">Have a LinkWhisper.com Account?</h3>
+                    <div class="wpil-ai-not-connected-content wpil_styles">
+                        <a id="wpil-connect-ai-button" href="<?php echo esc_url(Wpil_AI::get_linkwhisper_ai_auth_url(admin_url('admin.php?page=link_whisper_ai_subscription&ai_auth_complete=1')))?>" style="margin-top:15px; user-select: none; text-align: center; min-width: 120px;" class="button-primary"><?php esc_html_e('Yes I Do', 'wpil'); ?></a>
+                    </div>
+                    <div class="wpil-ai-not-connected-content wpil_styles">
+                        <a href="<?php echo esc_url(admin_url('admin.php?page=link_whisper_ai_subscription&no_account=1'))?>" style="margin-top:15px; user-select: none; text-align: center; min-width: 120px;" class="button-primary"><?php esc_html_e('No I Don\'t', 'wpil'); ?></a>
+                    </div>
+                </div>
+            </div>
+            <script>
+                document.addEventListener("DOMContentLoaded", () => {
+                    const connectBtn = document.getElementById("wpil-connect-ai-button");
+                    if (!connectBtn) return;
+
+                    connectBtn.addEventListener("click", (e) => {
+                        e.preventDefault();
+
+                        const authUrl = connectBtn.href;
+
+                        const width = 600;
+                        const height = 700;
+                        const left = (window.screen.width / 2) - (width / 2);
+                        const top = (window.screen.height / 2) - (height / 2);
+
+                        const popup = window.open(authUrl, 'LinkWhisperAIConnect', `width=${width},height=${height},top=${top},left=${left}`);
+
+                        if (!popup) {
+                        alert("Popup blocked! Please allow popups for this site to connect AI.");
+                        return;
+                        }
+
+                        // Check every second if the popup has closed
+                        const interval = setInterval(() => {
+                        if (popup.closed) {
+                            clearInterval(interval);
+                            // Call a function to check if auth was completed (or just reload)
+                            window.location.reload(true); // or make an AJAX call to confirm before reload
+                        }
+                        }, 1000);
+                    });
+                });
+            </script>
+            <?php
+            return;
+        }
+
+        $sub = Wpil_AI::get_user_ai_subscription();
+        $credits = Wpil_AI::get_available_ai_credits();
+        $recommended = (empty($sub)) ? count(Wpil_AI::get_processable_post_ids()): false;
+
+        $renew = '';
+        if(!empty($sub)){
+            $timestamp = (!empty(strtotime($sub->expiration))) ? strtotime($sub->expiration): time();
+            $date_format = get_option('date_format', '');
+            if(!empty($date_format)){
+                $renew = date($date_format, $timestamp);
+            }else{
+                $day = date('j', $timestamp); // Day without leading zero
+                $suffix = date('S', $timestamp); // Ordinal suffix
+                $renew = date('M', $timestamp) . " {$day}{$suffix}, " . date('Y', $timestamp);
+            }
+        }
+        ?>
+    <style>
+        .wpil-credit-purchase-table-wrapper *{
+            font-family: 'Funnel Sans'
+        }
+        .wpil-credit-puchase-table{
+            max-width: 1500px;
+            max-width: 90%;
+            margin: 0 auto;
+        }
+        .pricing-table {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 24px;
+            margin: 2rem 0;
+        }
+
+        .plan-card {
+            background: #fff;
+            border: 2px solid #ccc;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+            
+            max-height: 530px;
+        }
+
+        .plan-card.plan-info-card{
+            justify-content: initial;
+        }
+
+        .plan-card.plan-info-card li{
+            font-size: 15px;
+        }
+
+        .plan-card.active {
+            border-color: #7147b1;
+        }
+
+        .plan-card.featured {
+            border-color: #007bff;
+        }
+
+        .plan-card .tag {
+            background: #007bff;
+            color: white;
+            font-size: 0.75rem;
+            padding: 4px 10px;
+            border-radius: 12px;
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .plan-card .tag.active{
+            background: #7147b1;
+        }
+
+        .plan-card ul{
+            margin: 10px 0 0 0;
+        }
+
+        .plan-card ul li .main-text{
+            font-size: 15px;
+            color: #111111;
+        }
+
+        .plan-name{
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .plan-benefits{
+            color: #000000;
+            font-size: 1.1rem;
+            line-height: 1.25rem;
+            margin: 20px 0 0 0 !important;
+        }
+
+        .plan-benefits li{
+            margin: 0 0 20px;
+            font-weight: 300;
+            font-size: 16px;
+        }
+
+        .plan-description {
+            font-size: 0.95rem;
+            color: #555;
+            margin-bottom: 1.5rem;
+        }
+
+        .plan-price {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+            color: #111;
+        }
+
+        .plan-price span {
+            font-size: 0.9rem;
+            color: #777;
+        }
+
+        .plan-note {
+            font-size: 15px;
+            color: #666;
+            margin-bottom: 0.75rem;
+        }
+
+        .plan-credits:not(.on-demand-plan-pricing) {
+            margin-bottom: 1rem;
+            font-size: 0.95rem;
+            position: relative;
+        }
+
+        .wpil-plan-spacer{
+            color: #fff;
+            opacity: 0;
+        }
+
+        .plan-button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            cursor: pointer;
+            margin-bottom: 0.5rem;
+        }
+
+        .plan-button:hover {
+        background: #0056b3;
+        }
+
+        .plan-button.current {
+            background: #7147b1;
+            color: #ffffff;
+            font-weight: bold;
+            cursor: default;
+        }
+
+        .current-credits,
+        .plan-renew{
+            color: #000000;
+            font-size: 16px;
+        }
+
+        .slider-container {
+            margin-top: 1rem;
+            text-align: center;
+        }
+
+        .slider-container label {
+            display: block;
+            margin-bottom: 0.25rem;
+            font-weight: bold;
+            font-size: 0.9rem;
+            color: #444;
+        }
+
+        .slider-container input[type="range"] {
+            width: 100%;
+            margin: 0.5rem 0;
+        }
+
+        .slider-output {
+            font-size: 0.9rem;
+            color: #333;
+        }
+
+        .custom-plan-cta {
+            grid-column: 1 / -1;
+            border: 2px solid #ccc;
+            background: #fff;
+            border-radius: 8px;
+            padding: 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .custom-plan-text {
+            font-size: 1.15rem;
+            color: #333;
+            flex: 1;
+            min-width: 220px;
+        }
+
+        .custom-plan-button {
+            background: #007bff;
+            color: white !important;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            text-decoration: none;
+            font-weight: 500;
+            transition: background 0.2s ease;
+        }
+
+        .custom-plan-button:hover {
+            background: #0056b3;
+        }
+        .plan-credits .wpil-help-text{
+            background-color: #000;
+        }
+
+        .wpil-old-credit-amount {
+            text-decoration: line-through;
+            color: #888;
+            margin-right: 6px;
+            font-weight: normal;
+        }
+
+        .wpil-new-credit-amount {
+            color: #28a745;
+            font-weight: bold;
+        }
+
+
+        #wpil-payment-form-wrapper{
+            display: none;
+        }
+
+        #wpil-payment-form{
+            border: 2px solid #ccc;
+            background: #fff;
+            border-radius: 8px;
+            padding: 1.5rem;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+            max-width: 500px;
+            min-width: 500px;
+            margin: 0 0 0 0;
+        }
+
+        #wpil-payment-email-container{
+            margin: 0 0 15px 0;
+        }
+
+        #wpil-payment-contents-container{
+            display: none;
+        }
+
+        #wpil-payment-checkout-title{
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 1.25rem;
+        }
+
+        #wpil-payment-email-label{
+            font-size: 1rem;
+            font-weight: 600;
+            display: block;
+            margin: 0 0 10px 0;
+        }
+
+        #wpil-payment-email{
+            border: 2px solid #ccc;
+            background: #fff;
+            border-radius: 8px;
+            width: 100%;
+        }
+
+        #wpil-payment-form-terms-container{
+            margin: 15px 0 0 0;
+        }
+
+        #wpil-payment-form-terms-container a{
+            margin: 0 10px 0 0;
+        }
+
+        button#wpil-checkout-button {
+            display: block;
+            width: 100%;
+            padding: 12px 16px;
+            font-size: 16px;
+            font-family: inherit;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            background-color: #fff;
+            color: #000;
+            cursor: pointer;
+            transition: box-shadow 0.2s, border-color 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-top: 16px;
+        }
+
+        button#wpil-checkout-button:hover {
+            border-color: #888;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.2);
+        }
+
+        button#wpil-checkout-button:active {
+            border-color: #666;
+            box-shadow: 0 0 0 2px rgba(0,0,0,0.15);
+        }
+
+        button#wpil-checkout-button:disabled {
+            background-color: #f2f2f2;
+            color: #aaa;
+            border-color: #ddd;
+            cursor: not-allowed;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+    <div class="wpil-credit-purchase-table-wrapper">
+        <div class="wpil-credit-puchase-table">
+            <div id="wpil-credit-pricing" class="pricing-table">
+                <div class="plan-card">
+                    <h3 class="plan-name">On Demand Credits</h3>
+                    <p class="plan-description">Use for any AI process in Link Whisper.</p>
+                    <div class="plan-price" style="margin-bottom: 10px;">
+                        <div style="display:inline-block" class="plan-sub-price">$20</div>
+                    </div>
+                    <ul>
+                        <li><div class="plan-credits main-text" style="display:inline-block"><div style="display:inline-block" class="plan-credits on-demand-plan-pricing">1000</div></div> <span>Credits</span></li>
+                        <li><div class="plan-note main-text">$0.02 Per Credit</div></li>
+                        <li><div class="plan-credits main-text">Process up to <div style="display:inline-block" class="on-demand-posts">1000</div> posts <div style="float: none;display: inline-block;margin: 0;" class="wpil_help"><i class="dashicons dashicons-editor-help" style="font-size: 18px;"></i><div class="wpil-help-text" style="display: none;">Credits per post is estimated based on articles averaging 1,500 words.</div></div></div></li>
+                        <li><div class="plan-credits main-text">Credits expire after 30 days</div></li>
+                    </ul>
+                    <div class="slider-container">
+                        <input type="range" id="credit-slider" min="1000" max="10000" step="1000" value="1000" />
+                        <label for="credit-slider">Select credit amount:</label>
+                    </div>
+                    <div class="wpil-plan-spacer">.</div>
+                    <button class="plan-button" data-type="custom" data-download="ondemand">Buy Credits</button>
+                </div>
+                <!---->
+                <?php $active = (!empty($sub)) && (int)$sub->product_id === 5244463; ?>
+                <?php $recc = $recommended > 0 && $recommended < 1050; ?>
+                <div class="plan-card plan-1k <?php echo $active ? 'active': ''; ?> <?php echo ($recc) ? 'featured': '';?>">
+                    <div class="tag active" style="<?php echo $active ? '': 'display:none'; ?>">Active</div>
+                    <div class="tag plan-1k <?php echo ($recc) ? '': 'hidden';?>">Recommended</div>
+                    <h3 class="plan-name">1k Credits Monthly</h3>
+                    <p class="plan-description">Use for any AI process in Link Whisper.</p>
+                    <div class="plan-price">$10 <span>/month</span></div>
+                    <ul>
+                        <li><div class="plan-credits main-text">1000 Credits per month</div></li>
+                        <li><div class="plan-note main-text">$0.01 Per Credit</div></li>
+                        <li><div class="main-text">Process up to 1000 posts <div style="float: none;display: inline-block;margin: 0;" class="wpil_help"><i class="dashicons dashicons-editor-help" style="font-size: 18px;"></i><div class="wpil-help-text" style="display: none;">Credits per post is estimated based on articles averaging 1,500 words.</div></div></div></li>
+                        <li><div class="wpil-plan-spacer">.</div></li>
+                        <?php if($active){ ?>
+                        <li><div class="current-credits" style="<?php echo $active ? '': 'display:none'; ?>"><?php echo 'Current Plan Credits: ' . $credits;?></div></li>
+                        <li><div class="plan-renew" style="<?php echo $active && !empty($renew) ? '': 'display:none'; ?>"><?php echo 'Plan Renews: ' . $renew;?></div></li>
+                        <?php } else { ?>
+                        <li><div class="wpil-plan-spacer">.</div></li>
+                        <li><div class="wpil-plan-spacer">.</div></li>
+                        <?php } ?>
+                        <li><div class="wpil-plan-spacer">.</div></li>
+                        <li><div class="wpil-plan-spacer">.</div></li>
+                    </ul>
+                    <button class="plan-button <?php echo $active ? 'current': '';?>" data-type="recurring" data-price-id="price_1k" data-download="1k"><?php echo $active ? 'Cancel Plan': 'Choose Plan';?></button>
+                </div>
+                <!---->
+                <?php $active = (!empty($sub)) && (int)$sub->product_id === 5244464; ?>
+                <?php $recc = $recommended > 1050 && $recommended < 2050; ?>
+                <div class="plan-card plan-2k <?php echo $active ? 'active': ''; ?> <?php echo ($recc) ? 'featured': '';?>">
+                    <div class="tag active" style="<?php echo $active ? '': 'display:none'; ?>">Active</div>
+                    <div class="tag plan-2k <?php echo ($recc) ? '': 'hidden';?>">Recommended</div>
+                    <h3 class="plan-name">2k Credits Monthly</h3>
+                    <p class="plan-description">Use for any AI process in Link Whisper.</p>
+                    <div class="plan-price">$20 <span>/month</span></div>
+                    <ul>
+                        <li><div class="plan-credits main-text"><span class="wpil-old-credit-amount">2000</span><span class="wpil-new-credit-amount">2200</span> AI credits per month</div></li>
+                        <li><div class="plan-note main-text"><span class="wpil-new-credit-amount">$0.009</span> Per Credit</div></li>
+                        <li><div class="main-text">Process up to 2200 posts <div style="float: none;display: inline-block;margin: 0;" class="wpil_help"><i class="dashicons dashicons-editor-help" style="font-size: 18px;"></i><div class="wpil-help-text" style="display: none;">Credits per post is estimated based on articles averaging 1,500 words.</div></div></div></li>
+                        <li><div class="wpil-plan-spacer">.</div></li>
+                        <?php if($active){ ?>
+                        <li><div class="current-credits" style="<?php echo $active ? '': 'display:none'; ?>"><?php echo 'Current Plan Credits: ' . $credits;?></div></li>
+                        <li><div class="plan-renew" style="<?php echo $active && !empty($renew) ? '': 'display:none'; ?>"><?php echo 'Plan Renews: ' . $renew;?></div></li>
+                        <?php } else { ?>
+                        <li><div class="wpil-plan-spacer">.</div></li>
+                        <li><div class="wpil-plan-spacer">.</div></li>
+                        <?php } ?>
+                        <li><div class="wpil-plan-spacer">.</div></li>
+                        <li><div class="wpil-plan-spacer">.</div></li>
+                    </ul>
+                    <button class="plan-button <?php echo $active ? 'current': '';?>" data-type="recurring" data-price-id="price_2k" data-download="2k"><?php echo $active ? 'Cancel Plan': 'Choose Plan';?></button>
+                </div>
+                <!---->
+                <div class="plan-card plan-info-card">
+                    <h3 class="plan-name">Included in All Plans</h3>
+                    <ul class="plan-benefits">
+                        <li>🤖 Smart internal links created with AI</li>
+                        <li>🔗 More relevant links to boost engagement</li>
+                        <li>🧠 AI keyword targeting for higher conversions</li>
+                        <li>🛒 Automatic product detection</li>
+                        <li>🗺️ Visual sitemaps that bring your SEO to life</li>
+                        <li>🔁 Plans renew automatically</li>
+                    </ul>
+                </div>
+                <!---->
+                <?php /*
+                <?php $active = (!empty($sub)) && (int)$sub->product_id === 5244468; ?>
+                <div class="plan-card plan-5k <?php echo $active ? 'active': ''; ?>">
+                    <div class="tag active" style="<?php echo $active ? '': 'display:none'; ?>">Active</div>
+                    <div class="tag plan-5k hidden">Recommended</div>
+                    <h3 class="plan-name">Link Whisper 5k Monthly</h3>
+                    <p class="plan-description">Keep your internal links optimized and your rankings growing—recurring credits mean nonstop AI-powered SEO support.</p>
+                    <div class="plan-price">$40 <span>/month</span></div>
+                    <div class="plan-note">Credits do not roll over</div>
+                    <div class="plan-credits">5000 AI credits per month</div>
+                    <div class="current-credits" style="<?php echo $active ? '': 'display:none'; ?>"><?php echo 'Current Plan Credits: ' . $credits;?></div>
+                    <div class="plan-renew" style="<?php echo $active && !empty($renew) ? '': 'display:none'; ?>"><?php echo 'Plan Renews: ' . $renew;?></div>
+                    <div class="plan-feature-note">Credits can be used for:</div>
+                    <ul class="plan-features">
+                        <li>AI Powered Suggestions</li>
+                        <li>Content Analysis</li>
+                        <li>Keyword Detection</li>
+                        <li>Product Detection</li>
+                    </ul>
+                    <button class="plan-button <?php echo $active ? 'current': '';?>" data-type="recurring" data-price-id="price_5k" data-download="5k"><?php echo $active ? 'Cancel Plan': 'Choose Plan';?></button>
+                </div>
+                */ ?>
+                <div id="wpil-payment-form-wrapper">
+                    <div id="wpil-back-button-container" style="display:none;">
+                        <button id="wpil-back-button" style="background:#fff;border:1px solid #ccc;border-radius:6px;padding:10px 16px;cursor:pointer;">
+                            ← Back to Plan Selection
+                        </button>
+                    </div>
+                    <form id="wpil-payment-form">
+                        <h3 id="wpil-payment-checkout-title">Checkout</h3>
+                        <div id="wpil-payment-email-container">
+                            <label id="wpil-payment-email-label" for="wpil-payment-email">
+                                <?php echo (!empty($uemail)) ? 'Loading checkout… please wait' : 'Enter Your Email'; ?>
+                            </label>
+                            <input type="email" id="wpil-payment-email" required placeholder="Email" <?php echo (!empty($uemail)) ? 'value="'.esc_attr($uemail).'" style="display:none;"': '';?>>
+                        </div>
+                        <div id="wpil-payment-contents-container">
+                            <div>
+                                <div id="payment-element"></div>
+                                <div id="card-errors" class="stripe-checkout-error"></div>
+                            </div>
+                            <button type="submit" id="wpil-checkout-button">Complete Purchase</button>
+                            <div id="wpil-payment-form-terms-container">
+                                <a href="<?php echo WPIL_STORE_URL . '/privacy-policy/';?>">Privacy Policy</a>
+                                <a href="<?php echo WPIL_STORE_URL . '/terms-of-service/';?>">Terms of Service</a>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="wpil-loader" style="display:none;text-align:center;padding:20px;">
+                        <div class="spinner" style="margin:0 auto;width:40px;height:40px;border:4px solid #ccc;border-top-color:#7147b1;border-radius:50%;animation:spin 1s linear infinite;"></div>
+                    </div>
+                </div>
+
+            </div>
+            <?php if(empty($sub) && false){ ?>
+            <div id="wpil-plan-estimator" class="custom-plan-cta">
+                <div id="wpil-plan-estimation-intro" class="custom-plan-text">
+                    <strong>Not sure what plan fits your site?</strong> Use our site estimator to find the perfect one for you!
+                </div>
+                <div id="wpil-plan-estimation" class="custom-plan-text plan-recommendation hidden">
+                    <strong>Estimation Complete!</strong> 
+                </div>
+                <a href="#" id="wpil-ai-plan-estimator" class="custom-plan-button">Get Estimate</a>
+            </div>
+            <br><br>
+            <?php } ?>
+            <div id="wpil-custom-plan-cta" class="custom-plan-cta">
+                <div class="custom-plan-text">
+                    <strong>Need more AI credits or a custom plan?</strong> Let’s talk. We’ll help you craft the perfect solution. 🚀
+                </div>
+                <a class="custom-plan-button" href="https://account.linkwhisper.com/support" target="_blank">Contact Sales</a>
+            </div>
+        </div>
+    </div>
+
+<script>
+const STRIPE = {
+    'publicKey': 'pk_live_kSOl38xUgfzKw67PzZDQDipr001O3VFl3p',
+    'apiUrl': 'https://linkwhisper.com/wp-json/lwasc-checkout/v1',
+}
+const WPIL_USER_EMAIL = <?php echo $uemail ? json_encode($uemail) : 'null'; ?>;
+
+document.addEventListener("DOMContentLoaded", () => {
+  const stripe = Stripe(STRIPE.publicKey);
+  let activeStripe = null;
+  let activeElements = null;
+  let activeType = null;
+  let currentPlanButton = null;
+
+  const emailInput = document.getElementById("wpil-payment-email");
+  const emailContainer = document.getElementById("wpil-payment-email-container");
+  const formContainer = document.getElementById("wpil-payment-contents-container");
+  const paymentFormWrapper = document.getElementById("wpil-payment-form-wrapper");
+
+  const creditSlider = document.getElementById("credit-slider");
+  const creditsEl = document.querySelector(".plan-credits");
+  const creditsEl2 = document.querySelector(".on-demand-posts");
+  const priceEl = document.querySelector(".plan-sub-price");
+
+  creditSlider.addEventListener("input", () => {
+    const credits = parseInt(creditSlider.value);
+    const price = (credits / 1000) * 20;
+    creditsEl.textContent = credits.toLocaleString();
+    creditsEl2.textContent = credits.toLocaleString();
+    priceEl.textContent = `$${price.toFixed(0)}`;
+  });
+
+  function showCheckoutForm(button) {
+    document.querySelectorAll(".plan-card").forEach(card => {
+        if (!card.contains(button)) {
+        card.style.transition = "opacity 0.3s ease";
+        card.style.opacity = "0";
+        setTimeout(() => card.style.display = "none", 300);
+        }
+    });
+
+    setTimeout(() => {
+        document.getElementById('wpil-credit-pricing').style.display = "flex";
+        paymentFormWrapper.style.display = "block";
+    }, 320);
+
+    currentPlanButton = button;
+
+    if (WPIL_USER_EMAIL) {
+        emailInput.value = WPIL_USER_EMAIL;
+        emailContainer.style.display = "block";
+        formContainer.style.display = "none";
+        triggerStripeIntent(WPIL_USER_EMAIL, button.dataset.type, button.dataset.priceId);
+    } else {
+        document.getElementById("wpil-loader").style.display = "none";
+        emailContainer.style.display = "block";
+        formContainer.style.display = "none";
+    }
+  }
+
+  // Animate and show form
+  function showCheckoutForm2(button) {
+    // Hide other plans
+    document.querySelectorAll(".plan-card").forEach(card => {
+      if (!card.contains(button)) {
+        card.style.transition = "opacity 0.3s ease";
+        card.style.opacity = "0";
+        setTimeout(() => card.style.display = "none", 300);
+      }
+    });
+
+    // Scroll and show form
+    setTimeout(() => {
+      paymentFormWrapper.scrollIntoView({ behavior: "smooth" });
+    }, 400);
+
+    // Show email form
+    emailContainer.style.display = "block";
+    formContainer.style.display = "none"; // will show after email and plan selected
+  }
+
+document.querySelectorAll(".plan-button").forEach((button) => {
+  button.addEventListener("click", async (e) => {
+    const type = button.dataset.type;
+    const plan = button.dataset.download; // '1k', '2k', etc.
+
+    if (type === "recurring" && button.classList.contains("current")) {
+      // Cancel subscription
+      showSubscriptionConfirmModal("Canceling will deactivate your AI subscription on all sites. Proceed?", async () => {
+        try {
+          showSubscriptionSetupModal(null, 'Cancelling subscription.');
+          const res = await fetch(STRIPE.apiUrl + "/cancel-subscription", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ai_id: "<?php echo $ai_user_id;?>", subscription_id: "<?php echo $sub->subscription_id?>" })
+          });
+          const data = await res.json();
+          if (data.success) {
+            clearUserSubscription();
+          } else {
+            alert("Cancellation failed: " + (data.message || "Unknown error"));
+          }
+        } catch (err) {
+          alert("Error contacting server: " + err.message);
+        }
+      });
+
+      return;
+    }
+
+    const activePlan = document.querySelector(".plan-card.active")?.querySelector(".plan-button")?.dataset?.download;
+
+    // If user chooses a lower-tier than current
+    if (activePlan === "2k" && plan === "1k") {
+      showSubscriptionConfirmModal("Downgrading affects all sites using this subscription. Proceed?", () => {
+        currentPlanButton = button;
+        showCheckoutForm(button);
+      });
+      return;
+    }
+
+    // Default action
+    currentPlanButton = button;
+    showCheckoutForm(button);
+  });
+});
+
+
+
+  document.getElementById("wpil-back-button").addEventListener("click", () => {
+  document.querySelectorAll(".plan-card").forEach(card => {
+    card.style.display = "block";
+    card.style.opacity = "1";
+  });
+
+  document.getElementById("wpil-back-button-container").style.display = "none";
+  emailContainer.style.display = "none";
+  formContainer.style.display = "none";
+  document.getElementById("wpil-loader").style.display = "none";
+  document.getElementById("payment-element").innerHTML = "";
+  emailInput.value = "";
+
+  activeStripe = null;
+  activeElements = null;
+  activeType = null;
+  currentPlanButton = null;
+});
+
+emailInput.addEventListener("blur", async () => {
+    if (!currentPlanButton || !emailInput.value) return;
+    const type = currentPlanButton.dataset.type;
+    const priceId = currentPlanButton.dataset.priceId;
+    triggerStripeIntent(emailInput.value, type, priceId);
+});
+
+async function triggerStripeIntent(email, type, priceId = null) {
+  document.getElementById("wpil-loader").style.display = "block";
+
+  const payload = { email, type };
+  if (type === "custom") {
+    payload.quantity = parseInt(creditSlider.value, 10);
+  } else {
+    payload.price_id = priceId;
+  }
+
+  try {
+    const res = await fetch(STRIPE.apiUrl + "/create-intent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const { clientSecret, error } = await res.json();
+    if (error) throw new Error(error);
+
+    const elements = stripe.elements({ clientSecret });
+    const paymentElement = elements.create("payment");
+    document.getElementById("payment-element").innerHTML = "";
+    paymentElement.mount("#payment-element");
+
+    activeStripe = stripe;
+    activeElements = elements;
+    activeType = type;
+
+    // Show payment form
+    formContainer.style.display = "block";
+    emailContainer.style.display = "none";
+  } catch (err) {
+    alert("Failed to load Stripe form: " + err.message);
+  } finally {
+    document.getElementById("wpil-loader").style.display = "none";
+  }
+}
+
+  // Handle form submission
+  document.getElementById("wpil-payment-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = emailInput.value;
+    const stripe = activeStripe;
+    const elements = activeElements;
+    const type = activeType;
+    const errorDiv = document.getElementById("card-errors");
+    errorDiv.textContent = "";
+
+    if (!stripe || !elements || !type) {
+      alert("Please select a plan and enter your email.");
+      return;
+    }
+
+    const method = type === "recurring" ? "confirmSetup" : "confirmPayment";
+    const result = await stripe[method]({
+      elements,
+      confirmParams: {
+        payment_method_data: { billing_details: { email } },
+      },
+      redirect: 'if_required'
+    });
+
+    if (result.error) {
+      errorDiv.textContent = result.error.message;
+    } else {
+        showSubscriptionSetupModal(type === "recurring");
+        setupUserSubscription(type === "recurring");
+    }
+  });
+});
+
+let loop = 0;
+function setupUserSubscription(recurring = false){
+    jQuery.ajax({
+        type: 'POST',
+        url: ajaxurl,
+        dataType: 'json',
+        data: {
+            action: 'setup_user_ai_subscription',
+            recurring: (recurring) ? '1': '0',
+            nonce: "<?php echo wp_create_nonce(get_current_user_id() . 'setup-ai-subscription');?>"
+        },
+        error: function (jqXHR, textStatus, errorThrown) {
+            var wrapper = document.createElement('div');
+            jQuery(wrapper).append('<strong>' + textStatus + '</strong><br>');
+            jQuery(wrapper).append(jqXHR.responseText);
+            wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+        },
+        success: function(response){
+            console.log(response);
+            loop++;
+            if(response.status && response.status === 'subscription-setup' || loop > 100){
+                showSubscriptionSuccess(recurring);
+                window.location.reload(true);
+            }else{
+                setTimeout(function(){setupUserSubscription(recurring)}, 3000);
+            }
+        },
+        complete: function(){
+        }
+    });
+}
+
+function clearUserSubscription(){
+    jQuery.ajax({
+        type: 'POST',
+        url: ajaxurl,
+        dataType: 'json',
+        data: {
+            action: 'clear_user_ai_subscription',
+            nonce: "<?php echo wp_create_nonce(get_current_user_id() . 'clear-ai-subscription');?>"
+        },
+        error: function (jqXHR, textStatus, errorThrown) {
+            var wrapper = document.createElement('div');
+            jQuery(wrapper).append('<strong>' + textStatus + '</strong><br>');
+            jQuery(wrapper).append(jqXHR.responseText);
+            wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+        },
+        success: function(response){
+            if(response.status && response.status === 'subscription-cleared'){
+                showSubscriptionSuccess(null, 'Subscription cancelled.');
+                window.location.reload(true);
+            }
+        },
+        complete: function(){
+        }
+    });
+}
+
+</script>
+
+<div id="wpil-subscription-setup-modal" style="display:none;">
+  <div class="wpil-modal-overlay"></div>
+  <div class="wpil-modal-content">
+    <div class="wpil-modal-spinner"></div>
+    <div class="wpil-modal-checkmark" aria-hidden="true">
+        <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+            <circle cx="32" cy="32" r="30" stroke="#7147b1" stroke-width="4" fill="none" />
+            <path d="M18 34 L28 44 L46 22" stroke="#7147b1" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+    </div>
+    <div class="wpil-modal-questionmark" aria-hidden="true">
+          <svg width="64" height="64" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" fill="#7147b1">
+            <path d="M24,3c-11.58614,0 -21,9.41387 -21,21c0,11.58613 9.41386,21 21,21c11.58614,0 21,-9.41387 21,-21c0,-11.58613 -9.41386,-21 -21,-21zM24,5c10.50526,0 19,8.49474 19,19c0,10.50526 -8.49474,19 -19,19c-10.50526,0 -19,-8.49474 -19,-19c0,-10.50526 8.49474,-19 19,-19zM23.86133,13.05859c-2.935,0 -5.21427,1.43547 -6.07227,3.73047c-0.235,0.577 -0.34375,1.06142 -0.34375,1.60742c0,0.625 0.34317,0.98242 0.95117,0.98242c0.546,0 0.812,-0.23475 1,-0.96875c0.453,-2.169 2.07572,-3.49609 4.38672,-3.49609c2.497,0 4.27539,1.57647 4.27539,3.85547c0,1.639 -0.76384,2.74697 -2.71484,4.04297c-2.185,1.421 -3.07617,2.71659 -3.07617,4.80859v0.73242c0,0.672 0.32755,1.2187 1.06055,1.2207c0.718,0 1.01563,-0.516 1.01563,-1.25v-0.41992c0,-1.733 0.57805,-2.62159 2.62305,-3.93359c2.139,-1.374 3.29297,-2.98197 3.29297,-5.29297c0,-3.263 -2.68344,-5.61914 -6.39844,-5.61914zM23.32813,33.00781c-0.811,0 -1.44922,0.6398 -1.44922,1.4668c0,0.812 0.63822,1.45117 1.44922,1.45117c0.827,0 1.46875,-0.63917 1.46875,-1.45117c0,-0.827 -0.64175,-1.4668 -1.46875,-1.4668z"/>
+        </svg>
+    </div>
+    <div class="wpil-modal-message">Setting up subscription…</div>
+    <div class="wpil-modal-actions">
+      <button id="wpil-modal-confirm" class="button-primary">Yes</button>
+      <button id="wpil-modal-cancel" class="button-secondary">No</button>
+    </div>
+  </div>
+</div>
+
+<style>
+    #wpil-subscription-setup-modal {
+  position: fixed;
+  z-index: 9999;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  font-family: 'Funnel Sans', sans-serif;
+}
+
+.wpil-modal-overlay {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.4);
+  cursor: default;
+}
+
+.wpil-modal-content {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 320px;
+  max-width: 90%;
+  padding: 2rem;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  transform: translate(-50%, -50%);
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.wpil-modal-spinner {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 16px;
+  border: 5px solid #ccc;
+  border-top-color: #7147b1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.wpil-modal-checkmark,
+.wpil-modal-questionmark {
+  font-size: 48px;
+  display: none;
+  margin-bottom: 16px;
+}
+
+.wpil-modal-message {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.wpil-modal-actions{
+    display: none;
+    margin: 20px 0 0 0;
+}
+
+.wpil-confetti-piece {
+  position: fixed;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  opacity: 1;
+  z-index: 10000;
+  pointer-events: none;
+  animation: confetti-fall 2.5s ease-out forwards;
+}
+
+@keyframes confetti-fall {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--dx, 0), var(--dy, 100vh), 0) rotate(720deg);
+    opacity: 0;
+  }
+}
+
+
+</style>
+<script>
+function showSubscriptionConfirmModal(text, onConfirm = null) {
+  const modal = document.getElementById('wpil-subscription-setup-modal');
+  if (!modal || !onConfirm) return;
+
+    modal.querySelector('.wpil-modal-spinner').style.display = 'none';
+    modal.querySelector('.wpil-modal-checkmark').style.display = 'none';
+    modal.querySelector('.wpil-modal-questionmark').style.display = 'block';
+    modal.querySelector('.wpil-modal-message').textContent = text;
+    modal.style.display = 'block';
+
+  // Allow closing by overlay click
+    const overlay = modal.querySelector('.wpil-modal-overlay');
+    overlay.style.cursor = 'pointer';
+    overlay.onclick = () => hideSubscriptionSetupModal();
+
+    const actions = modal.querySelector(".wpil-modal-actions");
+    const confirmBtn = document.getElementById("wpil-modal-confirm");
+    const cancelBtn = document.getElementById("wpil-modal-cancel");
+
+    actions.style.display = "block";
+    confirmBtn.onclick = () => {
+      modal.style.display = "none";
+      if (typeof onConfirm === "function") onConfirm();
+    };
+
+    cancelBtn.onclick = () => {
+      modal.style.display = "none";
+      hideSubscriptionSetupModal();
+    };
+}
+
+function showSubscriptionSetupModal(recurring, customText = '') {
+  const modal = document.getElementById('wpil-subscription-setup-modal');
+  if (!modal) return;
+
+  modal.querySelector('.wpil-modal-spinner').style.display = 'block';
+  modal.querySelector('.wpil-modal-checkmark').style.display = 'none';
+  modal.querySelector('.wpil-modal-questionmark').style.display = 'none';
+  modal.querySelector('.wpil-modal-actions').style.display = 'none';
+  let text;
+  if(!customText){
+    text = (recurring) ? 'Setting up subscription…': 'Completing purchase…';
+  }else{
+    text = customText;
+  }
+
+  modal.querySelector('.wpil-modal-message').textContent = text;
+  
+  // Disable click-to-close during loading
+  modal.querySelector('.wpil-modal-overlay').style.cursor = 'default';
+  modal.querySelector('.wpil-modal-overlay').onclick = null;
+
+  modal.style.display = 'block';
+
+  // Allow closing by overlay click
+    /*const overlay = modal.querySelector('.wpil-modal-overlay');
+    overlay.style.cursor = 'pointer';
+    overlay.onclick = () => hideSubscriptionSetupModal();*/
+}
+
+function showSubscriptionSuccess(recurring, customText = '') {
+  const modal = document.getElementById('wpil-subscription-setup-modal');
+  if (!modal) return;
+
+  modal.querySelector('.wpil-modal-spinner').style.display = 'none';
+  modal.querySelector('.wpil-modal-checkmark').style.display = 'block';
+  modal.querySelector('.wpil-modal-questionmark').style.display = 'none';
+  if(customText){
+    modal.querySelector('.wpil-modal-message').textContent = customText;
+  }else{
+    modal.querySelector('.wpil-modal-message').textContent = (recurring) ? 'Subscription setup complete!': 'Purchase complete!';
+    // Trigger confetti burst! THERE IS NO SUCH THING AS TOO MUCH CONFETTI!
+    triggerConfettiExplosion();
+  }
+
+  setTimeout(hideSubscriptionSetupModal, 1000);
+}
+
+function hideSubscriptionSetupModal() {
+  const modal = document.getElementById('wpil-subscription-setup-modal');
+  if(modal){
+    modal.style.display = 'none';
+    modal.querySelector('.wpil-modal-spinner').style.display = 'none';
+    modal.querySelector('.wpil-modal-checkmark').style.display = 'none';
+    modal.querySelector('.wpil-modal-questionmark').style.display = 'none';
+  }
+}
+
+function triggerConfettiExplosion() {
+  const colors = ["#7147b1", "#28a745", "#007bff", "#ffc107", "#e83e8c", "#17a2b8"];
+  const numPieces = 250;
+
+  for (let i = 0; i < numPieces; i++) {
+    const confetti = document.createElement("div");
+    confetti.className = "wpil-confetti-piece";
+
+    const size = Math.random() * 6 + 6;
+    confetti.style.width = `${size}px`;
+    confetti.style.height = `${size}px`;
+    confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+
+    const x = Math.random() * window.innerWidth;
+    const y = Math.random() * window.innerHeight;
+    confetti.style.left = `${x}px`;
+    confetti.style.top = `${y}px`;
+
+    const dx = (Math.random() - 0.5) * 300 + "px";
+    const dy = (Math.random() * 600 + 200) + "px";
+
+    confetti.style.setProperty('--dx', dx);
+    confetti.style.setProperty('--dy', dy);
+
+    document.body.appendChild(confetti);
+    setTimeout(() => confetti.remove(), 4500);
+  }
+}
+
+</script>
+        <?php
+    }
+
+    public static function create_ai_credit_popup(){
+        $sub = Wpil_AI::get_user_ai_subscription();
+        $authed = Wpil_Settings::get_linkwhisper_ai_user_id();
+        $credits = Wpil_AI::get_available_ai_credits();
+        $auth_url = admin_url('admin.php?page=link_whisper_ai_subscription');
+        if (empty($authed)){
+            // if the user has dismissed this popup
+            if(!empty(get_user_meta(get_current_user_id(), 'wpil_dismissed_ai_notice_banner', true))){
+                // stop here
+                return;
+            }
+        ?>
+            <style>
+            @media screen and (min-width: 768px) {
+                #wpbody {
+                    position: relative;
+                    top: 32px;
+                }
+
+                .wpil-no-ai-banner {
+                    width: 100%;
+                    height: 32px;
+                    background: #4272fd;
+                    position: fixed;
+                    top: 32px;
+                    z-index: 9999;
+                    margin: 0 0 0 -20px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: #fff;
+                    font-weight: bold;
+                    font-size: 14px;
+                    cursor: pointer;
+                    transition: background 0.2s ease;
+                }
+
+                #inbound_suggestions_page .wpil-no-ai-banner{
+                    margin: 0 0 0 -23px;
+                }
+
+                .wpil-no-ai-banner:hover {
+                    background: #2c55cb;
+                }
+
+                .wpil-ai-popup-overlay {
+                    display: none;
+                    position: fixed;
+                    top: 0; left: 0; right: 0; bottom: 0;
+                    background: rgba(0,0,0,0.4);
+                    z-index: 9999991;
+                    justify-content: center;
+                    align-items: center;
+                }
+
+                .wpil-ai-popup {
+                    background: #fff;
+                    border-radius: 8px;
+                    /*width: 90%;*/
+                    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+                    position: relative;
+
+                    display: flex;
+                    gap: 24px;
+                    flex-direction: row;
+                    text-align: left;
+                    padding: 24px;
+                }
+
+                .wpil-ai-popup-close {
+                    position: absolute;
+                    top: 10px; right: 10px;
+                    font-size: 18px;
+                    cursor: pointer;
+                    background: none;
+                    border: none;
+                    color: #888;
+                }
+
+                .wpil-ai-popup-close:hover {
+                    color: #333;
+                }
+
+                .wpil-ai-popup-left {
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: space-between;
+                    max-width: 75%;
+                }
+
+                .wpil-ai-popup-left h3 {
+                    font-size: 1rem;
+                    margin-bottom: 8px;
+                }
+
+                .wpil-ai-popup-right {
+                    flex: 1;
+                    border-left: 1px solid #eee;
+                    padding-left: 20px;
+                    display: flex;
+                    flex-direction: column;
+                }
+
+                .wpil-ai-popup-close {
+                    position: absolute;
+                    top: 10px;
+                    right: 10px;
+                    font-size: 18px;
+                    cursor: pointer;
+                    background: none;
+                    border: none;
+                    color: #888;
+                }
+
+                .wpil-ai-popup-close:hover {
+                    color: #333;
+                }
+
+                .ai-linking-table {
+                width: 100%;
+                border-collapse: collapse;
+                overflow: hidden;
+                font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+                font-size: 16px;
+                background-color: #fff;
+                }
+
+                .ai-linking-table thead {
+                background-color: #f8f8f8;
+                }
+
+                .ai-linking-table th,
+                .ai-linking-table td {
+                padding: 14px 18px;
+                text-align: left;
+                }
+
+                .ai-linking-table tbody tr:nth-child(even) {
+                background-color: #fafafa;
+                }
+
+                .ai-linking-table tbody tr:hover {
+                background-color: #f1f5ff;
+                }
+
+                .ai-linking-table th {
+                font-weight: 700;
+                color: #333;
+                font-size: 18px;
+                }
+
+                .ai-linking-table td {
+                vertical-align: top;
+                font-size: 16px;
+                }
+
+                /* Custom highlight columns */
+                .ai-benefit {
+                color: #228B22; /* forest green */
+                }
+
+                .manual-drawback {
+                color: #000; /* black */
+                }
+            }
+
+            @media screen and (max-width: 767px) {
+                .wpil-no-ai-banner,
+                .wpil-ai-popup-overlay,
+                .wpil-ai-popup{
+                    display: none;
+                }
+            }
+
+            @media screen and (max-width: 1480px) {
+                .wpil-ai-upgrade-1{
+                    display: none;
+                }
+                .ai-linking-table td{
+                    font-size: 15px;
+                }
+            }
+            @media screen and (max-width: 1200px) {
+                .wpil-ai-upgrade-2{
+                    display: none;
+                }
+                .ai-linking-table td{
+                    font-size: 14px;
+                }
+            }
+
+            @media screen and (max-width: 1000px) {
+                .wpil-ai-popup-right{
+                    display: none;
+                }
+                .ai-linking-table td{
+                    font-size: 14px;
+                }
+            }
+            </style>
+
+            <!-- Banner -->
+            <div class="wpil-no-ai-banner" id="wpil-no-ai-banner">
+            🚀 Connect Link Whisper AI to unlock powerful features
+            </div>
+
+            <!-- Modal Popup -->
+            <div class="wpil-ai-popup-overlay" id="wpil-ai-popup-overlay">
+            <div class="wpil-ai-popup" id="wpil-ai-popup">
+                <button class="wpil-ai-popup-close" id="wpil-popup-close">&times;</button>
+
+                <!--
+                <div class="wpil-ai-popup-left wpil_styles">
+                    <div>
+                        <h3 style="font-size: 22px;">Link Whisper AI Gives You:</h3>
+                        <ul>
+                            <li>🤖 Smarter internal links placed instantly for you</li>
+                            <li>🔗 More relevant links, so your readers stay engaged</li>
+                            <li>🧠 Higher conversions with intelligent keyword targeting</li>
+                            <li>🛒 Automatic product detection to boost affiliate linking</li>
+                            <li>🗺️ A visual map of your internal linking strategy</li>
+                            <li>🔁 Automatic renewal—so your AI tools never stop working</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <a href="<?php echo esc_url($auth_url); ?>" style="margin-top:15px; user-select: none; text-align: center; max-width: 170px;" id="wpil-connect-ai-button" class="button-primary" data-ai-authed="<?php echo (!empty($authed)) ? '1': '0';?>" style="margin-top: 20px;">Upgrade!</a>
+                    </div>
+                </div>-->
+
+                <div class="wpil-ai-popup-right_old">
+                    <table class="ai-linking-table">
+                        <thead>
+                            <tr>
+                                <th>Feature</th>
+                                <th>With AI</th>
+                                <th>Without AI</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Speed</td>
+                                <td class="ai-benefit">Quickly scans and links across all content</td>
+                                <td class="manual-drawback">Time-consuming, manual scanning required</td>
+                            </tr>
+                            <tr>
+                                <td>Accuracy</td>
+                                <td class="ai-benefit">Identifies relevant and contextual links with NLP</td>
+                                <td class="manual-drawback">Prone to human error or oversight</td>
+                            </tr>
+                            <tr>
+                                <td>SEO Optimization</td>
+                                <td class="ai-benefit">Boosts topical authority with smart keyword targeting</td>
+                                <td class="manual-drawback">Relies on SEO knowledge and manual effort</td>
+                            </tr>
+                            <tr class="wpil-ai-upgrade-1">
+                                <td>Scalability</td>
+                                <td class="ai-benefit">Works efficiently across hundreds or thousands of posts</td>
+                                <td class="manual-drawback">Difficult to manage at scale</td>
+                            </tr>
+                            <tr class="wpil-ai-upgrade-2">
+                                <td>User Engagement</td>
+                                <td class="ai-benefit">Suggests links that improve time-on-site and reduce bounce rates</td>
+                                <td class="manual-drawback">Easy to miss opportunities for engagement</td>
+                            </tr>
+                            <tr class="wpil-ai-upgrade-1">
+                                <td>Cost Efficiency</td>
+                                <td class="ai-benefit">Saves time = saves money</td>
+                                <td class="manual-drawback">Labor-intensive and slow</td>
+                            </tr>
+                            <tr>
+                                <td>Smart Filtering</td>
+                                <td class="ai-benefit">Avoids linking irrelevant or low-value content</td>
+                                <td class="manual-drawback">Manual review needed for quality control</td>
+                            </tr>
+                            <tr>
+                                <td>Consistency</td>
+                                <td class="ai-benefit">Applies linking logic uniformly across site</td>
+                                <td class="manual-drawback">Depends on individual effort and style</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div class="wpil_styles">
+                        <a href="<?php echo esc_url($auth_url); ?>" style="margin-top:15px; user-select: none; text-align: center; max-width: 170px;" id="wpil-connect-ai-button" class="button-primary" data-ai-authed="<?php echo (!empty($authed)) ? '1': '0';?>" style="margin-top: 20px;">Upgrade!</a>
+                    </div>
+                </div>
+            </div>
+            </div>
+
+            <script>
+                document.addEventListener('DOMContentLoaded', () => {
+                    const banner = document.getElementById('wpil-no-ai-banner');
+                    const overlay = document.getElementById('wpil-ai-popup-overlay');
+                    const popup = document.getElementById('wpil-ai-popup');
+                    const closeBtn = document.getElementById('wpil-popup-close');
+
+                    // Open popup on banner click
+                    banner.addEventListener('click', () => {
+                        overlay.style.display = 'flex';
+                        jQuery.ajax({
+                            type: 'POST',
+                            url: ajaxurl,
+                            dataType: 'json',
+                            data: {
+                                action: 'user_opened_ai_popup'
+                            },
+                        });
+                    });
+
+                    // Close when clicking close button
+                    closeBtn.addEventListener('click', () => {
+                        overlay.style.display = 'none';
+                    });
+
+                    // Close when clicking outside the popup
+                    overlay.addEventListener('click', (e) => {
+                        if (!popup.contains(e.target)) {
+                            overlay.style.display = 'none';
+                        }
+                    });
+                
+                    const connectBtn = document.getElementById("wpil-connect-ai-button");
+                    if (!connectBtn || connectBtn.dataset.aiAuthed == 1) return;
+
+                    connectBtn.addEventListener("click", (e) => {
+                        e.preventDefault();
+
+                        const authUrl = connectBtn.href;
+
+                        const width = 600;
+                        const height = 700;
+                        const left = (window.screen.width / 2) - (width / 2);
+                        const top = (window.screen.height / 2) - (height / 2);
+
+                        const popup = window.open(authUrl, 'LinkWhisperAIConnect', `width=${width},height=${height},top=${top},left=${left}`);
+
+                        if (!popup) {
+                            alert("Popup blocked! Please allow popups for this site to connect AI.");
+                            return;
+                        }
+
+                        // Check every second if the popup has closed
+                        const interval = setInterval(() => {
+                        if (popup.closed) {
+                            clearInterval(interval);
+                            // Call a function to check if auth was completed (or just reload)
+                            window.location.href = "<?php echo admin_url('admin.php?page=link_whisper_ai_subscription'); ?>";
+                        }
+                        }, 1000);
+                    });
+                });
+            </script>
+
+            <?php 
+            return;
+            }
+
+        $renew = '';
+        if(!empty($sub)){
+            $timestamp = (!empty(strtotime($sub->expiration))) ? strtotime($sub->expiration): time();
+            $date_format = get_option('date_format', '');
+            if(!empty($date_format)){
+                $renew = date($date_format, $timestamp);
+            }else{
+                $day = date('j', $timestamp); // Day without leading zero
+                $suffix = date('S', $timestamp); // Ordinal suffix
+                $renew = date('M', $timestamp) . " {$day}{$suffix}, " . date('Y', $timestamp);
+            }
+        }
+        ?>
+        <div id="credit-status-container">
+        <div id="credit-status-display"><svg xmlns="http://www.w3.org/2000/svg" class="wpil-credit-icon" viewBox="0 0 512 512"><!--!Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2025 Fonticons, Inc.--><path d="M512 80c0 18-14.3 34.6-38.4 48c-29.1 16.1-72.5 27.5-122.3 30.9c-3.7-1.8-7.4-3.5-11.3-5C300.6 137.4 248.2 128 192 128c-8.3 0-16.4 .2-24.5 .6l-1.1-.6C142.3 114.6 128 98 128 80c0-44.2 86-80 192-80S512 35.8 512 80zM160.7 161.1c10.2-.7 20.7-1.1 31.3-1.1c62.2 0 117.4 12.3 152.5 31.4C369.3 204.9 384 221.7 384 240c0 4-.7 7.9-2.1 11.7c-4.6 13.2-17 25.3-35 35.5c0 0 0 0 0 0c-.1 .1-.3 .1-.4 .2c0 0 0 0 0 0s0 0 0 0c-.3 .2-.6 .3-.9 .5c-35 19.4-90.8 32-153.6 32c-59.6 0-112.9-11.3-148.2-29.1c-1.9-.9-3.7-1.9-5.5-2.9C14.3 274.6 0 258 0 240c0-34.8 53.4-64.5 128-75.4c10.5-1.5 21.4-2.7 32.7-3.5zM416 240c0-21.9-10.6-39.9-24.1-53.4c28.3-4.4 54.2-11.4 76.2-20.5c16.3-6.8 31.5-15.2 43.9-25.5l0 35.4c0 19.3-16.5 37.1-43.8 50.9c-14.6 7.4-32.4 13.7-52.4 18.5c.1-1.8 .2-3.5 .2-5.3zm-32 96c0 18-14.3 34.6-38.4 48c-1.8 1-3.6 1.9-5.5 2.9C304.9 404.7 251.6 416 192 416c-62.8 0-118.6-12.6-153.6-32C14.3 370.6 0 354 0 336l0-35.4c12.5 10.3 27.6 18.7 43.9 25.5C83.4 342.6 135.8 352 192 352s108.6-9.4 148.1-25.9c7.8-3.2 15.3-6.9 22.4-10.9c6.1-3.4 11.8-7.2 17.2-11.2c1.5-1.1 2.9-2.3 4.3-3.4l0 3.4 0 5.7 0 26.3zm32 0l0-32 0-25.9c19-4.2 36.5-9.5 52.1-16c16.3-6.8 31.5-15.2 43.9-25.5l0 35.4c0 10.5-5 21-14.9 30.9c-16.3 16.3-45 29.7-81.3 38.4c.1-1.7 .2-3.5 .2-5.3zM192 448c56.2 0 108.6-9.4 148.1-25.9c16.3-6.8 31.5-15.2 43.9-25.5l0 35.4c0 44.2-86 80-192 80S0 476.2 0 432l0-35.4c12.5 10.3 27.6 18.7 43.9 25.5C83.4 438.6 135.8 448 192 448z"/></svg> <?php echo $credits;?> AI Credits</div>
+        </div>
+
+        <div id="credit-popup-overlay" class="hidden">
+        <div id="credit-status-popup">
+            <button class="credit-popup-close" aria-label="Close popup">&times;</button>
+            <div class="credit-popup-inner">
+                <div class="credit-popup-header">
+                    <div class="main-popup-header">Link Whisper AI Credits</div>
+                    <span class="credit-popup-label">Your account balance</span>
+                    <div class="credit-popup-balance">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="wpil-credit-icon" viewBox="0 0 512 512"><!--!Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2025 Fonticons, Inc.--><path d="M512 80c0 18-14.3 34.6-38.4 48c-29.1 16.1-72.5 27.5-122.3 30.9c-3.7-1.8-7.4-3.5-11.3-5C300.6 137.4 248.2 128 192 128c-8.3 0-16.4 .2-24.5 .6l-1.1-.6C142.3 114.6 128 98 128 80c0-44.2 86-80 192-80S512 35.8 512 80zM160.7 161.1c10.2-.7 20.7-1.1 31.3-1.1c62.2 0 117.4 12.3 152.5 31.4C369.3 204.9 384 221.7 384 240c0 4-.7 7.9-2.1 11.7c-4.6 13.2-17 25.3-35 35.5c0 0 0 0 0 0c-.1 .1-.3 .1-.4 .2c0 0 0 0 0 0s0 0 0 0c-.3 .2-.6 .3-.9 .5c-35 19.4-90.8 32-153.6 32c-59.6 0-112.9-11.3-148.2-29.1c-1.9-.9-3.7-1.9-5.5-2.9C14.3 274.6 0 258 0 240c0-34.8 53.4-64.5 128-75.4c10.5-1.5 21.4-2.7 32.7-3.5zM416 240c0-21.9-10.6-39.9-24.1-53.4c28.3-4.4 54.2-11.4 76.2-20.5c16.3-6.8 31.5-15.2 43.9-25.5l0 35.4c0 19.3-16.5 37.1-43.8 50.9c-14.6 7.4-32.4 13.7-52.4 18.5c.1-1.8 .2-3.5 .2-5.3zm-32 96c0 18-14.3 34.6-38.4 48c-1.8 1-3.6 1.9-5.5 2.9C304.9 404.7 251.6 416 192 416c-62.8 0-118.6-12.6-153.6-32C14.3 370.6 0 354 0 336l0-35.4c12.5 10.3 27.6 18.7 43.9 25.5C83.4 342.6 135.8 352 192 352s108.6-9.4 148.1-25.9c7.8-3.2 15.3-6.9 22.4-10.9c6.1-3.4 11.8-7.2 17.2-11.2c1.5-1.1 2.9-2.3 4.3-3.4l0 3.4 0 5.7 0 26.3zm32 0l0-32 0-25.9c19-4.2 36.5-9.5 52.1-16c16.3-6.8 31.5-15.2 43.9-25.5l0 35.4c0 10.5-5 21-14.9 30.9c-16.3 16.3-45 29.7-81.3 38.4c.1-1.7 .2-3.5 .2-5.3zM192 448c56.2 0 108.6-9.4 148.1-25.9c16.3-6.8 31.5-15.2 43.9-25.5l0 35.4c0 44.2-86 80-192 80S0 476.2 0 432l0-35.4c12.5 10.3 27.6 18.7 43.9 25.5C83.4 438.6 135.8 448 192 448z"/></svg>
+                        <span class="balance-amount"><?php echo (int)$credits; ?> credits</span>
+                    </div>
+                </div>
+
+                <p class="credit-popup-description">
+                    Credits power Link Whisper’s AI. They are used for creating suggestions, advanced content analysis, keyword generation, and more.
+                </p>
+
+                <?php if(!empty($sub)){ ?>
+                    <div class="current-plan">
+                        <span class="bold-text">Your current plan is:</span> <?php echo esc_html($sub->title);?>
+                        <div>
+                            <span class="bold-text">It renews on:</span> <?php echo esc_html($renew);?>
+                        </div>
+                    </div>
+                <?php }elseif(!empty($credits)){ ?>
+                    <div class="current-plan">
+                        <span class="bold-text">Your current plan is:</span> Pay as you go.
+                    </div>
+                <?php }else{ ?>
+                    <div class="current-plan">
+                        Want to save on credits? <span class="bold-text">Get a plan that fits your site!</span>
+                    </div>
+                <?php } ?>
+                <div class="credit-popup-actions">
+                    <a href="<?php echo admin_url('admin.php?page=link_whisper_ai_subscription'); ?>" class="credit-btn"><?php echo (!empty($sub)) ? esc_html__('Manage Plan', 'wpil'): esc_html__('Subscribe', 'wpil');?></a>
+                </div>
+            </div>
+        </div>
+        </div>
+        <style>
+            /* Fixed top-right credit button */
+            #credit-status-container {
+                position: fixed;
+                top: 30px;
+                right: 160px;
+                z-index: 10000;
+            }
+
+            #credit-status-display {
+            color: #007bff;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            padding: 6px 12px;
+            border-radius: 6px;
+            transition: background 0.2s ease;
+            }
+
+            #credit-status-display:hover {
+            background: rgba(0, 123, 255, 0.1);
+            }
+
+            /* Full screen overlay */
+            #credit-popup-overlay {
+            position: fixed;
+            inset: 0;
+            background-color: rgba(0, 0, 0, 0.2);
+            display: flex;
+            justify-content: flex-end;
+            padding: 60px 20px 20px;
+            z-index: 9999;
+            }
+
+            #credit-popup-overlay.hidden {
+            display: none;
+            }
+
+            /* The popup panel */
+            #credit-status-popup {
+                position: absolute;
+                left: calc(50% - 160px);
+                background: #fff;
+                border-radius: 8px;
+                padding: 20px;
+                max-width: 380px;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+                animation: slideFadeIn 0.2s ease-out;
+            }
+
+            @keyframes slideFadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+            }
+
+            .credit-popup-inner p {
+            margin: 0.8rem 0;
+            font-size: 0.85rem;
+            color: #333;
+            }
+
+            .credit-popup-header .main-popup-header{
+                font-weight: bold;
+                font-size: 20px;
+                margin-bottom: 15px;
+            }
+
+            .credit-popup-label {
+                font-size: 0.85rem;
+                color: #666;
+            }
+
+            .wpil-credit-icon{
+                width: 18px;
+                height: 18px;
+                position: relative;
+                top: 3px;
+                color: #00bbff;
+                fill: #00bbff;
+            }
+
+            .credit-popup-balance {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #1d4ed8;
+            margin: 10px 0 15px;
+            }
+
+            .credit-popup-inner .credit-popup-description {
+            font-size: 0.85rem;
+            color: #444;
+            margin-bottom: 1.5rem;
+            }
+
+            .credit-popup-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            }
+
+            .credit-btn {
+                padding: 8px 14px;
+                font-size: 0.85rem;
+                border-radius: 6px;
+                text-decoration: none;
+                font-weight: 500;
+                background: #007bff;
+                color: #fff !important;
+                border: none;
+                transition: background 0.2s ease;
+            }
+
+            .credit-btn:hover {
+            background: #0056b3;
+            }
+
+            .current-plan {
+                font-size: 1rem;
+                color: #111;
+                margin-bottom: 1.5rem;
+                line-height: 1.5rem;
+            }
+
+            .current-plan .bold-text{
+                font-weight: 600;
+            }
+
+            .credit-popup-close {
+                position: absolute;
+                top: 10px;
+                right: 12px;
+                font-size: 1.25rem;
+                font-weight: bold;
+                background: none;
+                border: none;
+                color: #555;
+                cursor: pointer;
+                z-index: 1;
+                padding: 0;
+                line-height: 1;
+            }
+
+            .credit-popup-close:hover {
+                color: #000;
+            }
+        </style>
+        <script>
+            const creditBtn = document.getElementById('credit-status-display');
+            const overlay = document.getElementById('credit-popup-overlay');
+
+            creditBtn.addEventListener('click', () => {
+                overlay.classList.remove('hidden');
+            });
+
+            overlay.addEventListener('click', (e) => {
+                // Close only if clicking outside the popup
+                if (!e.target.closest('#credit-status-popup')) {
+                overlay.classList.add('hidden');
+                }
+            });
+
+            const closeBtn = document.querySelector('.credit-popup-close');
+            closeBtn.addEventListener('click', () => {
+                document.getElementById('credit-popup-overlay').classList.add('hidden');
+            });
+
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    document.getElementById('credit-popup-overlay').classList.add('hidden');
+                }
+            });
+        </script>
+        <?php
+    }
+
+    /**
+     * Not currently used... Delete if we pass 2.9.5 without needing it
+     **/
+    public static function create_estimate_model(){
+        ?>
+        <div id="wpil-estimate-modal" style="display: none;">
+            <div class="wpil-estimate-overlay"></div>
+            <div class="wpil-estimate-box">
+                <p>Estimating recommended plan size...</p>
+                <div id="wpil-progress-bar"><div id="wpil-progress-inner"></div></div>
+                <p id="wpil-progress-text">Starting...</p>
+            </div>
+            </div>
+            <script>
+                jQuery(document).ready(function($) {
+                    $('#wpil-ai-plan-estimator').on('click', function(e) {
+                        e.preventDefault();
+                        $('#wpil-estimate-modal').fadeIn();
+                        $('#wpil-progress-text').text('Starting...');
+                        estimateLoop(true); // first loop resets
+                    });
+
+                    function estimateLoop(reset = false, estimateMode = 'link-whisper') {
+                        $.post(ajaxurl, {
+                        action: 'wpil_estimate_site_processing_cost',
+                        reset: reset ? 1 : 0,
+                        estimate_mode: estimateMode
+                        }, function(response) {
+                        if (typeof response !== 'object') {
+                            try {
+                            response = JSON.parse(response);
+                            } catch (e) {
+                            console.error('Bad response:', response);
+                            $('#wpil-progress-text').text('Error calculating estimate.');
+                            return;
+                            }
+                        }
+
+                        $('#wpil-progress-text').text(
+                            response.finished
+                            ? `Done! Estimated cost: ${response.cost} credits`
+                            : `Processing... ${response.posts_remaining} posts remaining`
+                        );
+
+                        let totalPosts = response.total + 1;
+                        let progressPercent = Math.min(100, Math.round(((totalPosts - response.posts_remaining) / totalPosts) * 100));
+                        $('#wpil-progress-inner').css('width', progressPercent + '%');
+
+                        if (!response.finished) {
+                            setTimeout(() => estimateLoop(false), 500);
+                        } else {
+                            $('#wpil-estimate-result').html(`<strong>Estimated credits required: ${response.cost}</strong>`);
+                            $('#wpil-estimate-modal').fadeOut();
+                            let plan = '';
+                            let planClass = '';
+                            if(response.cost < 1050){
+                                plan = 'Based on our analysis, a Link Whisper 1k Monthly plan would work best for your site.';
+                                planClass = '.plan-1k';
+                            }else if (response.cost < 2050){
+                                plan = 'Based on our analysis, a Link Whisper 2k Monthly plan would work best for your site.';
+                                planClass = '.plan-2k';
+                            }else if (response.cost < 5050){
+                                plan = 'Based on our analysis, a Link Whisper 5k Monthly plan would work best for your site.';
+                                planClass = '.plan-5k';
+                            }else{
+                                plan = 'Based on our analysis, a custom plan would work best for your site.';
+                            }
+
+                            $("#wpil-plan-estimation-intro, #wpil-ai-plan-estimator").addClass('hidden');
+                            $("#wpil-plan-estimation").append(plan).removeClass('hidden');
+
+                            if(planClass){
+                                $(planClass).removeClass('hidden');
+                                $('.plan-card' + planClass).addClass('featured');
+                            }
+
+                            // Add CSS class or highlight suggested plan, e.g.:
+                            $('.plan-box').removeClass('recommended');
+                            $(`.plan-box[data-threshold-min="${response.cost}"]`).addClass('recommended');
+                        }
+                        });
+                    }
+                });
+
+            </script>
+            <style>
+                #wpil-estimate-modal {
+                    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                    background: rgba(0,0,0,0.4);
+                    display: flex; justify-content: center; align-items: center;
+                    z-index: 9999;
+                }
+                .wpil-estimate-box {
+                    background: #fff;
+                    padding: 20px;
+                    border-radius: 5px;
+                    text-align: center;
+                    min-width: 300px;
+                }
+                #wpil-progress-bar {
+                    width: 100%;
+                    height: 10px;
+                    background: #eee;
+                    margin-top: 10px;
+                    border-radius: 5px;
+                    overflow: hidden;
+                }
+                #wpil-progress-inner {
+                    height: 10px;
+                    width: 0%;
+                    background: #0073aa;
+                    transition: width 0.4s ease;
+                }
+            </style>
+        <?php
+    }
+
 
     /**
      * Get ignore phrases
@@ -497,6 +2441,98 @@ class Wpil_Settings
         return true;
     }
 
+
+    /**
+     * Gets any ACF fields that the user has specified as the only ones to process.
+     * @return array $fields Returns an array if there's fields, and an empty array if there's no fields.
+     **/
+    public static function getACFFieldsToProcess(){
+        $fields = get_transient('wpil_process_these_acf_fields');
+        if(empty($fields)){
+            $fields = get_option('wpil_process_these_acf_fields', array());
+
+            if(empty($fields)){
+                $fields = 'no-fields';
+            }else{
+                $fields = explode("\n", $fields);
+                if(!empty($fields)){
+                    $fields = array_filter(array_map('trim', $fields));
+                }else{
+                    $fields = 'no-fields';
+                }
+            }
+
+            set_transient('wpil_process_these_acf_fields', $fields, 15 * MINUTE_IN_SECONDS);
+        }
+
+        if($fields === 'no-fields'){
+            return array();
+        }
+
+        return $fields;
+    }
+
+    /**
+     * Gets any custom content fields that the user has defined on his site and wants to process for content.
+     * @return array $fields Returns an array if there's fields, and an empty array if there's no fields.
+     **/
+    public static function getCustomFieldsToProcess(){
+        $fields = get_transient('wpil_custom_fields_to_process');
+        if(empty($fields)){
+            $fields = get_option('wpil_custom_fields_to_process', array());
+
+            if(empty($fields)){
+                $fields = 'no-fields';
+            }else{
+                $fields = explode("\n", $fields);
+                if(!empty($fields)){
+                    $fields = array_map('trim', $fields);
+                }else{
+                    $fields = 'no-fields';
+                }
+            }
+
+            set_transient('wpil_custom_fields_to_process', $fields, 15 * MINUTE_IN_SECONDS);
+        }
+
+        if($fields === 'no-fields'){
+            return array();
+        }
+
+        return $fields;
+    }
+
+    /**
+     * Gets any custom content fields that the user has defined on his site and wants to process for content.
+     * @return array $fields Returns an array if there's fields, and an empty array if there's no fields.
+     **/
+    public static function getPostReferenceFields(){
+        $fields = get_transient('wpil_acf_post_reference_fields');
+        if(empty($fields)){
+            $fields = get_option('wpil_acf_post_reference_fields', array());
+
+            if(empty($fields)){
+                $fields = 'no-fields';
+            }else{
+                $fields = explode("\n", $fields);
+                if(!empty($fields)){
+                    $fields = array_map('trim', $fields);
+                }else{
+                    $fields = 'no-fields';
+                }
+            }
+
+            set_transient('wpil_acf_post_reference_fields', $fields, 15 * MINUTE_IN_SECONDS);
+        }
+
+        if($fields === 'no-fields'){
+            return array();
+        }
+
+        return $fields;
+    }
+
+
     /**
      * Gets the currently supported languages
      * 
@@ -721,6 +2757,29 @@ class Wpil_Settings
                 }
             }
 
+            if (empty($_POST['wpil_selected_target_keyword_sources'])) {
+                $_POST['wpil_selected_target_keyword_sources'] = [];
+            }
+
+            if (empty($_POST['wpil_selected_ai_batch_processes'])) {
+                $_POST['wpil_selected_ai_batch_processes'] = [];
+            }
+            
+            if (empty($_POST['wpil_selected_post_content_target_keyword_sources'])) {
+                $_POST['wpil_selected_post_content_target_keyword_sources'] = [];
+            }
+
+            if (empty($_POST['wpil_related_post_cat_ignore'])) {
+                $_POST['wpil_related_post_cat_ignore'] = [];
+            }
+
+            if (empty($_POST['wpil_related_post_tag_ignore'])) {
+                $_POST['wpil_related_post_tag_ignore'] = [];
+            }
+
+            // update the list of known keyword sources
+            update_option('wpil_available_target_keyword_sources', Wpil_TargetKeyword::get_available_keyword_sources()); // should mention at_save, but the name would be getting too long
+
             //save other settings
             $opt_keys = self::$keys;
             foreach($opt_keys as $opt_key) {
@@ -736,19 +2795,46 @@ class Wpil_Settings
             }
 
             // clear the item caches if they're set
-            delete_transient('wpil_ignore_links');
-            delete_transient('wpil_ignore_external_links');
-            delete_transient('wpil_ignore_keywords_posts');
-            delete_transient('wpil_ignore_categories');
-            delete_transient('wpil_domains_marked_as_internal');
-            delete_transient('wpil_links_to_ignore');
-            delete_transient('wpil_suggest_to_outbound_posts');
-            delete_transient('wpil_ignore_shortcodes_by_name');
-            delete_transient('wpil_ignore_acf_fields');
-            delete_transient('wpil_ignore_click_links');
-            delete_transient('wpil_custom_fields_to_process');
-            delete_transient('wpil_redirected_post_ids');
-            delete_transient('wpil_redirected_post_urls');
+            $setting_caches = array(
+                'wpil_ignore_links',
+                'wpil_ignore_sitemap_posts',
+                'wpil_ignore_external_links',
+                'wpil_ignore_keywords_posts',
+                'wpil_ignore_keywords_posts_by_category',
+                'wpil_ignore_categories',
+                'wpil_domains_marked_as_internal',
+                'wpil_links_to_ignore',
+                'wpil_broken_links_to_ignore',
+                'wpil_ignore_elements_by_class',
+                'wpil_ignore_shortcodes_by_name',
+                'wpil_ignore_linking_roles',
+                'wpil_ignore_pages_completely',
+                'wpil_suggest_to_outbound_posts',
+                'wpil_ignore_acf_fields',
+                'wpil_ignore_click_links',
+                'wpil_sponsored_domains',
+                'wpil_nofollow_domains',
+                'wpil_dofollow_domains',
+                'wpil_custom_fields_to_process',
+                'wpil_acf_post_reference_fields',
+                'wpil_process_these_acf_fields',
+                'wpil_applied_link_attributes',
+                'wpil_redirected_post_ids',
+                'wpil_redirected_post_urls',
+                'wpil_related_post_settings',
+                'wpil_ai_suggestion_post_process_cron_ids'
+            );
+
+            foreach($setting_caches as $cache){
+                delete_transient($cache);
+            }
+
+            // set the tab that was last open
+            if(isset($_POST['wpil_setting_selected_tab']) && !empty($_POST['wpil_setting_selected_tab'])){
+                $setting_update_msg .= '&tab=' . sanitize_text_field($_POST['wpil_setting_selected_tab']);
+            }else{
+                $setting_update_msg .= '&tab=general-settings';
+            }
 
             // flush the cache to make sure nothing's hanging
             wp_cache_flush();
@@ -768,27 +2854,72 @@ class Wpil_Settings
         return get_option('wpil_skip_sentences', 3);
     }
 
+    public static function get_generate_quick_links(){
+        return false;
+        return !empty(get_option('wpil_generate_quick_links', 1));
+    }
+
     /**
      * Gets the max number of suggestions that will be shown at once in the suggestion panel.
      * @return int
      **/
     public static function get_max_suggestion_count(){
-        return (int) get_option('wpil_max_suggestion_count', 0);
+        return (int) get_option('wpil_max_suggestion_count', 5);
+    }
+
+    /**
+     * @return string
+     */
+    public static function detect_multilingual_plugin()
+    {
+        global $wpdb;
+
+        // Check Polylang
+        if (
+            function_exists('pll_current_language') ||
+            defined('POLYLANG_VERSION')
+        ) {
+            return 'polylang';
+        }
+
+        // Check WPML
+        if (
+            function_exists('icl_object_id') ||
+            class_exists('SitePress') ||
+            defined('ICL_SITEPRESS_VERSION')
+        ) {
+            $table_name = $wpdb->prefix . 'icl_languages';
+            $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table_name));
+
+            if ($table_exists === $table_name) {
+                $active_languages = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table_name} WHERE active = 1");
+
+                if ($active_languages > 1) {
+                    return 'wpml';
+                } else {
+                    // WPML is active but only one language, or not yet configured
+                }
+            } else {
+                // WPML active but not yet set up (no tables)
+            }
+        }
+
+        // No multilingual plugin detected
+        return 'none';
+    }
+
+    public static function polylang_enabled()
+    {
+        return self::detect_multilingual_plugin() === 'polylang';
     }
 
     /**
      * Checks to see if the site has a translation plugin active
-     * 
+     *
      * @return bool
      **/
     public static function translation_enabled(){
-        if(defined('POLYLANG_VERSION')){
-            return true;
-        }elseif(self::wpml_enabled()){
-            return true;
-        }
-
-        return false;
+        return self::polylang_enabled() || self::wpml_enabled();
     }
 
     /**
@@ -798,24 +2929,14 @@ class Wpil_Settings
      */
     public static function wpml_enabled()
     {
-        global $wpdb;
-
-        // if WPML is activated
-        if(function_exists('icl_object_id') || class_exists('SitePress')){
-            $languages_count = 1;
-            $table = $wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}icl_languages'");
-            if ($table == $wpdb->prefix . 'icl_languages') {
-                $languages_count = $wpdb->get_var("SELECT count(*) FROM {$wpdb->prefix}icl_languages WHERE active = 1");
-            } else {
-                $languages_count = $wpdb->get_var("SELECT count(*) FROM {$wpdb->term_taxonomy} WHERE taxonomy = 'language'");
-            }
-
-            if (!empty($languages_count) && $languages_count > 1) {
-                return true;
-            }
+        if(null !== self::$wpml_enabled){
+            return self::$wpml_enabled;
         }
 
-        return false;
+        // false until proven otherwise
+        self::$wpml_enabled = (self::detect_multilingual_plugin() === 'wpml');
+
+        return self::$wpml_enabled;
     }
 
     /**
@@ -902,6 +3023,156 @@ class Wpil_Settings
     }
 
     /**
+     * Get ignored orphaned posts
+     * Used in the link report page
+     *
+     * @return array
+     */
+    public static function getIgnoreOrphanedPosts()
+    {
+        $posts = [];
+        $links = get_option('wpil_ignore_orphaned_posts');
+        $links = explode("\n", $links);
+        foreach ($links as $link) {
+            $link = trim($link);
+            if(empty($link)){
+                continue;
+            }
+
+            $post = Wpil_Post::getPostByLink($link);
+            if (!empty($post)) {
+                $posts[] = $post->type . '_' . $post->id;
+            }
+        }
+
+        $ignored_categories = explode("\n", get_option('wpil_ignore_orphaned_posts_by_category', ''));
+        if(!empty($ignored_categories)){
+            foreach($ignored_categories as $cat_link){
+                $category = Wpil_Post::getPostByLink(trim($cat_link));
+                if (!empty($category)) {
+                    $found = Wpil_Post::getCategoryPosts($category->id);
+                    foreach($found as $id){
+                        $posts[] = 'post_' . $id;
+                    }
+                }
+            }
+        }
+
+        $completely_ignored = self::get_completely_ignored_pages();
+        if(!empty($completely_ignored)){
+            $posts = array_merge($posts, $completely_ignored);
+        }
+
+        // if we have posts
+        if(!empty($posts)){
+            // remove any duplicate entries
+            $posts = array_values(array_flip(array_flip($posts)));
+        }
+
+        return $posts;
+    }
+
+    /**
+     * Gets the ids of all the posts and categories that have been ignored from the suggestion process.
+     * So it counts BOTH the posts that have been ignored directly, and the ones that have been ignored by category.
+     * Also loops in the pages that have been completely ignored.
+     **/
+    public static function getAllIgnoredPosts(){
+        $posts = array();
+
+        $ignored_posts = self::getIgnorePosts();
+        if(!empty($ignored_posts)){
+            $posts = array_merge($posts, $ignored_posts);
+        }
+
+        $ignored_posts = self::getIgnoreCategoriesPosts();
+        if(!empty($ignored_posts)){
+            foreach($ignored_posts as $id){
+                $posts[] = 'post_' . $id;
+            }
+        }
+
+        $completely_ignored = self::get_completely_ignored_pages();
+        if(!empty($completely_ignored)){
+            $posts = array_merge($posts, $completely_ignored);
+        }
+
+        if(!empty($posts)){
+            $posts = array_values(array_flip(array_flip($posts)));
+        }
+
+        return $posts;
+    }
+
+    /**
+     * Get if the ignored posts aren't supposed to be shown or referenced on the Report pages
+     * @return bool
+     **/
+    public static function hideIgnoredPosts(){
+        // check if the hide setting has been set from the Settings page
+        if(!empty(get_option('wpil_dont_show_ignored_posts', false))){
+            return true;
+        }
+
+        // get if the specific user want's to hide the posts
+        $options = get_user_meta(get_current_user_id(), 'report_options', true);
+        $hide_ignored = (isset($options['hide_ignore'])) ? ( ($options['hide_ignore'] == 'off') ? false : true) : false;
+
+        return $hide_ignored;
+    }
+
+    /**
+     * Gets all available cats and tags for the current post types
+     **/
+    public static function get_available_related_post_terms(){
+        $terms = get_transient('wpil_available_related_post_terms');
+
+        if($terms === '' || $terms === false){
+            $post_types = self::get_related_posts_active_post_types();
+
+            if(!empty($post_types)){
+                $taxes = get_object_taxonomies($post_types);
+                if(!empty($taxes)){
+
+                }
+            }
+        }
+
+        return $terms;
+    }
+
+    /**
+     * Get ignore posts (posts & terms)
+     * Pulls posts from cache if available to save processing time.
+     *
+     * @return array
+     */
+    public static function getIgnoreSitemapPosts()
+    {
+        $posts = get_transient('wpil_ignore_sitemap_posts');
+        if(empty($posts)){
+            $posts = [];
+            $links = get_option('wpil_ignore_sitemap_posts');
+            $links = explode("\n", $links);
+            foreach ($links as $link) {
+                $link = trim($link);
+                if(empty($link)){
+                    continue;
+                }
+
+                $post = Wpil_Post::getPostByLink($link);
+                if (!empty($post)) {
+                    $posts[] = $post->type . '_' . $post->id;
+                }
+            }
+
+            set_transient('wpil_ignore_sitemap_posts', $posts, 15 * MINUTE_IN_SECONDS);
+        }
+
+        return $posts;
+    }
+
+    /**
      * Gets an array of post ids to affirmatively make outbound links to.
      *
      * @return array
@@ -913,15 +3184,74 @@ class Wpil_Settings
             $posts = [];
             $links = get_option('wpil_suggest_to_outbound_posts', '');
             $links = explode("\n", $links);
+
+            // check if there are any wildcarded links
+            $wildcards = array('start' => array(), 'both' => array(), 'end' => array());
+            $has_wildcards = false;
+            foreach($links as $link){
+                if(false !== strpos($link, '*')){
+                    $start = (0 === strpos($link, '*')) ? true: false;
+                    $end = (Wpil_Word::mb_strrpos($link, '*') === (mb_strlen($link) - 1)) ? true: false;
+                    $cleaned = trim($link, '*/');
+
+                    if($start && $end){
+                        $wildcards['both'][] = $cleaned;
+                        $has_wildcards = true;
+                    }elseif($start){
+                        $wildcards['start'][] = $cleaned;
+                        $has_wildcards = true;
+                    }elseif($end){
+                        $wildcards['end'][] = $cleaned;
+                        $has_wildcards = true;
+                    }
+                }
+            }
+
+            if($has_wildcards){
+                $post_urls = Wpil_Toolbox::get_site_page_urls(false);
+                foreach($post_urls as $pid => $url){
+                    if(!empty($wildcards['start'])){
+                        foreach($wildcards['start'] as $card){
+                            // if we're wild matching for the start of the URL
+                            $normalized_url = trim($url, '/');
+                            $pos = Wpil_Word::mb_strpos($normalized_url, $card);
+                            if((false !== $pos) && mb_strlen($normalized_url) === ($pos + mb_strlen($card))){
+                                $posts[$pid] = true;
+                            }
+                        }
+                    }
+
+                    if(!empty($wildcards['both'])){
+                        foreach($wildcards['both'] as $card){
+                            // if the match shows up somewhere inside the URL
+                            if(false !== strpos($url, $card)){
+                                $posts[$pid] = true;
+                            }
+                        }
+                    }
+
+                    if(!empty($wildcards['end'])){
+                        foreach($wildcards['end'] as $card){
+                            // if the match shows up somewhere inside the URL
+                            if(0 === strpos($url, $card)){
+                                $posts[$pid] = true;
+                            }
+                        }
+                    }
+                }
+            }
+
             foreach ($links as $link) {
                 $post = Wpil_Post::getPostByLink($link);
                 if (!empty($post)) {
-                    $posts[] = $post->type . '_' . $post->id;
+                    $posts[$post->get_pid()] = true;
                 }
             }
 
             if(empty($posts)){
                 $posts = 'no-posts';
+            }else{
+                $posts = array_keys($posts);
             }
 
             set_transient('wpil_suggest_to_outbound_posts', $posts, 15 * MINUTE_IN_SECONDS);
@@ -956,6 +3286,12 @@ class Wpil_Settings
         }
     }
 
+    //Check if need to show ALL links
+    public static function showAllLinks()
+    {
+        return !empty(get_option('wpil_show_all_links'));
+    }
+
     /**
      * Gets if the user wants to count links from related post plugins in the Links Report.
      * Returns false if the user has opted to show all links because that includes related post links already.
@@ -963,6 +3299,14 @@ class Wpil_Settings
     public static function get_related_post_links()
     {
         return !empty(get_option('wpil_count_related_post_links', false));
+    }
+
+    /**
+     * Gets if the user wants to ignore links from latest post blocks/widgets in the Links Report.
+     **/
+    public static function ignore_latest_post_links()
+    {
+        return !empty(get_option('wpil_ignore_latest_posts', false));
     }
 
     /**
@@ -974,6 +3318,422 @@ class Wpil_Settings
     }
 
     /**
+     * Gets if the user wants to show comment links in the Links Report.
+     * Returns false if the user has opted to show all links because that includes comments already.
+     **/
+    public static function getCommentLinks()
+    {
+        return (!empty(get_option('wpil_show_comment_links')) && !self::showAllLinks());
+    }
+
+    /**
+     * Gets the current content formatting level when pulling links from content
+     **/
+    public static function getContentFormattingLevel()
+    {
+        // if the user has programattically disabled formatting, return zero
+        if(apply_filters('wpil_disable_content_link_formatting', false)){
+            return 0;
+        }
+
+        return (int) get_option('wpil_content_formatting_level', 2);
+    }
+
+    /**
+     * Gets if the user wants to override the global $post varible during link scans with a new one that matches the content currently being scanned.
+     * Mostly it's a compatibility setting for shortcodes that rely on the global $post variable to determine what to display
+     **/
+    public static function overrideGlobalPost()
+    {
+        return !empty(get_option('wpil_override_global_post_during_scan', false));
+    }
+
+    /**
+     * Gets if the user wants to optimize the link scan for speed at the cost of error handling
+     **/
+    public static function optimize_link_scan_for_speed()
+    {
+        return !empty(get_option('wpil_optimize_link_scan_for_speed', false));
+    }
+
+    /**
+     * Gets if the user wants to use the link data stored in the link table instead of the post meta
+     **/
+    public static function use_link_table_for_data()
+    {
+        return !empty(get_option('wpil_use_link_data_table', true));
+    }
+
+    /**
+     * Gets a list of HTML tags that the user can choose to ignore from linking
+     */
+    public static function getPossibleIgnoreLinkingTags(){
+        return array('p', 'span', 'li', 'div', 'ul', 'ol', 'blockquote', 'td', 'th', 'strong', 'i', 'code');
+    }
+
+    /**
+     * 
+     */
+    public static function getIgnoreLinkingTags(){
+        $tags = get_option('wpil_ignore_tags_from_linking', array());
+        $tag_list = self::getPossibleIgnoreLinkingTags();
+        $return_tags = array();
+
+        if(!empty($tags) && is_array($tags)){
+            foreach($tags as $tag){
+                // if the tag is in the list of preapproved tags
+                if(in_array($tag, $tag_list, true)){
+                    // add it to the return list
+                    $return_tags[] = $tag;
+                }
+            }
+        }
+
+        return $return_tags;
+    }
+
+    /**
+     * Gets a list of Elementor modules that we could ignore if the user wants to
+     */
+    public static function getPossibleIgnoreElementorModules(){
+        return Wpil_Editor_Elementor::getSupportedModules();
+    }
+
+    /**
+     * Gets the list of Elementor modules that the user does want to ignore
+     */
+    public static function getIgnoreLinkingElementorModules(){
+        $modules = get_option('wpil_ignore_elementor_from_linking', array());
+        if(!empty($modules)){
+            foreach($modules as $key => $module){
+                $modules[$key] = trim($module);
+            }
+        }
+        return $modules;
+    }
+
+    /**
+     * Gets if the user has connected Link Whisper to the AI API
+     **/
+    public static function get_linkwhisper_ai_active(){
+        return !empty(get_option('wpil_ai_access_authorized', '0'));
+    }
+
+    /** 
+     * Gets the access token needed to make ai requests
+     **/
+    public static function get_linkwhisper_ai_token(){
+        $token = get_option('wpil_ai_access_token', '');
+        if(empty($token)){
+            return '';
+        }
+
+        $token = Wpil_Toolbox::decrypt($token);
+
+        if(0 !== strpos(trim($token), 'ai-')){
+            update_option('wpil_ai_token_decoding_error', '1');
+        }else{
+            update_option('wpil_ai_token_decoding_error', '0');
+        }
+
+        return (!empty($token)) ? trim($token): '';
+    }
+
+    /** 
+     * Gets the access token needed to make ai requests
+     **/
+    public static function get_linkwhisper_ai_user_id(){
+        return get_option('wpil_ai_access_user_id', '');
+    }
+
+    /**
+     * Delets the ai api tokens so that we can disconnect this site
+     **/
+    public static function disconnect_linkwhisper_ai(){
+        delete_option('wpil_ai_access_token');
+        delete_option('wpil_ai_access_user_id');
+        delete_option('wpil_ai_access_authorized');
+    }
+
+    /**
+     * Disconnects from the Google app on ajax call.
+     **/
+    public static function ajax_disconnect_ai_subscription(){
+        if(isset($_POST['nonce']) && wp_verify_nonce($_POST['nonce'], 'disconnect-ai-subscription')){
+            self::disconnect_linkwhisper_ai();
+        }
+    }
+
+    /** 
+     * Gets the OpenAI API key that the user entered in the Settings.
+     * Has optional obfuscation that hides all but the last four digites of the key
+     **/
+    public static function getOpenAIKey($obfuscate = false){
+        $key = get_option('wpil_open_ai_api_key', '');
+        if(empty($key) || !empty(self::get_linkwhisper_ai_active())){
+            return '';
+        }
+
+        $key = Wpil_Toolbox::decrypt($key);
+
+        if(0 !== strpos(trim($key), 'sk-')){
+            update_option('wpil_open_ai_key_decoding_error', '1');
+        }else{
+            update_option('wpil_open_ai_key_decoding_error', '0');
+        }
+
+        if($obfuscate){
+            $key = '**************************' . substr($key, -4);
+        }
+
+        return (!empty($key)) ? trim($key): '';
+    }
+
+    /** 
+     * Gets the OpenAI API key that the user entered in the Settings.
+     **/
+    public static function getChatGPTVersion($key = ''){
+        $defaults = array(
+            'suggestion-scoring' => 'gpt-4o-mini',
+            'post-summarizing' => 'gpt-4o',
+            'product-detecting' => 'gpt-4o-mini',
+            'keyword-detecting' => 'gpt-4o-mini',
+        );
+
+        $available_models = Wpil_AI::get_available_models();
+
+        $standard = array(
+            'create-post-embeddings' => 'text-embedding-3-large',
+            'assess-sentence-anchors' => (isset($available_models['gpt-4o-mini']) ? 'gpt-4o-mini': 'gpt-3.5-turbo')
+        );
+
+        $data = get_option('wpil_chat_gpt_api', $defaults);
+
+        $data = array_merge($data, $standard);
+
+        if(empty($key)){
+            return !empty($data) ? $data: $defaults;
+        }
+
+        if(isset($data[$key])){
+            return trim($data[$key]);
+        }
+
+        return 'gpt-4o-mini';
+    }
+
+    public static function get_ai_suggestion_score_active(){
+        return false;
+        return get_option('wpil_ai_suggestion_score_active', false);
+    }
+
+    /**
+     * Gets if the user has turned on the AI batch processing
+     **/
+    public static function get_ai_batch_processing_active(){
+        return !empty(get_option('wpil_enable_ai_batch_processing', false));
+    }
+
+    /**
+     * Gets the suggestion relatedness threshold
+     **/
+    public static function get_ai_suggestion_relatedness_threshold(){
+        return floatval(get_option('wpil_suggestion_relatedness_threshold', 0.4500));
+    }
+
+    /**
+     * Gets the post relatedness threshold
+     **/
+    public static function get_ai_sitemap_relatedness_threshold(){
+        return floatval(get_option('wpil_sitemap_embedding_relatedness_threshold', 0.8500));
+    }
+    
+    public static function get_available_ai_batch_processes(){
+        // return a list of the available batch processes, indexed to their process code
+        return array(
+            4 => 'create-post-embeddings',
+//            2 => 'post-summarizing', // todo: re-enable later
+            3 => 'product-detecting',
+            5 => 'keyword-detecting'
+        );
+    }
+
+    public static function get_selected_ai_batch_processes($return_process_names = false, $remove_embedding = false){
+        $processes = self::get_available_ai_batch_processes();
+        $selected_processes = get_option('wpil_selected_ai_batch_processes', $processes);
+        $available = array_intersect($selected_processes, array_flip($processes));
+
+        if($remove_embedding && in_array(4, $available)){
+            $key = array_search(4, $available);
+            unset($available[$key]);
+        }
+
+        return ($return_process_names) ? array_map(function($id){ return Wpil_AI::get_process_name_from_code($id); }, $available): $available;
+    }
+
+    /**
+     * Creates a list of the supported AI batch names for display
+     **/
+    public static function get_ai_batch_name_list(){
+        $names = array(
+            'post-summarizing'          => __('Post Summarization', 'wpil'),
+            'product-detecting'         => __('Product Detection', 'wpil'),
+            'create-post-embeddings'    => __('AI Relation Analysis', 'wpil'),
+            'keyword-detecting'         => __('Keyword Analysis', 'wpil'),
+        );
+
+        return $names;
+    }
+
+    /**
+     * Gets the max number of keywords that we're going to ask ChatGPT for
+     **/
+    public static function get_ai_keyword_count_max(){
+        $count = intval(get_option('wpil_ai_generated_keyword_max_count', 30));
+        return (!empty($count)) ? $count: 30;
+    }
+    
+    /**
+     * Sets the number of dimensions to use in embeddings
+     **/
+    public static function get_ai_embedding_dimensions(){
+        $dimensions = get_option('wpil_ai_embedding_dimension_count', 3072);
+    }
+
+    /**
+     * Gets the max post per batch limits for the AI processes.
+     * Handles both Live and Batch download limits
+     **/
+    public static function get_ai_batch_limits(){
+        $ai_service_active = self::get_linkwhisper_ai_active();
+        $defaults = array(
+            'live' => array(
+                'post-summarizing'          => 100,
+                'product-detecting'         => 100,
+                'create-post-embeddings'    => ($ai_service_active) ? 50: 500,
+                'keyword-detecting'         => 100
+            ),
+            'batch' => array(
+                'post-summarizing'          => 100,
+                'product-detecting'         => 100,
+                'create-post-embeddings'    => ($ai_service_active) ? 50: 500,
+                'keyword-detecting'         => 100,
+            )
+        );
+        
+        $limits = get_option('wpil_ai_batch_processing_limits', array());
+
+        if(isset($limits['live'])){
+            if($ai_service_active && $limits['live']['create-post-embeddings'] > 50){
+                $limits['live']['create-post-embeddings'] = 50;
+            }
+            $defaults['live'] = array_merge($defaults['live'], $limits['live']);
+        }
+
+        if(isset($limits['batch'])){
+            $defaults['batch'] = array_merge($defaults['batch'], $limits['batch']);
+        }
+
+        return $defaults;
+    }
+
+    /**
+     * Gets the processing limit for a specific AI process
+     **/
+    public static function get_ai_process_limit($process = '', $live = false){
+        $limits = self::get_ai_batch_limits();
+        $limit = 100;
+
+        if($live){
+            if(isset($limits['live'], $limits['live'][$process]) && !empty($limits['live'][$process])){
+                $limit = (int) $limits['live'][$process];
+            }
+        }else{
+            if(isset($limits['batch'], $limits['batch'][$process]) && !empty($limits['batch'][$process])){
+                $limit = (int) $limits['batch'][$process];
+            }
+        }
+
+        return $limit;
+    }
+
+    /**
+     * Gets if the user wants to use AI to power the suggestions
+     **/
+    public static function get_use_ai_suggestions(){
+        return (!empty(get_option('wpil_use_ai_suggestions', false)));
+    }
+
+    /**
+     * Gets if the user wants to use AI to power the suggestions
+     **/
+    public static function get_disable_ai_anchor_building(){
+        return (!empty(get_option('wpil_disable_ai_anchor_building', false)));
+    }
+    
+    /**
+     * Gets if the user wants to only see the top "AI" suggestions
+     **/
+    public static function get_show_top_ai_suggestions(){
+        return (!empty(get_option('wpil_restrict_to_top_ai_suggestions', true)));
+    }
+
+    public static function has_ai_enabled(){
+        return (!empty(self::getOpenAIKey()) || self::get_linkwhisper_ai_active());
+    }
+
+    /**
+     * Checks to make sure that it's possible to do AI Powered Suggestions
+     **/
+    public static function can_do_ai_powered_suggestions(){
+        // currently just checking to make sure taht there's at least 10% of posts processed
+        if((!empty(self::getOpenAIKey()) || self::get_linkwhisper_ai_active()) && Wpil_AI::get_batch_status_completion_percent('calculated-post-embeddings') > 10){
+            return true;
+        }
+
+        return false;
+    }
+
+    public static function ajax_set_ai_suggestions_use(){
+        Wpil_Base::verify_nonce('ai-suggestion-change-nonce');
+
+        if(!isset($_POST['status'])){
+            wp_send_json(array('status' => 'no status!'));
+        }
+
+        $status = (int) !empty($_POST['status']);
+
+        update_option('wpil_use_ai_suggestions', $status);
+        wp_send_json(array('status' => 'updated!'));
+    }
+
+    /**
+     * Gets if the user wants to update the Post Modified date when links are inserted.
+     * Returns false by default, and only true if the user has activated the setting.
+     **/
+    public static function updatePostModifiedDate()
+    {
+        return (!empty(get_option('wpil_update_post_edit_date', false)));
+    }
+
+    /**
+     * Gets if the user wants to prevent suggestions being made for posts marked as "noindex"
+     **/
+    public static function removeNoindexFromSuggestions()
+    {
+        return (!empty(get_option('wpil_remove_noindex_post_suggestions', false)));
+    }
+
+    /**
+     * Gets if the user wants to force all LW created links to be in HTTPS.
+     * Returns false by default, and only true if the user has activated the setting.
+     **/
+    public static function forceHTTPS()
+    {
+        return (!empty(get_option('wpil_force_https_links', false)));
+    }
+
+    /**
      * Gets if the user wants to use "Ugly" permalinks in the reports.
      * It turns out that calculating the "Pretty" permalinks in the reports can take a TON of time.
      * Using the ugly ones hardly takes any time at all
@@ -981,6 +3741,223 @@ class Wpil_Settings
     public static function use_ugly_permalinks()
     {
         return (!empty(get_option('wpil_use_ugly_permalinks', false)));
+    }
+
+    /**
+     * Gets if the user wants to make suggestion matches based on some of the words in the post title.
+     **/
+    public static function matchPartialTitles()
+    {
+        return (!empty(get_option('wpil_get_partial_titles', false)));
+    }
+
+    /**
+     * Checks to see if the user has saved auth credentials on the site and has gotten authed in the past
+     * @return bool
+     **/
+    public static function HasGSCCredentials(){
+        $credentials = get_option('wpil_search_console_data');
+        return (!empty($credentials) && isset($credentials['authorized']) && $credentials['authorized'] != false && isset($credentials['access_token']) && !empty($credentials['access_token']));
+    }
+
+    /**
+     * Gets the configuration data for the GSC integration.
+     * Was formerly in the GSC class, but instantiating the class would trigger a call to Google.
+     * If the site wasn't connected, this would be unnecessary and would result in a 401 error.
+     * @return array
+     **/
+    public static function getGSCConfiguration($return_wizard = false){
+        // get the auth method
+        $method = get_option('wpil_gsc_auth_method', 'standard');
+
+        $return_wizard = ($return_wizard) ? '?return_wizard=1': '';
+
+        switch($method){
+            case 'standard':
+                $credentials = self::get_credentials();
+
+                $state_args = array('rest' => get_rest_url(null, '/' . Wpil_Rest::REST_SLUG . '/' . Wpil_Rest::GSC_ROUTE . $return_wizard));
+
+                if(is_ssl() && current_user_can('activate_plugins')){
+                    $user = wp_get_current_user();
+                    if(!empty($user) && isset($user->data, $user->data->user_login)){
+                        $state_args['check'] = base64_encode($user->data->user_login . ':' . Wpil_Toolbox::create_application_password_for_user($user->ID, 'link-whisper-gsc'));
+                    }
+                }
+
+                $state = base64_encode(json_encode($state_args));
+
+                $config = [
+                    'application_name'  => 'Link Whisper',
+                    'redirect_uri'      => WPIL_STORE_URL . '/wp-json/link-whisper/auth',
+                    'scopes'            => [ 'https://www.googleapis.com/auth/webmasters.readonly' ],
+                    'access_type'       => 'offline',
+                    'state'             => $state,
+                    'prompt'            => 'consent',
+                ];
+
+                $config = array_merge($config, $credentials);
+
+            break;
+            case 'custom_auth':
+                $config = get_option('wpil_gsc_custom_config', array());
+                if(!empty($config)){
+                    $config['redirect_uri'] = 'urn:ietf:wg:oauth:2.0:oob';
+                    $config['scopes']       = array('https://www.googleapis.com/auth/webmasters.readonly');
+                }
+            break;
+            case 'legacy_api':
+                // todo fill out
+            break;
+        }
+
+        // todo handle empty config further down the line
+        return $config;
+    }
+
+    public static function get_credentials ()
+    {
+        $credentials = get_option('wpil_gsc_remote_credentials', array());
+        if(empty($credentials)){
+            return self::get_remote_gsc_credentials();
+        }else{
+            $credentials = Wpil_Toolbox::deep_decrypt($credentials);
+            
+            // if the credentials don't have a valid client_id (probs because the salt/key has changed)
+            if(!isset($credentials['client_id']) && !empty(Wpil_Toolbox::get_key()) && !empty(Wpil_Toolbox::get_salt())){
+                // try getting some new ones and return the results of the attempt
+                return self::get_remote_gsc_credentials();
+            }
+
+            return $credentials;
+        }
+        return [];
+    }
+
+    /**
+     * Gets the GSC credentials from the proxy server and stores them in an option if they're available.
+     **/
+    private static function get_remote_gsc_credentials(){
+        $response = wp_remote_get(WPIL_STORE_URL . '/wp-json/link-whisper/credentials', [
+            'body' => [
+                'name' => WPIL_PLUGIN_NAME
+            ]
+        ]);
+
+        if ( !is_wp_error($response) && !empty($response = json_decode($response['body'], true)) ) {
+            if ( isset($response['credentials']) ) {
+                update_option('wpil_gsc_remote_credentials', Wpil_Toolbox::deep_encrypt($response['credentials']));
+                return $response['credentials'];
+            }
+        }
+
+        // if there's no creds, return an array
+        return array();
+    }
+
+    /**
+     * Gets the authentication URL for the GSC connection.
+     * Was formerly in the GSC class, but instantiating the class would trigger a call to Google.
+     * If the site wasn't connected, this would be unnecessary and would result in a 401 error.
+     * @return string
+     **/
+    public static function getGSCAuthUrl($return_wizard = false){
+        $config = self::getGSCConfiguration($return_wizard);
+
+        $args = array(
+            [
+                'response_type'    => 'code',
+                'client_id'        => $config['client_id'],
+                'redirect_uri'     => $config['redirect_uri'],
+                'scope'            => implode(' ', $config['scopes']),
+                'state'            => $config['state'],
+                'access_type'      => $config['access_type'],
+                'prompt'           => $config['prompt'],
+            ]
+        );
+
+        $url = add_query_arg($args, 'https://accounts.google.com/o/oauth2/v2/auth');
+
+        return esc_url_raw($url);
+    }
+
+    /**
+     * Gets if the user wants to automatically select a number of GSC keywords as Target Keywords.
+     * @return int
+     **/
+    public static function get_if_autotag_gsc_keywords(){
+        return (int) get_option('wpil_autotag_gsc_keywords', 1);
+    }
+
+    /**
+     * Gets the basis that the user wants to autotag the keywords on.
+     * @return string
+     **/
+    public static function get_autotag_gsc_keyword_basis(){
+        return ('impressions' === get_option('wpil_autotag_gsc_keyword_basis', 'impressions')) ? 'impressions': 'clicks';
+    }
+
+    /**
+     * Gets the number of GSC keywords to automatically select as Target Keywords.
+     * Default is 10 keywords
+     * @return int
+     **/
+    public static function get_autotag_gsc_keyword_count(){
+        return (int) get_option('wpil_autotag_gsc_keyword_count', 10);
+    }
+
+    /**
+     * Gets the target keyword sources the user has selected from the settings.
+     * Automatically includes new keyword sources if the user hasn't saved them
+     **/
+    public static function getSelectedKeywordSources()
+    {
+        $kw_sources_known_at_save = get_option('wpil_available_target_keyword_sources', array());
+        $kw_sources = Wpil_TargetKeyword::get_available_keyword_sources();
+        $diffed_kw_sources = array_diff($kw_sources, $kw_sources_known_at_save);
+        $selected_sources = get_option('wpil_selected_target_keyword_sources', $kw_sources);
+        return array_merge($selected_sources, $diffed_kw_sources, array('custom'));
+    }
+
+    /**
+     * Gets the target keyword sources the user has selected from the settings.
+     * Automatically includes new keyword sources if the user hasn't saved them
+     **/
+    public static function get_selected_post_content_keyword_sources()
+    {
+        return get_option('wpil_selected_post_content_target_keyword_sources', Wpil_TargetKeyword::get_available_post_content_keyword_sources());
+    }
+
+    /**
+     * Gets if links should have any HTML tags in their anchor texts removed when they are deleted.
+     **/
+    public static function delete_link_inner_html(){
+        return !empty(get_option('wpil_delete_link_inner_html', false));
+    }
+
+    /**
+     * Gets if the Inbound Internal links pointing to a specific post should be deleted when that post is deleted
+     **/
+    public static function delete_inbound_internal_on_post_delete(){
+        return !empty(get_option('wpil_delete_links_to_post_on_delete', false));
+    }
+
+    /**
+     * Check if need to show full HTML in suggestions
+     *
+     * @return bool
+     */
+    public static function fullHTMLSuggestions()
+    {
+        return !empty(get_option('wpil_full_html_suggestions'));
+    }
+
+    /**
+     * Checks to see if the user has disabled post updating on follow-up actions.
+     * Things like the URL Changer's update_post call after the changing code
+     **/
+    public static function disable_followup_post_updating(){
+        return apply_filters('wpil_disable_url_changer_update', false);
     }
 
     /**
@@ -1138,34 +4115,56 @@ class Wpil_Settings
     }
 
     /**
-     * Gets the current content formatting level when pulling links from content
-     **/
-    public static function getContentFormattingLevel()
+     * Get the max number of posts to search for suggestions
+     *
+     * @return int
+     */
+    public static function get_max_suggestion_post_count(){
+        return (int) get_option('wpil_max_suggestion_post_count', 0);
+    }
+
+    /**
+     * Get if we're going to be using the anchor word limits for suggestions that contain target keywords
+     *
+     * @return int
+     */
+    public static function get_use_anchor_limit_tk_matches(){
+        return (int) get_option('wpil_force_keyword_exact_matches_word_limit', 1);
+    }
+
+    /**
+     * Get links that the user wants to ignore from the broken links report
+     *
+     * @return array
+     */
+    public static function get_broken_ignore_links()
     {
-        // if the user has programattically disabled formatting, return zero
-        if(apply_filters('wpil_disable_content_link_formatting', false)){
-            return 0;
+        $links = get_transient('wpil_broken_links_to_ignore');
+        if(empty($links)){
+
+            $links = get_option('wpil_broken_links_to_ignore', array());
+            if (!empty($links)) {
+                $links = explode("\n", $links);
+                foreach ($links as $key => $link) {
+                    if(empty(trim($link)) || empty(esc_url_raw($link)) && !Wpil_Link::isRelativeLink($link)){
+                        unset($links[$key]);
+                    }else{
+                        $links[$key] = str_replace('www.', '', trim($link));
+                    }
+                }
+            }
+            if(empty($links)){
+                $links = 'no-links-ignored';
+            }
+
+            set_transient('wpil_broken_links_to_ignore', $links, 60 * MINUTE_IN_SECONDS);
         }
 
-        return (int) get_option('wpil_content_formatting_level', 2);
-    }
+        if($links === 'no-links-ignored'){
+            return array();
+        }
 
-    /**
-     * Gets if the user wants to override the global $post varible during link scans with a new one that matches the content currently being scanned.
-     * Mostly it's a compatibility setting for shortcodes that rely on the global $post variable to determine what to display
-     **/
-    public static function overrideGlobalPost()
-    {
-        return !empty(get_option('wpil_override_global_post_during_scan', false));
-    }
-
-    /**
-     * Gets if the user wants to use the link data stored in the link table instead of the post meta
-     **/
-    public static function use_link_table_for_data()
-    {
-        return false;
-        return !empty(get_option('wpil_use_link_data_table', false));
+        return $links;
     }
 
     /**
@@ -1264,6 +4263,129 @@ class Wpil_Settings
 
         // return the list of assmebled shortcodes
         return $shortcodes;
+    }
+
+    /**
+     * Gets an array of post & term ids that the user wants to ignore.
+     **/
+    public static function get_completely_ignored_pages(){
+        $pages = get_transient('wpil_ignore_pages_completely');
+        if(empty($pages)){
+            $pages = array();
+
+            $page_links = get_option('wpil_ignore_pages_completely', array());
+            if(!empty($page_links)){
+                $page_links = explode("\n", $page_links);
+                foreach ($page_links as $link) {
+                    $post = Wpil_Post::getPostByLink(trim($link));
+                    if (!empty($post)) {
+                        $pages[] = $post->type . '_' . $post->id;
+                    }
+                }
+            }
+            if(empty($pages)){
+                $pages = 'no-pages-ignored';
+            }
+
+            set_transient('wpil_ignore_pages_completely', $pages, 60 * MINUTE_IN_SECONDS);
+        }
+
+        if($pages === 'no-pages-ignored'){
+            return array();
+        }
+
+        return $pages;
+    }
+
+    /**
+     * Get links that was marked as external
+     *
+     * @return array
+     */
+    public static function getMarkedAsExternalLinks()
+    {
+        $links = get_option('wpil_marked_as_external', '');
+
+        if (!empty($links)) {
+            $links = explode("\n", $links);
+            foreach ($links as $key => $link) {
+                $links[$key] = trim($link);
+            }
+
+            return $links;
+        }
+
+        return [];
+    }
+
+    /**
+     * Gets if the user wants to use the post slug instead of the title for suggestions
+     *
+     * @return array
+     */
+    public static function use_post_slug_for_suggestions()
+    {
+        return !empty(get_option('wpil_post_slug_for_suggestions', false));
+    }
+
+    /**
+     * Gets if the user wants to use the REST API to trade site interlinking data between posts
+     *
+     * @return array
+     */
+    public static function use_rest_api_for_site_interlinking()
+    {
+        return !empty(get_option('wpil_external_site_use_json_api', false));
+    }
+
+    /**
+     * Gets an array of ACF fields that the user wants to ignore from processing
+     **/
+    public static function getIgnoredACFFields(){
+        $field_data = get_transient('wpil_ignore_acf_fields');
+        if(empty($field_data)){
+            $field_data = get_option('wpil_ignore_acf_fields', array());
+
+            if(is_string($field_data)){
+                $field_data = array_map('trim', explode("\n", $field_data));
+            }
+
+            set_transient('wpil_ignore_acf_fields', $field_data, 60 * MINUTE_IN_SECONDS);
+        }
+
+        return $field_data;
+    }
+
+    /**
+     * Checcks to see if the user wants to avoid inserting links into ACF created "text" fields
+     **/
+    public static function get_ignore_acf_text_fields(){
+        return !empty(get_option('wpil_ignore_small_acf_text_fields', 0));
+    }
+
+    /**
+     * Gets an array of URLs and anchors that the user doesn't want tracked by the click tracking
+     * @return array
+     **/
+    public static function getIgnoredClickLinks(){
+        $click_data = get_transient('wpil_ignore_click_links');
+        if(empty($click_data)){
+            $click_data = get_option('wpil_ignore_click_links', array());
+
+            if(is_string($click_data)){
+                $click_data = array_map('trim', explode("\n", $click_data));
+            }elseif(empty($click_data)){
+                $click_data = 'no-links-ignored';
+            }
+
+            set_transient('wpil_ignore_click_links', $click_data, 60 * MINUTE_IN_SECONDS);
+        }
+
+        if($click_data === 'no-links-ignored'){
+            return array();
+        }
+
+        return $click_data;
     }
 
     /**
@@ -1571,6 +4693,69 @@ class Wpil_Settings
     }
 
     /**
+     * Obtains an array of ids from posts that we know have been hidden by redirects.
+     * Our standard for 'hidden' are that the original post is inaccessible by url due to being redirected to a different post.
+     * 
+     * @param bool $return_hidden_ids Should we just return the ids of posts that have been hidden?
+     * @return array
+     **/
+    public static function getPostsHiddenByRedirects($return_hidden_ids = false){
+        $posts = get_transient('wpil_redirected_hidden_posts');
+
+        if(!empty($posts) && $posts !== 'no-redirects'){
+            // refresh the transient
+            set_transient('wpil_redirected_hidden_posts', $posts, 15 * MINUTE_IN_SECONDS);
+            // and return the URLs
+            return ($return_hidden_ids)? array_keys($posts): $posts;
+        }elseif($posts === 'no-redirects'){
+            return array();
+        }
+
+        $urls = self::getRedirectionUrls();
+
+        if(empty($urls)){
+            set_transient('wpil_redirected_hidden_posts', 'no-redirects', 15 * MINUTE_IN_SECONDS);
+            return array();
+        }
+
+        $posts = array();
+        foreach($urls as $old_url => $new_url){
+            $old_post = Wpil_Post::getPostByLink($old_url);
+
+            // if we can't identify the original post
+            if(empty($old_post)){
+                // skip to the next URL since we can't confirm if the original post is hidden or not
+                continue;
+            }
+
+            // try getting the new post
+            $new_post = Wpil_Post::getPostByLink($new_url);
+            // if there's no post that we can find
+            if(empty($new_post)){
+                // skip to the next one
+                continue;
+            }
+
+            // if we've made it here, check if the ids are different between the posts
+            if($old_post->id !== $new_post->id){
+                // if it is different, we know that the post is hidden by a redirect
+                $posts[$old_post->id] = $new_post->id;
+            }
+        }
+
+        // if we've managed to find some hidden posts
+        if(!empty($posts)){
+            // save the fruits of our labours in the cache
+            set_transient('wpil_redirected_hidden_posts', $posts, 15 * MINUTE_IN_SECONDS);
+        }else{
+            // otherwise, set a flag so we know there's no posts to keep an eye out for
+            set_transient('wpil_redirected_hidden_posts', 'no-redirects', 15 * MINUTE_IN_SECONDS);
+        }
+
+        return ($return_hidden_ids)? array_keys($posts): $posts;;
+    }
+
+    /**
      * Makes the supplied link an absolute one.
      * If the link is already absolute, the link is returned unchanged
      * 
@@ -1678,5 +4863,155 @@ class Wpil_Settings
         }
 
         return $cleaned;
+    }
+
+    public static function get_ai_inbound_suggestion_ids(){
+        $ids = get_transient('wpil_ai_suggestion_post_process_cron_ids');
+        if(empty($ids) && $ids === false){
+            $ids = array();
+            $post_ids = Wpil_Report::get_all_post_ids();
+            if(!empty($post_ids)){
+                rsort($post_ids);
+                foreach($post_ids as $id){
+                    $pid = 'post_' . $id;
+                    $ids[$pid] = true;
+                }
+            }
+            $term_ids = Wpil_Report::get_all_term_ids();
+            if(!empty($term_ids)){
+                rsort($term_ids);
+                foreach($term_ids as $id){
+                    $pid = 'term_' . $id;
+                    $ids[$pid] = true;
+                }
+            }
+
+            // if we have posts
+            if(!empty($ids)){
+                // remove any ignored posts
+                $ignored_posts = self::getAllIgnoredPosts();
+
+                if(!empty($ignored_posts)){
+                    foreach($ignored_posts as $post_id){
+                        if(isset($ids[$post_id])){
+                            unset($ids[$post_id]);
+                        }
+                    }
+                }
+
+                // posts hidden by redirects
+                $hidden = self::getPostsHiddenByRedirects(true);
+
+                if(!empty($hidden)){
+                    foreach($hidden as $id){
+                        $post_id = 'post_' . $id;
+                        if(isset($ids[$post_id])){
+                            unset($ids[$post_id]);
+                        }
+                    }
+                }
+
+                // focus on any posts that we are supposed to process
+                // TODO: later
+                // todo: remove any ids that are already processed
+            }
+
+            set_transient('wpil_ai_suggestion_post_process_cron_ids', $ids, 60 * MINUTE_IN_SECONDS);
+        }
+
+        if(empty($ids) && is_array($ids)){
+            delete_transient('wpil_ai_suggestion_post_process_cron_ids');
+        }
+
+        return (!empty($ids)) ? array_keys($ids): array();
+    }
+
+    public static function update_ai_inbound_suggestion_ids($id = 0){
+        if(empty($id)){
+            return false;
+        }
+
+        $ids = get_transient('wpil_ai_suggestion_post_process_cron_ids');
+        if(!empty($ids) && isset($ids[$id])){
+            unset($ids[$id]);
+            set_transient('wpil_ai_suggestion_post_process_cron_ids', $ids, 60 * MINUTE_IN_SECONDS);
+        }
+    }
+
+    public static function disable_ai_suggestions_cron_task(){
+        // are AI powered suggestions enabled and has the user disabled the AI suggestions cron
+        return !empty(get_option('wpil_disable_ai_suggestions_cron', '0')) || !self::get_use_ai_suggestions();
+    }
+
+    public static function get_ai_max_processing_age(){
+        return get_option('wpil_ai_max_processing_age', 0);
+    }
+
+    public static function has_run_wizard(){
+        return !empty(get_option('wpil_has_run_installation_wizard', 0));
+    }
+
+    public static function set_run_wizard(){
+        update_option('wpil_has_run_installation_wizard', 1);
+    }
+
+    /**
+     * Checks to see if the email cron task is 
+     **/
+    public static function email_notifications_are_enabled(){
+        return !empty(get_option('wpil_email_notifications_enabled', 1));
+    }
+
+    public static function get_service_pages_to_ignore(){
+        global $wpdb;
+
+        $ignore_page_names = array(
+            'cart',
+            'checkout',
+            'account',
+            'sitemap',
+            'changelog',
+            'profile'
+        );
+
+        $ignore_page_query = "AND (`post_name` LIKE '%" . implode("%' OR `post_name` LIKE '%", $ignore_page_names) . "%')";
+        $pages = $wpdb->get_col("SELECT `ID` FROM {$wpdb->posts} WHERE `post_type` != 'post' {$ignore_page_query}");
+
+        // try getting any edd settings
+        $options = get_option('edd_settings');
+        // if we have some
+        if(!empty($options)){
+            // make sure that we can add them to the pages variable
+            if(empty($pages) || !is_array($pages)){
+                $pages = array();
+            }
+
+            // go over each option
+            foreach($options as $key => $value){
+                // if there are any relating to pages and there's an id stored
+                if(false !== strpos($key, 'page') && is_numeric($value)){
+                    // add it to the page list
+                    $pages[] = $value;
+                }
+            }
+
+            // if there are page ids
+            if(!empty($pages)){
+                // make sure we don't have duplicates
+                $pages = array_unique($pages);
+            }
+        }
+
+
+
+
+
+        return (!empty($pages)) ? $pages: [];
+        // TODO: get pages from ecommerce and profile management plugins and include them in the list
+    }
+
+    public static function get_money_pages(){
+        // we're going to want menu pages
+        // pages mentioned by seo po
     }
 }

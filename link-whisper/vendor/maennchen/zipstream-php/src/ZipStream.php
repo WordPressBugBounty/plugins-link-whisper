@@ -1,20 +1,18 @@
 <?php
 
-declare(strict_types=1);
-
-namespace ZipStream;
+declare (strict_types=1);
+namespace LWVendor\ZipStream;
 
 use Closure;
 use DateTimeImmutable;
 use DateTimeInterface;
-use GuzzleHttp\Psr7\StreamWrapper;
-use Psr\Http\Message\StreamInterface;
+use LWVendor\GuzzleHttp\Psr7\StreamWrapper;
+use LWVendor\Psr\Http\Message\StreamInterface;
 use RuntimeException;
-use ZipStream\Exception\FileNotFoundException;
-use ZipStream\Exception\FileNotReadableException;
-use ZipStream\Exception\OverflowException;
-use ZipStream\Exception\ResourceActionException;
-
+use LWVendor\ZipStream\Exception\FileNotFoundException;
+use LWVendor\ZipStream\Exception\FileNotReadableException;
+use LWVendor\ZipStream\Exception\OverflowException;
+use LWVendor\ZipStream\Exception\ResourceActionException;
 /**
  * Streamed, dynamically generated zip archives.
  *
@@ -93,28 +91,21 @@ class ZipStream
      * @internal
      */
     public const ZIP_VERSION_MADE_BY = 0x603;
-
-    private bool $ready = true;
-
+    private bool $ready = \true;
     private int $offset = 0;
-
     /**
      * @var string[]
      */
     private array $centralDirectoryRecords = [];
-
     /**
      * @var resource
      */
     private $outputStream;
-
     private readonly Closure $httpHeaderCallback;
-
     /**
      * @var File[]
      */
     private array $recordedSimulation = [];
-
     /**
      * Create a new ZipStream object.
      *
@@ -204,25 +195,11 @@ class ZipStream
      *
      * @return self
      */
-    public function __construct(
-        private OperationMode $operationMode = OperationMode::NORMAL,
-        private readonly string $comment = '',
-        $outputStream = null,
-        private readonly CompressionMethod $defaultCompressionMethod = CompressionMethod::DEFLATE,
-        private readonly int $defaultDeflateLevel = 6,
-        private readonly bool $enableZip64 = true,
-        private readonly bool $defaultEnableZeroHeader = true,
-        private bool $sendHttpHeaders = true,
-        ?Closure $httpHeaderCallback = null,
-        private readonly ?string $outputName = null,
-        private readonly string $contentDisposition = 'attachment',
-        private readonly string $contentType = 'application/x-zip',
-        private bool $flushOutput = false,
-    ) {
+    public function __construct(private OperationMode $operationMode = OperationMode::NORMAL, private readonly string $comment = '', $outputStream = null, private readonly CompressionMethod $defaultCompressionMethod = CompressionMethod::DEFLATE, private readonly int $defaultDeflateLevel = 6, private readonly bool $enableZip64 = \true, private readonly bool $defaultEnableZeroHeader = \true, private bool $sendHttpHeaders = \true, ?Closure $httpHeaderCallback = null, private readonly ?string $outputName = null, private readonly string $contentDisposition = 'attachment', private readonly string $contentType = 'application/x-zip', private bool $flushOutput = \false)
+    {
         $this->outputStream = self::normalizeStream($outputStream);
-        $this->httpHeaderCallback = $httpHeaderCallback ?? header(...);
+        $this->httpHeaderCallback = $httpHeaderCallback ?? \header(...);
     }
-
     /**
      * Add a file to the archive.
      *
@@ -250,30 +227,10 @@ class ZipStream
      *
      * contents of file
      */
-    public function addFile(
-        string $fileName,
-        string $data,
-        string $comment = '',
-        ?CompressionMethod $compressionMethod = null,
-        ?int $deflateLevel = null,
-        ?DateTimeInterface $lastModificationDateTime = null,
-        ?int $maxSize = null,
-        ?int $exactSize = null,
-        ?bool $enableZeroHeader = null,
-    ): void {
-        $this->addFileFromCallback(
-            fileName: $fileName,
-            callback: fn() => $data,
-            comment: $comment,
-            compressionMethod: $compressionMethod,
-            deflateLevel: $deflateLevel,
-            lastModificationDateTime: $lastModificationDateTime,
-            maxSize: $maxSize,
-            exactSize: $exactSize,
-            enableZeroHeader: $enableZeroHeader,
-        );
+    public function addFile(string $fileName, string $data, string $comment = '', ?CompressionMethod $compressionMethod = null, ?int $deflateLevel = null, ?DateTimeInterface $lastModificationDateTime = null, ?int $maxSize = null, ?int $exactSize = null, ?bool $enableZeroHeader = null) : void
+    {
+        $this->addFileFromCallback(fileName: $fileName, callback: fn() => $data, comment: $comment, compressionMethod: $compressionMethod, deflateLevel: $deflateLevel, lastModificationDateTime: $lastModificationDateTime, maxSize: $maxSize, exactSize: $exactSize, enableZeroHeader: $enableZeroHeader);
     }
-
     /**
      * Add a file at path to the archive.
      *
@@ -309,7 +266,6 @@ class ZipStream
          * name of file in archive (including directory path).
          */
         string $fileName,
-
         /**
          * path to file on disk (note: paths should be encoded using
          * UNIX-style forward slashes -- e.g '/path/to/some/file').
@@ -321,44 +277,29 @@ class ZipStream
         ?DateTimeInterface $lastModificationDateTime = null,
         ?int $maxSize = null,
         ?int $exactSize = null,
-        ?bool $enableZeroHeader = null,
-    ): void {
-        if (!is_readable($path)) {
-            if (!file_exists($path)) {
+        ?bool $enableZeroHeader = null
+    ) : void
+    {
+        if (!\is_readable($path)) {
+            if (!\file_exists($path)) {
                 throw new FileNotFoundException($path);
             }
             throw new FileNotReadableException($path);
         }
-
-        $fileTime = filemtime($path);
-        if ($fileTime !== false) {
+        $fileTime = \filemtime($path);
+        if ($fileTime !== \false) {
             $lastModificationDateTime ??= (new DateTimeImmutable())->setTimestamp($fileTime);
         }
-
-        $this->addFileFromCallback(
-            fileName: $fileName,
-            callback: function () use ($path) {
-
-                $stream =  fopen($path, 'rb');
-
-                if (!$stream) {
-                    // @codeCoverageIgnoreStart
-                    throw new ResourceActionException('fopen');
-                    // @codeCoverageIgnoreEnd
-                }
-
-                return $stream;
-            },
-            comment: $comment,
-            compressionMethod: $compressionMethod,
-            deflateLevel: $deflateLevel,
-            lastModificationDateTime: $lastModificationDateTime,
-            maxSize: $maxSize,
-            exactSize: $exactSize,
-            enableZeroHeader: $enableZeroHeader,
-        );
+        $this->addFileFromCallback(fileName: $fileName, callback: function () use($path) {
+            $stream = \fopen($path, 'rb');
+            if (!$stream) {
+                // @codeCoverageIgnoreStart
+                throw new ResourceActionException('fopen');
+                // @codeCoverageIgnoreEnd
+            }
+            return $stream;
+        }, comment: $comment, compressionMethod: $compressionMethod, deflateLevel: $deflateLevel, lastModificationDateTime: $lastModificationDateTime, maxSize: $maxSize, exactSize: $exactSize, enableZeroHeader: $enableZeroHeader);
     }
-
     /**
      * Add an open stream (resource) to the archive.
      *
@@ -382,30 +323,10 @@ class ZipStream
      *
      * @param resource $stream contents of file as a stream resource
      */
-    public function addFileFromStream(
-        string $fileName,
-        $stream,
-        string $comment = '',
-        ?CompressionMethod $compressionMethod = null,
-        ?int $deflateLevel = null,
-        ?DateTimeInterface $lastModificationDateTime = null,
-        ?int $maxSize = null,
-        ?int $exactSize = null,
-        ?bool $enableZeroHeader = null,
-    ): void {
-        $this->addFileFromCallback(
-            fileName: $fileName,
-            callback: fn() => $stream,
-            comment: $comment,
-            compressionMethod: $compressionMethod,
-            deflateLevel: $deflateLevel,
-            lastModificationDateTime: $lastModificationDateTime,
-            maxSize: $maxSize,
-            exactSize: $exactSize,
-            enableZeroHeader: $enableZeroHeader,
-        );
+    public function addFileFromStream(string $fileName, $stream, string $comment = '', ?CompressionMethod $compressionMethod = null, ?int $deflateLevel = null, ?DateTimeInterface $lastModificationDateTime = null, ?int $maxSize = null, ?int $exactSize = null, ?bool $enableZeroHeader = null) : void
+    {
+        $this->addFileFromCallback(fileName: $fileName, callback: fn() => $stream, comment: $comment, compressionMethod: $compressionMethod, deflateLevel: $deflateLevel, lastModificationDateTime: $lastModificationDateTime, maxSize: $maxSize, exactSize: $exactSize, enableZeroHeader: $enableZeroHeader);
     }
-
     /**
      * Add an open stream to the archive.
      *
@@ -461,30 +382,10 @@ class ZipStream
      *
      * See {@see __construct()}
      */
-    public function addFileFromPsr7Stream(
-        string $fileName,
-        StreamInterface $stream,
-        string $comment = '',
-        ?CompressionMethod $compressionMethod = null,
-        ?int $deflateLevel = null,
-        ?DateTimeInterface $lastModificationDateTime = null,
-        ?int $maxSize = null,
-        ?int $exactSize = null,
-        ?bool $enableZeroHeader = null,
-    ): void {
-        $this->addFileFromCallback(
-            fileName: $fileName,
-            callback: fn() => $stream,
-            comment: $comment,
-            compressionMethod: $compressionMethod,
-            deflateLevel: $deflateLevel,
-            lastModificationDateTime: $lastModificationDateTime,
-            maxSize: $maxSize,
-            exactSize: $exactSize,
-            enableZeroHeader: $enableZeroHeader,
-        );
+    public function addFileFromPsr7Stream(string $fileName, StreamInterface $stream, string $comment = '', ?CompressionMethod $compressionMethod = null, ?int $deflateLevel = null, ?DateTimeInterface $lastModificationDateTime = null, ?int $maxSize = null, ?int $exactSize = null, ?bool $enableZeroHeader = null) : void
+    {
+        $this->addFileFromCallback(fileName: $fileName, callback: fn() => $stream, comment: $comment, compressionMethod: $compressionMethod, deflateLevel: $deflateLevel, lastModificationDateTime: $lastModificationDateTime, maxSize: $maxSize, exactSize: $exactSize, enableZeroHeader: $enableZeroHeader);
     }
-
     /**
      * Add a file based on a callback.
      *
@@ -549,76 +450,43 @@ class ZipStream
      *
      * See {@see __construct()}
      */
-    public function addFileFromCallback(
-        string $fileName,
-        Closure $callback,
-        string $comment = '',
-        ?CompressionMethod $compressionMethod = null,
-        ?int $deflateLevel = null,
-        ?DateTimeInterface $lastModificationDateTime = null,
-        ?int $maxSize = null,
-        ?int $exactSize = null,
-        ?bool $enableZeroHeader = null,
-    ): void {
-        $file = new File(
-            dataCallback: function () use ($callback, $maxSize) {
-                $data = $callback();
-
-                if (is_resource($data)) {
-                    return $data;
-                }
-
-                if ($data instanceof StreamInterface) {
-                    return StreamWrapper::getResource($data);
-                }
-
-
-                $stream = fopen('php://memory', 'rw+');
-                if ($stream === false) {
-                    // @codeCoverageIgnoreStart
-                    throw new ResourceActionException('fopen');
-                    // @codeCoverageIgnoreEnd
-                }
-                if ($maxSize !== null && fwrite($stream, $data, $maxSize) === false) {
-                    // @codeCoverageIgnoreStart
-                    throw new ResourceActionException('fwrite', $stream);
-                    // @codeCoverageIgnoreEnd
-                } elseif (fwrite($stream, $data) === false) {
-                    // @codeCoverageIgnoreStart
-                    throw new ResourceActionException('fwrite', $stream);
-                    // @codeCoverageIgnoreEnd
-                }
-                if (rewind($stream) === false) {
-                    // @codeCoverageIgnoreStart
-                    throw new ResourceActionException('rewind', $stream);
-                    // @codeCoverageIgnoreEnd
-                }
-
-                return $stream;
-
-            },
-            send: $this->send(...),
-            recordSentBytes: $this->recordSentBytes(...),
-            operationMode: $this->operationMode,
-            fileName: $fileName,
-            startOffset: $this->offset,
-            compressionMethod: $compressionMethod ?? $this->defaultCompressionMethod,
-            comment: $comment,
-            deflateLevel: $deflateLevel ?? $this->defaultDeflateLevel,
-            lastModificationDateTime: $lastModificationDateTime ?? new DateTimeImmutable(),
-            maxSize: $maxSize,
-            exactSize: $exactSize,
-            enableZip64: $this->enableZip64,
-            enableZeroHeader: $enableZeroHeader ?? $this->defaultEnableZeroHeader,
-        );
-
+    public function addFileFromCallback(string $fileName, Closure $callback, string $comment = '', ?CompressionMethod $compressionMethod = null, ?int $deflateLevel = null, ?DateTimeInterface $lastModificationDateTime = null, ?int $maxSize = null, ?int $exactSize = null, ?bool $enableZeroHeader = null) : void
+    {
+        $file = new File(dataCallback: function () use($callback, $maxSize) {
+            $data = $callback();
+            if (\is_resource($data)) {
+                return $data;
+            }
+            if ($data instanceof StreamInterface) {
+                return StreamWrapper::getResource($data);
+            }
+            $stream = \fopen('php://memory', 'rw+');
+            if ($stream === \false) {
+                // @codeCoverageIgnoreStart
+                throw new ResourceActionException('fopen');
+                // @codeCoverageIgnoreEnd
+            }
+            if ($maxSize !== null && \fwrite($stream, $data, $maxSize) === \false) {
+                // @codeCoverageIgnoreStart
+                throw new ResourceActionException('fwrite', $stream);
+                // @codeCoverageIgnoreEnd
+            } elseif (\fwrite($stream, $data) === \false) {
+                // @codeCoverageIgnoreStart
+                throw new ResourceActionException('fwrite', $stream);
+                // @codeCoverageIgnoreEnd
+            }
+            if (\rewind($stream) === \false) {
+                // @codeCoverageIgnoreStart
+                throw new ResourceActionException('rewind', $stream);
+                // @codeCoverageIgnoreEnd
+            }
+            return $stream;
+        }, send: $this->send(...), recordSentBytes: $this->recordSentBytes(...), operationMode: $this->operationMode, fileName: $fileName, startOffset: $this->offset, compressionMethod: $compressionMethod ?? $this->defaultCompressionMethod, comment: $comment, deflateLevel: $deflateLevel ?? $this->defaultDeflateLevel, lastModificationDateTime: $lastModificationDateTime ?? new DateTimeImmutable(), maxSize: $maxSize, exactSize: $exactSize, enableZip64: $this->enableZip64, enableZeroHeader: $enableZeroHeader ?? $this->defaultEnableZeroHeader);
         if ($this->operationMode !== OperationMode::NORMAL) {
             $this->recordedSimulation[] = $file;
         }
-
         $this->centralDirectoryRecords[] = $file->process();
     }
-
     /**
      * Add a directory to the archive.
      *
@@ -633,28 +501,13 @@ class ZipStream
      * $zip->addDirectory(fileName: 'world/');
      * ```
      */
-    public function addDirectory(
-        string $fileName,
-        string $comment = '',
-        ?DateTimeInterface $lastModificationDateTime = null,
-    ): void {
-        if (!str_ends_with($fileName, '/')) {
+    public function addDirectory(string $fileName, string $comment = '', ?DateTimeInterface $lastModificationDateTime = null) : void
+    {
+        if (!\str_ends_with($fileName, '/')) {
             $fileName .= '/';
         }
-
-        $this->addFile(
-            fileName: $fileName,
-            data: '',
-            comment: $comment,
-            compressionMethod: CompressionMethod::STORE,
-            deflateLevel: null,
-            lastModificationDateTime: $lastModificationDateTime,
-            maxSize: 0,
-            exactSize: 0,
-            enableZeroHeader: false,
-        );
+        $this->addFile(fileName: $fileName, data: '', comment: $comment, compressionMethod: CompressionMethod::STORE, deflateLevel: null, lastModificationDateTime: $lastModificationDateTime, maxSize: 0, exactSize: 0, enableZeroHeader: \false);
     }
-
     /**
      * Executes a previously calculated simulation.
      *
@@ -675,19 +528,16 @@ class ZipStream
      * $zip->executeSimulation();
      * ```
      */
-    public function executeSimulation(): void
+    public function executeSimulation() : void
     {
         if ($this->operationMode !== OperationMode::NORMAL) {
             throw new RuntimeException('Zip simulation is not finished.');
         }
-
         foreach ($this->recordedSimulation as $file) {
             $this->centralDirectoryRecords[] = $file->cloneSimulationExecution()->process();
         }
-
         $this->finish();
     }
-
     /**
      * Write zip footer to stream.
      *
@@ -700,64 +550,31 @@ class ZipStream
      * $zip->finish();
      * ```
      */
-    public function finish(): int
+    public function finish() : int
     {
         $centralDirectoryStartOffsetOnDisk = $this->offset;
         $sizeOfCentralDirectory = 0;
-
         // add trailing cdr file records
         foreach ($this->centralDirectoryRecords as $centralDirectoryRecord) {
             $this->send($centralDirectoryRecord);
-            $sizeOfCentralDirectory += strlen($centralDirectoryRecord);
+            $sizeOfCentralDirectory += \strlen($centralDirectoryRecord);
         }
-
         // Add 64bit headers (if applicable)
-        if (count($this->centralDirectoryRecords) >= 0xFFFF ||
-            $centralDirectoryStartOffsetOnDisk > 0xFFFFFFFF ||
-            $sizeOfCentralDirectory > 0xFFFFFFFF) {
+        if (\count($this->centralDirectoryRecords) >= 0xffff || $centralDirectoryStartOffsetOnDisk > 0xffffffff || $sizeOfCentralDirectory > 0xffffffff) {
             if (!$this->enableZip64) {
                 throw new OverflowException();
             }
-
-            $this->send(Zip64\EndOfCentralDirectory::generate(
-                versionMadeBy: self::ZIP_VERSION_MADE_BY,
-                versionNeededToExtract: Version::ZIP64->value,
-                numberOfThisDisk: 0,
-                numberOfTheDiskWithCentralDirectoryStart: 0,
-                numberOfCentralDirectoryEntriesOnThisDisk: count($this->centralDirectoryRecords),
-                numberOfCentralDirectoryEntries: count($this->centralDirectoryRecords),
-                sizeOfCentralDirectory: $sizeOfCentralDirectory,
-                centralDirectoryStartOffsetOnDisk: $centralDirectoryStartOffsetOnDisk,
-                extensibleDataSector: '',
-            ));
-
-            $this->send(Zip64\EndOfCentralDirectoryLocator::generate(
-                numberOfTheDiskWithZip64CentralDirectoryStart: 0x00,
-                zip64centralDirectoryStartOffsetOnDisk: $centralDirectoryStartOffsetOnDisk + $sizeOfCentralDirectory,
-                totalNumberOfDisks: 1,
-            ));
+            $this->send(Zip64\EndOfCentralDirectory::generate(versionMadeBy: self::ZIP_VERSION_MADE_BY, versionNeededToExtract: Version::ZIP64->value, numberOfThisDisk: 0, numberOfTheDiskWithCentralDirectoryStart: 0, numberOfCentralDirectoryEntriesOnThisDisk: \count($this->centralDirectoryRecords), numberOfCentralDirectoryEntries: \count($this->centralDirectoryRecords), sizeOfCentralDirectory: $sizeOfCentralDirectory, centralDirectoryStartOffsetOnDisk: $centralDirectoryStartOffsetOnDisk, extensibleDataSector: ''));
+            $this->send(Zip64\EndOfCentralDirectoryLocator::generate(numberOfTheDiskWithZip64CentralDirectoryStart: 0x0, zip64centralDirectoryStartOffsetOnDisk: $centralDirectoryStartOffsetOnDisk + $sizeOfCentralDirectory, totalNumberOfDisks: 1));
         }
-
         // add trailing cdr eof record
-        $numberOfCentralDirectoryEntries = min(count($this->centralDirectoryRecords), 0xFFFF);
-        $this->send(EndOfCentralDirectory::generate(
-            numberOfThisDisk: 0x00,
-            numberOfTheDiskWithCentralDirectoryStart: 0x00,
-            numberOfCentralDirectoryEntriesOnThisDisk: $numberOfCentralDirectoryEntries,
-            numberOfCentralDirectoryEntries: $numberOfCentralDirectoryEntries,
-            sizeOfCentralDirectory: min($sizeOfCentralDirectory, 0xFFFFFFFF),
-            centralDirectoryStartOffsetOnDisk: min($centralDirectoryStartOffsetOnDisk, 0xFFFFFFFF),
-            zipFileComment: $this->comment,
-        ));
-
+        $numberOfCentralDirectoryEntries = \min(\count($this->centralDirectoryRecords), 0xffff);
+        $this->send(EndOfCentralDirectory::generate(numberOfThisDisk: 0x0, numberOfTheDiskWithCentralDirectoryStart: 0x0, numberOfCentralDirectoryEntriesOnThisDisk: $numberOfCentralDirectoryEntries, numberOfCentralDirectoryEntries: $numberOfCentralDirectoryEntries, sizeOfCentralDirectory: \min($sizeOfCentralDirectory, 0xffffffff), centralDirectoryStartOffsetOnDisk: \min($centralDirectoryStartOffsetOnDisk, 0xffffffff), zipFileComment: $this->comment));
         $size = $this->offset;
-
         // The End
         $this->clear();
-
         return $size;
     }
-
     /**
      * @param StreamInterface|resource|null $outputStream
      * @return resource
@@ -767,96 +584,80 @@ class ZipStream
         if ($outputStream instanceof StreamInterface) {
             return StreamWrapper::getResource($outputStream);
         }
-        if (is_resource($outputStream)) {
+        if (\is_resource($outputStream)) {
             return $outputStream;
         }
-        return fopen('php://output', 'wb');
+        $resource = \fopen('php://output', 'wb');
+        if ($resource === \false) {
+            throw new RuntimeException('fopen of php://output failed');
+        }
+        return $resource;
     }
-
     /**
      * Record sent bytes
      */
-    private function recordSentBytes(int $sentBytes): void
+    private function recordSentBytes(int $sentBytes) : void
     {
         $this->offset += $sentBytes;
     }
-
     /**
      * Send string, sending HTTP headers if necessary.
      * Flush output after write if configure option is set.
      */
-    private function send(string $data): void
+    private function send(string $data) : void
     {
         if (!$this->ready) {
             throw new RuntimeException('Archive is already finished');
         }
-
         if ($this->operationMode === OperationMode::NORMAL && $this->sendHttpHeaders) {
             $this->sendHttpHeaders();
-            $this->sendHttpHeaders = false;
+            $this->sendHttpHeaders = \false;
         }
-
-        $this->recordSentBytes(strlen($data));
-
+        $this->recordSentBytes(\strlen($data));
         if ($this->operationMode === OperationMode::NORMAL) {
-            if (fwrite($this->outputStream, $data) === false) {
+            if (\fwrite($this->outputStream, $data) === \false) {
                 throw new ResourceActionException('fwrite', $this->outputStream);
             }
-
             if ($this->flushOutput) {
                 // flush output buffer if it is on and flushable
-                $status = ob_get_status();
-                if (isset($status['flags']) && is_int($status['flags']) && ($status['flags'] & PHP_OUTPUT_HANDLER_FLUSHABLE)) {
-                    ob_flush();
+                $status = \ob_get_status();
+                if (isset($status['flags']) && \is_int($status['flags']) && $status['flags'] & \PHP_OUTPUT_HANDLER_FLUSHABLE) {
+                    \ob_flush();
                 }
-
                 // Flush system buffers after flushing userspace output buffer
-                flush();
+                \flush();
             }
         }
     }
-
     /**
-    * Send HTTP headers for this stream.
-    */
-    private function sendHttpHeaders(): void
+     * Send HTTP headers for this stream.
+     */
+    private function sendHttpHeaders() : void
     {
         // grab content disposition
         $disposition = $this->contentDisposition;
-
         if ($this->outputName !== null) {
             // Various different browsers dislike various characters here. Strip them all for safety.
-            $safeOutput = trim(str_replace(['"', "'", '\\', ';', "\n", "\r"], '', $this->outputName));
-
+            $safeOutput = \trim(\str_replace(['"', "'", '\\', ';', "\n", "\r"], '', $this->outputName));
             // Check if we need to UTF-8 encode the filename
-            $urlencoded = rawurlencode($safeOutput);
+            $urlencoded = \rawurlencode($safeOutput);
             $disposition .= "; filename*=UTF-8''{$urlencoded}";
         }
-
-        $headers = [
-            'Content-Type' => $this->contentType,
-            'Content-Disposition' => $disposition,
-            'Pragma' => 'public',
-            'Cache-Control' => 'public, must-revalidate',
-            'Content-Transfer-Encoding' => 'binary',
-        ];
-
+        $headers = ['Content-Type' => $this->contentType, 'Content-Disposition' => $disposition, 'Pragma' => 'public', 'Cache-Control' => 'public, must-revalidate', 'Content-Transfer-Encoding' => 'binary'];
         foreach ($headers as $key => $val) {
-            ($this->httpHeaderCallback)("$key: $val");
+            ($this->httpHeaderCallback)("{$key}: {$val}");
         }
     }
-
     /**
      * Clear all internal variables. Note that the stream object is not
      * usable after this.
      */
-    private function clear(): void
+    private function clear() : void
     {
         $this->centralDirectoryRecords = [];
         $this->offset = 0;
-
         if ($this->operationMode === OperationMode::NORMAL) {
-            $this->ready = false;
+            $this->ready = \false;
             $this->recordedSimulation = [];
         } else {
             $this->operationMode = OperationMode::NORMAL;

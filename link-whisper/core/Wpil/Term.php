@@ -41,6 +41,40 @@ class Wpil_Term
     }
 
     /**
+     * Show target keywords on term page
+     */
+    public static function showTargetKeywords()
+    {
+        if(empty($_GET['tag_ID']) ||empty($_GET['taxonomy'] || !in_array($_GET['taxonomy'], Wpil_Settings::getTermTypes()))){
+            return;
+        }
+
+        $term_id = (int)$_GET['tag_ID'];
+        $post_id = 0;
+        $user = wp_get_current_user();
+        $post = new Wpil_Model_Post($term_id, 'term');
+
+        // exit if the term has been ignored
+        $completely_ignored = Wpil_Settings::get_completely_ignored_pages();
+        if(!empty($completely_ignored) && in_array($post->type . '_' . $post->id, $completely_ignored, true)){
+            return;
+        }
+
+        $keywords = Wpil_TargetKeyword::get_keywords_by_post_ids($term_id, 'term');
+        $keyword_sources = Wpil_TargetKeyword::get_active_keyword_sources();
+        $is_metabox = true;
+        ?>
+        <div id="wpil_target-keywords" class="postbox ">
+            <h2 class="hndle no-drag"><span><?php esc_html_e('Link Whisper Target Keywords', 'wpil'); ?></span></h2>
+            <div class="inside"><?php
+                include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/target_keyword_list.php';
+            ?>
+            </div>
+        </div>
+        <?php
+    }
+
+    /**
      * Updates the term's linking stats after the link adding is completed elsewhere
      **/
     public static function updateTermStats($term_id, $tt_id = 0, $updated = false){
@@ -89,60 +123,172 @@ class Wpil_Term
     /**
      * Get category or tag by slug
      *
-     * @param $slug
-     * @param $url (Optional) The URL that we're trying to pull info from
-     * @return WP_Term
+     * @param string $slug The slug to search for
+     * @param string $url (Optional) The URL that we're trying to pull info from
+     * @return WP_Term|false The found term or false if not found
      */
     public static function getTermBySlug($slug, $url = '')
     {
-        global $wp_rewrite;
+        global $wpdb, $wp_rewrite;
 
-        if(empty($slug) || is_int($slug) || is_array($slug)){
+        // Basic validation
+        if (empty($slug) || is_int($slug) || is_array($slug)) {
             return false;
         }
 
-        $taxonomies = get_taxonomies();
-
-        if(empty($taxonomies)){
+        // Get all public taxonomies
+        $taxonomies = get_taxonomies(['public' => true]);
+        if (empty($taxonomies)) {
             return false;
         }
 
-        $taxonomies = array_values($taxonomies);
+        // First, try to get the term directly by slug with taxonomy context from URL
+        // If we have a URL, try to extract taxonomy context first
+        if (!empty($url)) {
+            $parsed_url = parse_url($url);
+            $path = !empty($parsed_url['path']) ? trim($parsed_url['path'], '/') : '';
 
-        $args = array(
-            'get'                    => 'all',
-            'slug'                   => $slug,
-            'taxonomy'               => $taxonomies,
-            'update_term_meta_cache' => false,
-            'orderby'                => 'none',
-            'suppress_filter'        => true,
-        );
+            if (!empty($path)) {
+                // Try to match taxonomy base from the URL
+                foreach ($taxonomies as $taxonomy) {
+                    $tax_obj = get_taxonomy($taxonomy);
+                    if (empty($tax_obj->rewrite['slug'])) {
+                        continue;
+                    }
 
-        $term = get_terms( $args );
+                    $tax_slug = $tax_obj->rewrite['slug'];
 
-        if(empty($term) || is_a($term, 'Wp_Error') || !is_array($term)){
-            return false;
-        }
-
-        // if we've found more than one term and we have the source link
-        if(count($term) > 1 && !empty($url)){
-            // try to see if we can nail down which one the link belongs to
-            foreach($term as $term_obj){
-                $perma_struct = $wp_rewrite->get_extra_permastruct($term_obj->taxonomy);
-                if(!empty($perma_struct)){
-                    // build a testing version of the archive path
-                    $sample_path = str_replace('%' . $term_obj->taxonomy . '%', $slug, $perma_struct);
-
-                    // if the url is part of the supplied link
-                    if(false !== strpos($url, $sample_path)){
-                        // assume that this term is the one that we're looking for
-                        $term = array($term_obj); // wrap in array for reset's benefit
+                    // Check if the URL contains the taxonomy slug followed by our term slug
+                    if (preg_match('#' . preg_quote($tax_slug, '#') . '/([^/]+)/?$#i', $path, $matches)) {
+                        $found_slug = $matches[1];
+                        if ($found_slug === $slug) {
+                            $term = get_term_by('slug', $slug, $taxonomy);
+                            if ($term && !is_wp_error($term)) {
+                                return $term;
+                            }
+                        }
                     }
                 }
             }
         }
 
+        // If no term found by taxonomy context, try direct lookup
+        $args = [
+            'get'                   => 'all',
+            'slug'                  => $slug,
+            'taxonomy'              => array_values($taxonomies),
+            'update_term_meta_cache'=> false,
+            'orderby'               => 'none',
+            'suppress_filter'       => true,
+            'number'                => 100,
+        ];
 
-        return reset($term);
+        $terms = get_terms($args);
+
+        // If no terms found, try direct database query
+        if (empty($terms) || is_wp_error($terms)) {
+            $terms = $wpdb->get_results($wpdb->prepare(
+                "SELECT t.*, tt.* 
+                FROM $wpdb->terms AS t 
+                INNER JOIN $wpdb->term_taxonomy AS tt ON t.term_id = tt.term_id 
+                WHERE t.slug = %s 
+                AND tt.taxonomy IN ('" . implode("','", array_map('esc_sql', array_values($taxonomies))) . "')
+                LIMIT 100",
+                $slug
+            ));
+
+            if (empty($terms)) {
+                return false;
+            }
+        }
+
+        // If only one term found, return it
+        if (count($terms) === 1) {
+            return is_object($terms[0]) ? $terms[0] : (object)$terms[0];
+        }
+
+        // If we have a URL, try to match by URL structure
+        if (!empty($url)) {
+            $parsed_url = parse_url($url);
+            $path = !empty($parsed_url['path']) ? trim($parsed_url['path'], '/') : '';
+
+            if (!empty($path)) {
+                // Try to find exact match first
+                foreach ($terms as $term) {
+                    $term = is_object($term) ? $term : (object)$term;
+                    $term_link = get_term_link($term);
+
+                    if (is_wp_error($term_link)) {
+                        continue;
+                    }
+
+                    $term_path = trim(parse_url($term_link, PHP_URL_PATH), '/');
+                    if ($term_path === $path) {
+                        return $term;
+                    }
+                }
+
+                // Try to find best match by path components
+                $best_match = null;
+                $best_score = 0;
+                $path_parts = array_filter(explode('/', $path));
+
+                foreach ($terms as $term) {
+                    $term = is_object($term) ? $term : (object)$term;
+                    $term_link = get_term_link($term);
+
+                    if (is_wp_error($term_link)) {
+                        continue;
+                    }
+
+                    $term_path = trim(parse_url($term_link, PHP_URL_PATH), '/');
+                    $term_parts = array_filter(explode('/', $term_path));
+
+                    // Calculate how many path components match
+                    $matching_parts = 0;
+                    $max_parts = min(count($path_parts), count($term_parts));
+
+                    for ($i = 0; $i < $max_parts; $i++) {
+                        if ($path_parts[$i] === $term_parts[$i]) {
+                            $matching_parts++;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Calculate a score based on matching path components
+                    $score = ($matching_parts / count($path_parts)) * 100;
+
+                    if ($score > $best_score) {
+                        $best_score = $score;
+                        $best_match = $term;
+                    }
+                }
+
+                if ($best_score > 50) { // Only return if we have a good match
+                    return $best_match;
+                }
+            }
+        }
+
+        // If we have multiple terms but no URL, try to find the most likely one
+        $preferred_taxonomies = ['category', 'post_tag', 'product_cat', 'product_tag'];
+        foreach ($preferred_taxonomies as $tax) {
+            foreach ($terms as $term) {
+                $term = is_object($term) ? $term : (object)$term;
+                if ($term->taxonomy === $tax) {
+                    return $term;
+                }
+            }
+        }
+
+        // If all else fails, return the first term with the most posts
+        usort($terms, function($a, $b) {
+            $a_count = is_object($a) ? $a->count : 0;
+            $b_count = is_object($b) ? $b->count : 0;
+            return $b_count - $a_count;
+        });
+
+        return is_object($terms[0]) ? $terms[0] : (object)$terms[0];
     }
 }

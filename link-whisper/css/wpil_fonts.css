@@ -27,8 +27,22 @@
     font-style: italic;
 }
 
+@font-face {
+    font-family: 'Funnel Sans';
+    src: url('./fonts/Funnel_Sans/FunnelSans-VariableFont_wght.ttf') format('truetype');
+    font-weight: 100 800;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Funnel Sans';
+    src: url('./fonts/Funnel_Sans/FunnelSans-Italic-VariableFont_wght.ttf') format('truetype');
+    font-weight: 100 800;
+    font-style: italic;
+}
+
 .wpil_styles *,
 .wpil_licensing_wrap *,
 .swal-overlay * {
-	font-family: 'Barlow', sans-serif;
+	font-family: 'Funnel Sans', sans-serif;
 }

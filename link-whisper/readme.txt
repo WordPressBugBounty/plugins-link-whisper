@@ -2,8 +2,8 @@ Link Whisper Free
 Contributors: linkwhspr
 Tags: links, SEO, internal linking, link building, orphan content
 Requires at least: 4.6
-Tested up to: 6.8
-Stable Tag: 0.8.1
+Tested up to: 6.8.2
+Stable Tag: 0.8.5
 Requires PHP: 5.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -158,6 +158,24 @@ We are confident that you’ll be happy with Link Whisper Premium. However, if y
 15. [Premium] The URL Changer allows you to update old links to point to new URLs.
 
 == Changelog ==
+= 0.8.5 =
+* [ADJUSTMENT] Version bump to fix misformatted.
+
+= 0.8.4 =
+* [ADJUSTMENT] Adjusting the content measuring tools to reduce download size.
+
+= 0.8.3 =
+* [ADJUSTMENT] Fixing bug in ACF field searching.
+
+= 0.8.2 =
+* [MAJOR IMPROVEMENT] Adding Broken Link Detection!
+* [MAJOR IMPROVEMENT] Adding Click Tracking!
+* [MAJOR IMPROVEMENT] Reworking the Dashboard interfaces and creating link health report panel!
+* [MAJOR IMPROVEMENT] Adding Domain report to show all links by domain!
+* [MAJOR IMPROVEMENT] Adding Target Keyword features to improve the suggestion quality!
+* [MAJOR IMPROVEMENT] Adding Visual Sitemaps to graphically represent your site's linking network!
+* [MAJOR IMPROVEMENT] Adding optional AI enhancement for suggestion functionality and to generate an AI sitemap!
+
 = 0.8.1 =
 * [BUGFIX] Fixing script error that would keep suggestions from loading.
 

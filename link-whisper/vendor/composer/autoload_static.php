@@ -18,15 +18,12 @@ class ComposerStaticInit2927df4e171aa454da68f0902e93a25c
             'LWVendor\\ZipStream\\' => 19,
             'LWVendor\\ZendTech\\Polyfill\\MbEreg\\' => 34,
             'LWVendor\\Symfony\\Polyfill\\Mbstring\\' => 35,
-            'LWVendor\\Rahul900day\\Gpt3Encoder\\' => 33,
             'LWVendor\\Psr\\SimpleCache\\' => 25,
             'LWVendor\\Psr\\Http\\Message\\' => 26,
             'LWVendor\\Psr\\Http\\Client\\' => 25,
             'LWVendor\\PhpOffice\\PhpSpreadsheet\\' => 34,
-            'LWVendor\\Orhanerday\\OpenAi\\' => 27,
             'LWVendor\\Matrix\\' => 16,
             'LWVendor\\HTMLPurifier\\' => 22,
-            'LWVendor\\Danny50610\\BpeTokeniser\\' => 33,
             'LWVendor\\Complex\\' => 17,
             'LWVendor\\Bamarni\\Composer\\Bin\\' => 30,
         ),
@@ -45,10 +42,6 @@ class ComposerStaticInit2927df4e171aa454da68f0902e93a25c
         array (
             0 => __DIR__ . '/..' . '/symfony/polyfill-mbstring',
         ),
-        'LWVendor\\Rahul900day\\Gpt3Encoder\\' => 
-        array (
-            0 => __DIR__ . '/..' . '/rahul900day/gpt-3-encoder/src',
-        ),
         'LWVendor\\Psr\\SimpleCache\\' => 
         array (
             0 => __DIR__ . '/..' . '/psr/simple-cache/src',
@@ -66,10 +59,6 @@ class ComposerStaticInit2927df4e171aa454da68f0902e93a25c
         array (
             0 => __DIR__ . '/..' . '/phpoffice/phpspreadsheet/src/PhpSpreadsheet',
         ),
-        'LWVendor\\Orhanerday\\OpenAi\\' => 
-        array (
-            0 => __DIR__ . '/..' . '/orhanerday/open-ai/src',
-        ),
         'LWVendor\\Matrix\\' => 
         array (
             0 => __DIR__ . '/..' . '/markbaker/matrix/classes/src',
@@ -77,10 +66,6 @@ class ComposerStaticInit2927df4e171aa454da68f0902e93a25c
         'LWVendor\\HTMLPurifier\\' => 
         array (
             0 => __DIR__ . '/..' . '/ezyang/htmlpurifier/library/HTMLPurifier',
-        ),
-        'LWVendor\\Danny50610\\BpeTokeniser\\' => 
-        array (
-            0 => __DIR__ . '/..' . '/danny50610/bpe-tokeniser/src',
         ),
         'LWVendor\\Complex\\' => 
         array (
@@ -111,8 +96,6 @@ class ComposerStaticInit2927df4e171aa454da68f0902e93a25c
         'LWVendor\\Complex\\Exception' => __DIR__ . '/..' . '/markbaker/complex/classes/src/Exception.php',
         'LWVendor\\Complex\\Functions' => __DIR__ . '/..' . '/markbaker/complex/classes/src/Functions.php',
         'LWVendor\\Complex\\Operations' => __DIR__ . '/..' . '/markbaker/complex/classes/src/Operations.php',
-        'LWVendor\\Danny50610\\BpeTokeniser\\Encoding' => __DIR__ . '/..' . '/danny50610/bpe-tokeniser/src/Encoding.php',
-        'LWVendor\\Danny50610\\BpeTokeniser\\EncodingFactory' => __DIR__ . '/..' . '/danny50610/bpe-tokeniser/src/EncodingFactory.php',
         'LWVendor\\Matrix\\Builder' => __DIR__ . '/..' . '/markbaker/matrix/classes/src/Builder.php',
         'LWVendor\\Matrix\\Decomposition\\Decomposition' => __DIR__ . '/..' . '/markbaker/matrix/classes/src/Decomposition/Decomposition.php',
         'LWVendor\\Matrix\\Decomposition\\LU' => __DIR__ . '/..' . '/markbaker/matrix/classes/src/Decomposition/LU.php',
@@ -128,8 +111,6 @@ class ComposerStaticInit2927df4e171aa454da68f0902e93a25c
         'LWVendor\\Matrix\\Operators\\Multiplication' => __DIR__ . '/..' . '/markbaker/matrix/classes/src/Operators/Multiplication.php',
         'LWVendor\\Matrix\\Operators\\Operator' => __DIR__ . '/..' . '/markbaker/matrix/classes/src/Operators/Operator.php',
         'LWVendor\\Matrix\\Operators\\Subtraction' => __DIR__ . '/..' . '/markbaker/matrix/classes/src/Operators/Subtraction.php',
-        'LWVendor\\Orhanerday\\OpenAi\\OpenAi' => __DIR__ . '/..' . '/orhanerday/open-ai/src/OpenAi.php',
-        'LWVendor\\Orhanerday\\OpenAi\\Url' => __DIR__ . '/..' . '/orhanerday/open-ai/src/Url.php',
         'LWVendor\\PhpOffice\\PhpSpreadsheet\\Calculation\\ArrayEnabled' => __DIR__ . '/..' . '/phpoffice/phpspreadsheet/src/PhpSpreadsheet/Calculation/ArrayEnabled.php',
         'LWVendor\\PhpOffice\\PhpSpreadsheet\\Calculation\\BinaryComparison' => __DIR__ . '/..' . '/phpoffice/phpspreadsheet/src/PhpSpreadsheet/Calculation/BinaryComparison.php',
         'LWVendor\\PhpOffice\\PhpSpreadsheet\\Calculation\\Calculation' => __DIR__ . '/..' . '/phpoffice/phpspreadsheet/src/PhpSpreadsheet/Calculation/Calculation.php',
@@ -656,29 +637,34 @@ class ComposerStaticInit2927df4e171aa454da68f0902e93a25c
         'LWVendor\\Psr\\SimpleCache\\CacheException' => __DIR__ . '/..' . '/psr/simple-cache/src/CacheException.php',
         'LWVendor\\Psr\\SimpleCache\\CacheInterface' => __DIR__ . '/..' . '/psr/simple-cache/src/CacheInterface.php',
         'LWVendor\\Psr\\SimpleCache\\InvalidArgumentException' => __DIR__ . '/..' . '/psr/simple-cache/src/InvalidArgumentException.php',
-        'LWVendor\\Rahul900day\\Gpt3Encoder\\Bpe' => __DIR__ . '/..' . '/rahul900day/gpt-3-encoder/src/Bpe.php',
-        'LWVendor\\Rahul900day\\Gpt3Encoder\\Character' => __DIR__ . '/..' . '/rahul900day/gpt-3-encoder/src/Character.php',
-        'LWVendor\\Rahul900day\\Gpt3Encoder\\Encoder' => __DIR__ . '/..' . '/rahul900day/gpt-3-encoder/src/Encoder.php',
-        'LWVendor\\Rahul900day\\Gpt3Encoder\\Exceptions\\FileNotFoundException' => __DIR__ . '/..' . '/rahul900day/gpt-3-encoder/src/Exceptions/FileNotFoundException.php',
-        'LWVendor\\Rahul900day\\Gpt3Encoder\\Support\\File' => __DIR__ . '/..' . '/rahul900day/gpt-3-encoder/src/Support/File.php',
-        'LWVendor\\Rahul900day\\Gpt3Encoder\\TokenEncoder' => __DIR__ . '/..' . '/rahul900day/gpt-3-encoder/src/TokenEncoder.php',
         'LWVendor\\Symfony\\Polyfill\\Mbstring\\Mbstring' => __DIR__ . '/..' . '/symfony/polyfill-mbstring/Mbstring.php',
         'LWVendor\\ZendTech\\Polyfill\\MbEreg\\MbEreg' => __DIR__ . '/..' . '/zendtech/polyfill-mb-ereg/src/MbEreg.php',
         'LWVendor\\ZipStream\\CentralDirectoryFileHeader' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/CentralDirectoryFileHeader.php',
+        'LWVendor\\ZipStream\\CompressionMethod' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/CompressionMethod.php',
         'LWVendor\\ZipStream\\DataDescriptor' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/DataDescriptor.php',
         'LWVendor\\ZipStream\\EndOfCentralDirectory' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/EndOfCentralDirectory.php',
         'LWVendor\\ZipStream\\Exception' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Exception.php',
+        'LWVendor\\ZipStream\\Exception\\DosTimeOverflowException' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Exception/DosTimeOverflowException.php',
+        'LWVendor\\ZipStream\\Exception\\FileNotFoundException' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Exception/FileNotFoundException.php',
+        'LWVendor\\ZipStream\\Exception\\FileNotReadableException' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Exception/FileNotReadableException.php',
+        'LWVendor\\ZipStream\\Exception\\FileSizeIncorrectException' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Exception/FileSizeIncorrectException.php',
         'LWVendor\\ZipStream\\Exception\\OverflowException' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Exception/OverflowException.php',
+        'LWVendor\\ZipStream\\Exception\\ResourceActionException' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Exception/ResourceActionException.php',
         'LWVendor\\ZipStream\\Exception\\SimulationFileUnknownException' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Exception/SimulationFileUnknownException.php',
         'LWVendor\\ZipStream\\Exception\\StreamNotReadableException' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Exception/StreamNotReadableException.php',
         'LWVendor\\ZipStream\\Exception\\StreamNotSeekableException' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Exception/StreamNotSeekableException.php',
+        'LWVendor\\ZipStream\\File' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/File.php',
         'LWVendor\\ZipStream\\GeneralPurposeBitFlag' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/GeneralPurposeBitFlag.php',
         'LWVendor\\ZipStream\\LocalFileHeader' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/LocalFileHeader.php',
+        'LWVendor\\ZipStream\\OperationMode' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/OperationMode.php',
+        'LWVendor\\ZipStream\\PackField' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/PackField.php',
         'LWVendor\\ZipStream\\Time' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Time.php',
+        'LWVendor\\ZipStream\\Version' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Version.php',
         'LWVendor\\ZipStream\\Zip64\\DataDescriptor' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Zip64/DataDescriptor.php',
         'LWVendor\\ZipStream\\Zip64\\EndOfCentralDirectory' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Zip64/EndOfCentralDirectory.php',
         'LWVendor\\ZipStream\\Zip64\\EndOfCentralDirectoryLocator' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Zip64/EndOfCentralDirectoryLocator.php',
         'LWVendor\\ZipStream\\Zip64\\ExtendedInformationExtraField' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Zip64/ExtendedInformationExtraField.php',
+        'LWVendor\\ZipStream\\ZipStream' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/ZipStream.php',
         'LWVendor\\ZipStream\\Zs\\ExtendedInformationExtraField' => __DIR__ . '/..' . '/maennchen/zipstream-php/src/Zs/ExtendedInformationExtraField.php',
     );
 

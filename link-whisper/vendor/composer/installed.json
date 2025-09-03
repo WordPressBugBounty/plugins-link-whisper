@@ -61,75 +61,22 @@
             "install-path": "..\/bamarni\/composer-bin-plugin"
         },
         {
-            "name": "danny50610\/bpe-tokeniser",
-            "version": "0.2.0",
-            "version_normalized": "0.2.0.0",
-            "source": {
-                "type": "git",
-                "url": "https:\/\/github.com\/danny50610\/bpe-tokeniser.git",
-                "reference": "abdaec2e7ee729073fa345c987b81397cd790932"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https:\/\/api.github.com\/repos\/danny50610\/bpe-tokeniser\/zipball\/abdaec2e7ee729073fa345c987b81397cd790932",
-                "reference": "abdaec2e7ee729073fa345c987b81397cd790932",
-                "shasum": ""
-            },
-            "require": {
-                "php": "^8.1"
-            },
-            "require-dev": {
-                "phpunit\/phpunit": "^10"
-            },
-            "time": "2024-05-18T14:04:28+00:00",
-            "type": "library",
-            "installation-source": "dist",
-            "autoload": {
-                "psr-4": {
-                    "LWVendor\\Danny50610\\BpeTokeniser\\": "src\/"
-                }
-            },
-            "notification-url": "https:\/\/packagist.org\/downloads\/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Chen, Danny",
-                    "email": "danny50610@yahoo.com.tw"
-                }
-            ],
-            "description": "PHP port for openai\/tiktoken (most)",
-            "keywords": [
-                "cl100k_base",
-                "gpt-3.5",
-                "gpt-4",
-                "tiktoken",
-                "tokenizer"
-            ],
-            "support": {
-                "issues": "https:\/\/github.com\/danny50610\/bpe-tokeniser\/issues",
-                "source": "https:\/\/github.com\/danny50610\/bpe-tokeniser\/tree\/0.2.0"
-            },
-            "install-path": "..\/danny50610\/bpe-tokeniser"
-        },
-        {
             "name": "ezyang\/htmlpurifier",
-            "version": "v4.17.0",
-            "version_normalized": "4.17.0.0",
+            "version": "v4.18.0",
+            "version_normalized": "4.18.0.0",
             "source": {
                 "type": "git",
                 "url": "https:\/\/github.com\/ezyang\/htmlpurifier.git",
-                "reference": "bbc513d79acf6691fa9cf10f192c90dd2957f18c"
+                "reference": "cb56001e54359df7ae76dc522d08845dc741621b"
             },
             "dist": {
                 "type": "zip",
-                "url": "https:\/\/api.github.com\/repos\/ezyang\/htmlpurifier\/zipball\/bbc513d79acf6691fa9cf10f192c90dd2957f18c",
-                "reference": "bbc513d79acf6691fa9cf10f192c90dd2957f18c",
+                "url": "https:\/\/api.github.com\/repos\/ezyang\/htmlpurifier\/zipball\/cb56001e54359df7ae76dc522d08845dc741621b",
+                "reference": "cb56001e54359df7ae76dc522d08845dc741621b",
                 "shasum": ""
             },
             "require": {
-                "php": "~5.6.0 || ~7.0.0 || ~7.1.0 || ~7.2.0 || ~7.3.0 || ~7.4.0 || ~8.0.0 || ~8.1.0 || ~8.2.0 || ~8.3.0"
+                "php": "~5.6.0 || ~7.0.0 || ~7.1.0 || ~7.2.0 || ~7.3.0 || ~7.4.0 || ~8.0.0 || ~8.1.0 || ~8.2.0 || ~8.3.0 || ~8.4.0"
             },
             "require-dev": {
                 "cerdic\/css-tidy": "^1.7 || ^2.0",
@@ -141,7 +88,7 @@
                 "ext-iconv": "Converts text to and from non-UTF-8 encodings",
                 "ext-tidy": "Used for pretty-printing HTML"
             },
-            "time": "2023-11-17T15:01:25+00:00",
+            "time": "2024-11-01T03:51:45+00:00",
             "type": "library",
             "installation-source": "dist",
             "autoload": {
@@ -173,44 +120,45 @@
             ],
             "support": {
                 "issues": "https:\/\/github.com\/ezyang\/htmlpurifier\/issues",
-                "source": "https:\/\/github.com\/ezyang\/htmlpurifier\/tree\/v4.17.0"
+                "source": "https:\/\/github.com\/ezyang\/htmlpurifier\/tree\/v4.18.0"
             },
             "install-path": "..\/ezyang\/htmlpurifier"
         },
         {
             "name": "maennchen\/zipstream-php",
-            "version": "3.1.1",
-            "version_normalized": "3.1.1.0",
+            "version": "3.1.2",
+            "version_normalized": "3.1.2.0",
             "source": {
                 "type": "git",
                 "url": "https:\/\/github.com\/maennchen\/ZipStream-PHP.git",
-                "reference": "6187e9cc4493da94b9b63eb2315821552015fca9"
+                "reference": "aeadcf5c412332eb426c0f9b4485f6accba2a99f"
             },
             "dist": {
                 "type": "zip",
-                "url": "https:\/\/api.github.com\/repos\/maennchen\/ZipStream-PHP\/zipball\/6187e9cc4493da94b9b63eb2315821552015fca9",
-                "reference": "6187e9cc4493da94b9b63eb2315821552015fca9",
+                "url": "https:\/\/api.github.com\/repos\/maennchen\/ZipStream-PHP\/zipball\/aeadcf5c412332eb426c0f9b4485f6accba2a99f",
+                "reference": "aeadcf5c412332eb426c0f9b4485f6accba2a99f",
                 "shasum": ""
             },
             "require": {
                 "ext-mbstring": "*",
                 "ext-zlib": "*",
-                "php-64bit": "^8.1"
+                "php-64bit": "^8.2"
             },
             "require-dev": {
+                "brianium\/paratest": "^7.7",
                 "ext-zip": "*",
                 "friendsofphp\/php-cs-fixer": "^3.16",
                 "guzzlehttp\/guzzle": "^7.5",
                 "mikey179\/vfsstream": "^1.6",
                 "php-coveralls\/php-coveralls": "^2.5",
-                "phpunit\/phpunit": "^10.0",
-                "vimeo\/psalm": "^5.0"
+                "phpunit\/phpunit": "^11.0",
+                "vimeo\/psalm": "^6.0"
             },
             "suggest": {
                 "guzzlehttp\/psr7": "^2.4",
                 "psr\/http-message": "^2.0"
             },
-            "time": "2024-10-10T12:33:01+00:00",
+            "time": "2025-01-27T12:07:53+00:00",
             "type": "library",
             "installation-source": "dist",
             "autoload": {
@@ -247,7 +195,7 @@
             ],
             "support": {
                 "issues": "https:\/\/github.com\/maennchen\/ZipStream-PHP\/issues",
-                "source": "https:\/\/github.com\/maennchen\/ZipStream-PHP\/tree\/3.1.1"
+                "source": "https:\/\/github.com\/maennchen\/ZipStream-PHP\/tree\/3.1.2"
             },
             "funding": [
                 {
@@ -369,68 +317,6 @@
                 "source": "https:\/\/github.com\/MarkBaker\/PHPMatrix\/tree\/3.0.1"
             },
             "install-path": "..\/markbaker\/matrix"
-        },
-        {
-            "name": "orhanerday\/open-ai",
-            "version": "4.9.1",
-            "version_normalized": "4.9.1.0",
-            "source": {
-                "type": "git",
-                "url": "https:\/\/github.com\/orhanerday\/open-ai.git",
-                "reference": "2ccdf2f6b4287b9e570a1ddcf33083b7ad9f7e9c"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https:\/\/api.github.com\/repos\/orhanerday\/open-ai\/zipball\/2ccdf2f6b4287b9e570a1ddcf33083b7ad9f7e9c",
-                "reference": "2ccdf2f6b4287b9e570a1ddcf33083b7ad9f7e9c",
-                "shasum": ""
-            },
-            "require": {
-                "ext-curl": "*",
-                "ext-json": "*",
-                "php": ">=7.4"
-            },
-            "require-dev": {
-                "friendsofphp\/php-cs-fixer": "^3.0",
-                "pestphp\/pest": "^1.20",
-                "spatie\/ray": "^1.28"
-            },
-            "time": "2023-11-13T04:03:05+00:00",
-            "type": "library",
-            "installation-source": "dist",
-            "autoload": {
-                "psr-4": {
-                    "LWVendor\\Orhanerday\\OpenAi\\": "src"
-                }
-            },
-            "notification-url": "https:\/\/packagist.org\/downloads\/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Orhan Erday",
-                    "email": "orhanerday@gmail.com",
-                    "role": "Developer"
-                }
-            ],
-            "description": "OpenAI GPT-3 Api Client in PHP",
-            "homepage": "https:\/\/github.com\/orhanerday\/open-ai",
-            "keywords": [
-                "open-ai",
-                "orhanerday"
-            ],
-            "support": {
-                "issues": "https:\/\/github.com\/orhanerday\/open-ai\/issues",
-                "source": "https:\/\/github.com\/orhanerday\/open-ai\/tree\/4.9.1"
-            },
-            "funding": [
-                {
-                    "url": "https:\/\/github.com\/orhanerday",
-                    "type": "github"
-                }
-            ],
-            "install-path": "..\/orhanerday\/open-ai"
         },
         {
             "name": "phpoffice\/phpspreadsheet",
@@ -764,90 +650,22 @@
             "install-path": "..\/psr\/simple-cache"
         },
         {
-            "name": "rahul900day\/gpt-3-encoder",
-            "version": "1.1.0",
-            "version_normalized": "1.1.0.0",
-            "source": {
-                "type": "git",
-                "url": "https:\/\/github.com\/RahulDey12\/gpt-3-encoder.git",
-                "reference": "4c3c706a0ddcad137d0f9d592d141d0a23fa2502"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https:\/\/api.github.com\/repos\/RahulDey12\/gpt-3-encoder\/zipball\/4c3c706a0ddcad137d0f9d592d141d0a23fa2502",
-                "reference": "4c3c706a0ddcad137d0f9d592d141d0a23fa2502",
-                "shasum": ""
-            },
-            "require": {
-                "ext-mbstring": "*",
-                "php": "^7.4 || ^8.0"
-            },
-            "require-dev": {
-                "pestphp\/pest": "^1.22",
-                "phpstan\/phpstan": "^1.10",
-                "rector\/rector": "^0.15.21",
-                "symfony\/var-dumper": "^5.4 || ^6.0"
-            },
-            "time": "2023-03-22T20:12:00+00:00",
-            "type": "library",
-            "installation-source": "dist",
-            "autoload": {
-                "psr-4": {
-                    "LWVendor\\Rahul900day\\Gpt3Encoder\\": "src\/"
-                }
-            },
-            "notification-url": "https:\/\/packagist.org\/downloads\/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Rahul Dey",
-                    "email": "rahul900day@gmail.com"
-                }
-            ],
-            "description": "GPT-3-Encoder is a PHP implementation of OpenAI's original python encoder\/decoder.",
-            "keywords": [
-                "GPT-2-Encoder",
-                "GPT-2-Tokenizer",
-                "GPT-3",
-                "GPT-3-Encoder",
-                "GPT-3-Tokenizer",
-                "decoder",
-                "encoder",
-                "gpt-2",
-                "php",
-                "tokenizer"
-            ],
-            "support": {
-                "issues": "https:\/\/github.com\/RahulDey12\/gpt-3-encoder\/issues",
-                "source": "https:\/\/github.com\/RahulDey12\/gpt-3-encoder\/tree\/1.1.0"
-            },
-            "funding": [
-                {
-                    "url": "https:\/\/ko-fi.com\/rahul900day",
-                    "type": "ko_fi"
-                }
-            ],
-            "abandoned": "rahul900day\/tiktoken-php",
-            "install-path": "..\/rahul900day\/gpt-3-encoder"
-        },
-        {
             "name": "symfony\/polyfill-mbstring",
-            "version": "v1.31.0",
-            "version_normalized": "1.31.0.0",
+            "version": "v1.33.0",
+            "version_normalized": "1.33.0.0",
             "source": {
                 "type": "git",
                 "url": "https:\/\/github.com\/symfony\/polyfill-mbstring.git",
-                "reference": "85181ba99b2345b0ef10ce42ecac37612d9fd341"
+                "reference": "6d857f4d76bd4b343eac26d6b539585d2bc56493"
             },
             "dist": {
                 "type": "zip",
-                "url": "https:\/\/api.github.com\/repos\/symfony\/polyfill-mbstring\/zipball\/85181ba99b2345b0ef10ce42ecac37612d9fd341",
-                "reference": "85181ba99b2345b0ef10ce42ecac37612d9fd341",
+                "url": "https:\/\/api.github.com\/repos\/symfony\/polyfill-mbstring\/zipball\/6d857f4d76bd4b343eac26d6b539585d2bc56493",
+                "reference": "6d857f4d76bd4b343eac26d6b539585d2bc56493",
                 "shasum": ""
             },
             "require": {
+                "ext-iconv": "*",
                 "php": ">=7.2"
             },
             "provide": {
@@ -856,12 +674,12 @@
             "suggest": {
                 "ext-mbstring": "For best performance"
             },
-            "time": "2024-09-09T11:45:10+00:00",
+            "time": "2024-12-23T08:48:59+00:00",
             "type": "library",
             "extra": {
                 "thanks": {
-                    "name": "symfony\/polyfill",
-                    "url": "https:\/\/github.com\/symfony\/polyfill"
+                    "url": "https:\/\/github.com\/symfony\/polyfill",
+                    "name": "symfony\/polyfill"
                 }
             },
             "installation-source": "dist",
@@ -897,7 +715,7 @@
                 "shim"
             ],
             "support": {
-                "source": "https:\/\/github.com\/symfony\/polyfill-mbstring\/tree\/v1.31.0"
+                "source": "https:\/\/github.com\/symfony\/polyfill-mbstring\/tree\/v1.33.0"
             },
             "funding": [
                 {
@@ -906,6 +724,10 @@
                 },
                 {
                     "url": "https:\/\/github.com\/fabpot",
+                    "type": "github"
+                },
+                {
+                    "url": "https:\/\/github.com\/nicolas-grekas",
                     "type": "github"
                 },
                 {

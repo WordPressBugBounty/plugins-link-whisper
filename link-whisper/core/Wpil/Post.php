@@ -134,10 +134,15 @@ class Wpil_Post
                     $removed_links = Wpil_Report::find_removed_report_inbound_links($post);
                     // update the links stored in the link table
                     Wpil_Report::update_post_in_link_table($post);
-                    // update the meta data for the post
-                    Wpil_Report::statUpdate($post, true);
-                    // update the link counts for the posts that this one links to
-                    Wpil_Report::updateReportInternallyLinkedPosts($post, $removed_links);
+                    // if the user is not just using the link table
+                    if(!Wpil_Settings::use_link_table_for_data()){
+                        // update the meta data for the post
+                        Wpil_Report::statUpdate($post, true);
+                        // update the link counts for the posts that this one links to
+                        Wpil_Report::updateReportInternallyLinkedPosts($post, $removed_links);
+                    }
+                    // remove any broken links that are no longer in the post
+                    Wpil_Error::update_broken_link_post_listing($post);
                 }
 
                 // if the links haven't changed, reset the processing flag
@@ -233,7 +238,7 @@ class Wpil_Post
      * @param bool $return_ids Do we jsut return the linked post ids or the whole link object
      * @return array
      */
-    public static function getLinkedPostIDs($post, $return_ids = true)
+    public static function getLinkedPostIDs($post, $return_ids = true, $ignore_self = true)
     {
         $linked_post_ids = array();
 
@@ -246,8 +251,10 @@ class Wpil_Post
 
         // if we're supposed to return just the ids
         if($return_ids){
-            // process out the ids
-            $linked_post_ids[] = $post->id;
+            if($ignore_self){
+                // process out the ids
+                $linked_post_ids[] = $post->id;
+            }
 
             foreach ($links as $link) {
                 if (!empty($link->post->id)) {
@@ -255,17 +262,19 @@ class Wpil_Post
                 }
             }
         }else{
-            $url = $post->getLinks()->view;
-            $host = parse_url($url, PHP_URL_HOST);
+            if($ignore_self){
+                $url = $post->getLinks()->view;
+                $host = parse_url($url, PHP_URL_HOST);
 
 
-            $linked_post_ids[] = new Wpil_Model_Link([
-                'url' => $url,
-                'host' => str_replace('www.', '', $host),
-                'internal' => Wpil_Link::isInternal($url),
-                'post' => $post,
-                'anchor' => '',
-            ]);
+                $linked_post_ids[] = new Wpil_Model_Link([
+                    'url' => $url,
+                    'host' => str_replace('www.', '', $host),
+                    'internal' => Wpil_Link::isInternal($url),
+                    'post' => $post,
+                    'anchor' => '',
+                ]);
+            }
 
             $linked_post_ids = array_merge($linked_post_ids, $links);
         }
@@ -288,7 +297,37 @@ class Wpil_Post
             return $fields;
         }
 
-        $fields_query = $wpdb->get_results("SELECT SUBSTR(meta_key, 2) as `name` FROM {$wpdb->postmeta} WHERE post_id = $post_id AND meta_value IN (SELECT DISTINCT post_name FROM {$wpdb->posts} WHERE post_name LIKE 'field_%') AND SUBSTR(meta_key, 2) != ''");
+        // get any ACF fields the user has ignored
+        $ignored_fields = Wpil_Settings::getIgnoredACFFields();
+
+        // get a list of ACF field rules to use for regular expressions
+        $ignored_fields_wildcards = [];
+
+        // get the content types that we'll be searching for
+        $content_types = array('wysiwyg', 'textarea');
+        if(!Wpil_Settings::get_ignore_acf_text_fields()){
+            $content_types[] = 'text';
+        }
+        $content_types = " AND (`post_content` LIKE '%" . implode("%' OR `post_content` LIKE '%", $content_types) . "%')";
+
+        if ( !empty($ignored_fields) ) {
+            foreach($ignored_fields as $key => $rule) {
+                if ( strpos($rule, '*') !== false ) {
+                    $ignored_fields_wildcards[] = str_replace('*', '.*', $rule);
+                    unset($ignored_fields[$key]);
+                }
+            }
+            
+            if ( !empty($ignored_fields_wildcards) ) {
+                $ignored_fields_wildcards = implode('|', $ignored_fields_wildcards);
+            }
+        }
+
+        // get any ACF fields that the user has chosen to focus on
+        $acf_fields = Wpil_Query::querySpecifiedAcfFields();
+
+        $fields_query = $wpdb->get_results("SELECT SUBSTR(meta_key, 2) as `name` FROM {$wpdb->postmeta} WHERE post_id = $post_id AND meta_value IN (SELECT DISTINCT post_name FROM {$wpdb->posts} WHERE post_name LIKE 'field_%' {$acf_fields} {$content_types}) AND SUBSTR(meta_key, 2) != ''");
+       // print_r("SELECT SUBSTR(meta_key, 2) as `name` FROM {$wpdb->postmeta} WHERE post_id = $post_id AND meta_value IN (SELECT DISTINCT post_name FROM {$wpdb->posts} WHERE post_name LIKE 'field_%' {$acf_fields} {$content_types}) AND SUBSTR(meta_key, 2) != ''");
         foreach ($fields_query as $field) {
             $name = trim($field->name);
 
@@ -330,6 +369,7 @@ class Wpil_Post
                             ){
                                 $secondary_lookup_fields[$field['key']] = true;
                             }elseif($field['type'] === 'text' && // if the field is a text AND
+                                    !Wpil_Settings::get_ignore_acf_text_fields() && // we're not ignoring text fields AND
                                 (
                                     isset($field['name']) && false !== strpos(strtolower($field['name']), 'url') // the text field contains "url" 
                                 )
@@ -404,6 +444,7 @@ class Wpil_Post
                 ){
                     $found_fields[$sub['key']] = true;
                 }elseif($sub['type'] === 'text' && // if the subfield is a text AND
+                        !Wpil_Settings::get_ignore_acf_text_fields() && // we're not ignoring text fields AND
                     (
                         isset($sub['name']) && false !== strpos(strtolower($sub['name']), 'url') // the text field contains "url" 
                     )
@@ -432,16 +473,31 @@ class Wpil_Post
         }
 
         if (self::$advanced_custom_fields_list === null) {
-            $fields = [];
+            $ignored_fields = Wpil_Settings::getIgnoredACFFields();
+            $only_search_fields = Wpil_Query::querySpecifiedAcfFields('pm');
+            $content_types = array('wysiwyg', 'textarea');
+
+            if(!Wpil_Settings::get_ignore_acf_text_fields()){
+                $content_types[] = 'text';
+            }
+
+            $content_types = implode('|', $content_types);
+
+            $fields = array();
+
             // try getting the main set of ACF fields
             //$post_names = $wpdb->get_col("SELECT DISTINCT pm.meta_key as `name` FROM {$wpdb->postmeta} pm INNER JOIN {$wpdb->posts} p ON pm.meta_value = p.post_name WHERE p.post_type = 'acf-field' AND p.post_name LIKE 'field_%'");
-            $post_names = $wpdb->get_col("SELECT DISTINCT pm.meta_key as `name` FROM {$wpdb->postmeta} pm INNER JOIN {$wpdb->posts} p ON pm.meta_value = p.post_name WHERE p.post_type = 'acf-field'");
+            $post_data = $wpdb->get_results("SELECT DISTINCT pm.meta_key as `name`, p.post_content as `content` FROM {$wpdb->postmeta} pm INNER JOIN {$wpdb->posts} p ON pm.meta_value = p.post_name WHERE p.post_type = 'acf-field' {$only_search_fields}");
 
             // if we found some
-            if (!empty($post_names)) {
+            if (!empty($post_data)) {
                 // clean up their names and add them to the field list
-                foreach ($post_names as $name) {
-                    $name = trim(substr($name, 1));
+                foreach ($post_data as $dat) {
+                    if(!preg_match('/' . $content_types . '/', $dat->content)){
+                        continue;
+                    }
+
+                    $name = trim(substr($dat->name, 1));
                     if (!empty($name)) {
                         $fields[] = $name;
                     }
@@ -523,6 +579,33 @@ class Wpil_Post
                     // remove any duplicate fields
                     $fields = array_flip(array_flip($fields));
 
+                    // get a list of ACF field rules to use for regular expressions
+                    $ignored_fields_wildcards = [];
+
+                    // remove any ignored fields that are defined
+                    if(!empty($ignored_fields)){
+                        foreach($ignored_fields as $key => $rule) {
+                            if ( strpos($rule, '*') !== false ) {
+                                $ignored_fields_wildcards[] = str_replace('*', '.*', $rule);
+                                unset($ignored_fields[$key]);
+                            }
+                        }
+                        
+                        if ( !empty($ignored_fields_wildcards) ) {
+                            $ignored_fields_wildcards = implode('|', $ignored_fields_wildcards);
+                        }
+
+                        foreach($fields as $ind => $field){
+                            if(!empty($ignored_fields) && in_array($field, $ignored_fields, true)){
+                                unset($fields[$ind]);
+                            }
+
+                            if ( !empty($ignored_fields_wildcards) && preg_match('/' . $ignored_fields_wildcards . '/', $name) ) {
+                                unset($fields[$ind]);
+                            }
+                        }
+                    }
+
                     // re-key the array in case something sensitive is listening
                     $fields = array_values($fields);
                 }
@@ -563,7 +646,7 @@ class Wpil_Post
         $posts = [];
 
         // if WPML is active and there's languages saved
-        if(defined('WPML_PLUGIN_BASENAME')) {
+        if(Wpil_Settings::wpml_enabled()) {
             $table = $wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}icl_languages'");
             if($table == $wpdb->prefix . 'icl_languages'){
                 $post_types = self::getSelectedLanguagePostTypes();
@@ -575,10 +658,60 @@ class Wpil_Post
         }
 
         // if Polylang is active
-        if(defined('POLYLANG_VERSION')){
+        if(Wpil_Settings::polylang_enabled()){
             $taxonomy_id = $wpdb->get_var("SELECT t.term_taxonomy_id FROM {$wpdb->term_taxonomy} t INNER JOIN {$wpdb->term_relationships} r ON t.term_taxonomy_id = r.term_taxonomy_id WHERE t.taxonomy = 'language' AND r.object_id = " . $post_id);
             if (!empty($taxonomy_id)) {
                 $posts = $wpdb->get_results("SELECT object_id as id FROM {$wpdb->term_relationships} WHERE term_taxonomy_id = $taxonomy_id AND object_id != $post_id");
+            }
+        }
+
+        if (!empty($posts)) {
+            foreach ($posts as $post) {
+                $ids[] = $post->id;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Get all posts from languages other than the current post's
+     *
+     * @param $post_id
+     * @return array
+     */
+    public static function getNonSameLanguagePosts($post_id)
+    {
+        global $wpdb;
+        $ids = [];
+        $posts = [];
+
+        // if WPML is active and there's languages saved
+        if(Wpil_Settings::wpml_enabled()) {
+            $table = $wpdb->get_var("SHOW TABLES LIKE '{$wpdb->prefix}icl_languages'");
+            if($table == $wpdb->prefix . 'icl_languages'){
+                $post_types = self::getSelectedLanguagePostTypes();
+                $language = $wpdb->get_var("SELECT language_code FROM {$wpdb->prefix}icl_translations WHERE element_id = $post_id AND `element_type` IN ({$post_types}) ");
+                if (!empty($language)) {
+                    $other_languages = $wpdb->get_col("SELECT code FROM {$wpdb->prefix}icl_languages WHERE code != '{$language}' AND active = 1");
+                    if(!empty($other_languages)){
+                        
+                        $other_languages = "('" . implode("', '", $other_languages) . "')";
+                        $posts = $wpdb->get_results("SELECT element_id as id FROM {$wpdb->prefix}icl_translations WHERE element_id != $post_id AND language_code IN {$other_languages} AND `element_type` IN ({$post_types}) ");
+                    }
+                }
+            }
+        }
+
+        // if Polylang is active
+        if(Wpil_Settings::polylang_enabled()){
+            $taxonomy_id = $wpdb->get_var("SELECT t.term_taxonomy_id FROM {$wpdb->term_taxonomy} t INNER JOIN {$wpdb->term_relationships} r ON t.term_taxonomy_id = r.term_taxonomy_id WHERE t.taxonomy = 'language' AND r.object_id = " . $post_id);
+            if (!empty($taxonomy_id)) {
+                $other_languages = $wpdb->get_col("SELECT DISTINCT t.term_taxonomy_id FROM {$wpdb->term_taxonomy} t INNER JOIN {$wpdb->term_relationships} r ON t.term_taxonomy_id = r.term_taxonomy_id WHERE t.taxonomy = 'language' AND t.term_taxonomy_id != $taxonomy_id");
+                if(!empty($other_languages)){
+                    $other_languages = implode(',', $other_languages);
+                    $posts = $wpdb->get_results("SELECT object_id as id FROM {$wpdb->term_relationships} WHERE term_taxonomy_id IN ({$other_languages}) AND object_id != $post_id");
+                }
             }
         }
 
@@ -680,7 +813,226 @@ class Wpil_Post
     }
 
     /**
-     * Get post model by view link
+     * Get URLs from post content
+     *
+     * @param $post
+     * @return array|mixed
+     */
+    public static function getUrls($post)
+    {
+        preg_match_all('#<a\s.*?(?:href=[\'"](.*?)[\'"]).*?>#is', $post->getContent(), $matches);
+
+        if (!empty($matches[1])) {
+            return $matches[1];
+        }
+
+        return [];
+    }
+
+    public static function getSentencesWithUrls($post)
+    {
+        $data = [];
+        $content = $post->getContent();
+
+        // replace any base64ed image urls
+        $content = preg_replace('`src="data:(?:image|text)\/(?:png|jpeg|svg\+xml|xml);base64,[\s]??[a-zA-Z0-9\/+=]+?"`', '', $content);
+        $content = preg_replace('`alt="Source: data:image\/(?:png|jpeg|svg\+xml);base64,[\s]??[a-zA-Z0-9\/+=]+?"`', '', $content);
+
+        preg_match_all('`(\!|\?|\.|^|)[^.!?\n]*<a\s[^>]*?(?:href=([\'"]|\\\")(.*?)([\'"]|\\\"))[^>]*?>(.*?)<\/a>((?!<a)[^.!?\n])*|<!-- wp:(?:core-embed\/wordpress|embed) {[\\\]*?"url[\\\]*?":[\\\]*?"([^"\\\]*?)[\\\]*?"[^}]*?[\\\]*?"} -->`is', $content, $matches);
+        for ($i = 0; $i < count($matches[0]); $i++) {
+            if (!empty($matches[0][$i]) && !empty($matches[3][$i])) {
+                $sentence = $matches[0][$i];
+                if (in_array(substr($sentence, 0, 1), ['.', '!', '?'])) {
+                    $sentence = substr($sentence, 1);
+                }
+
+                $url = $matches[3][$i];
+
+                // if the url is inside slashed quotes
+                if( !empty($matches[2][$i]) && $matches[2][$i] === '\"' &&
+                    !empty($matches[4][$i]) && $matches[4][$i] === '\"')
+                {
+                    // add the quotes to the url
+                    $url = ($matches[2][$i] . $url . $matches[4][$i]);
+                }
+
+                // if there is an anchor
+                if(!empty($matches[5][$i]) && $matches[5][$i]){
+                    $anchor = $matches[5][$i];
+                }else{
+                    $anchor = '';
+                }
+
+                $data[] = [
+                    'sentence' => trim(strip_tags($sentence)),
+                    'anchor' => trim(strip_tags($anchor)),
+                    'url' => $url
+                ];
+            }elseif(!empty($matches[7][$i])){
+                $url = esc_attr($matches[7][$i]);
+    
+                $data[] = [
+                    'sentence' => esc_attr__('Link is embedded, no sentence text detected', 'wpil'),
+                    'anchor' => 'N/A',
+                    'url' => $url
+                ];
+            }
+        }
+
+        // get the image tags too
+        preg_match_all('#<img\s[^>]*?(?:(?:href|src)=([\'"]|\\\")(.*?)([\'"]|\\\"))[^>]*?>#is', $content, $matches);
+        if(!empty($matches)){
+            for ($i = 0; $i < count($matches[0]); $i++) {
+                if (!empty($matches[0][$i]) && !empty($matches[1][$i])) {
+                    $text = $matches[0][$i];
+
+                    if(false !== strpos($text, 'title="') && false === strpos($text, 'title=""')){
+                        $offset = (mb_strpos($text, 'title="') + 7);
+                        $sentence = __('Broken Image. The title is: ', 'wpil') . '"' . mb_substr($text, $offset, (mb_strpos($text, '"', $offset) - $offset) ) . '"';
+                    }elseif(false !== strpos($text, 'alt="') && false === strpos($text, 'alt=""')){
+                        $offset = (mb_strpos($text, 'alt="') + 5);
+                        $sentence = __('Broken Image. The alt text is: ', 'wpil') . '"' . mb_substr($text, $offset, (mb_strpos($text, '"', $offset) - $offset) ) . '"';
+                    }else{
+                        $sentence = __('Broken Image. The image doesn\'t have a title or alt text.', 'wpil');
+                    }
+
+                    $url = $matches[2][$i];
+
+                    // if the url is inside slashed quotes
+                    if( !empty($matches[1][$i]) && $matches[1][$i] === '\"' &&
+                        !empty($matches[3][$i]) && $matches[3][$i] === '\"')
+                    {
+                        // add the quotes to the url
+                        $url = ($matches[1][$i] . $url . $matches[3][$i]);
+                    }
+
+                    $data[] = [
+                        'sentence' => trim(strip_tags($sentence)),
+                        'anchor' => '',
+                        'url' => $url
+                    ];
+                }
+            }
+        }
+
+        // check to make sure that there aren't any empty anchors present
+        if(strpos($content, '<a>') !== false){
+            // if there are, pull those links too
+            preg_match_all('`(\!|\?|\.|^|)[^.!?\n]*<a>(.*?)<\/a>((?!<a)[^.!?\n])*`is', $content, $matches);
+            for ($i = 0; $i < count($matches[0]); $i++) {
+                if (!empty($matches[0][$i])) {
+                    $sentence = $matches[0][$i];
+                    if (in_array(substr($sentence, 0, 1), ['.', '!', '?'])) {
+                        $sentence = substr($sentence, 1);
+                    }
+    
+                    $anchor = !empty($matches[2][$i]) ? $matches[2][$i]: '';
+
+                    $data[] = [
+                        'sentence' => trim(strip_tags($sentence)),
+                        'url' => '{{wpil-empty-url}}',
+                        'anchor' => $anchor
+                    ];
+                }
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Change sentence if it located inside embedded ACF blocks.
+     * Changes the double qoutes in the link to insert's attributes into single quotes so we don't break the ACF blocks
+     *
+     * @param $content
+     * @param $sentence
+     * @param $changed_sentence
+     * @return string
+     */
+    public static function changeByACF($content, $sentence, $changed_sentence){
+        //find all blocks
+        $blocks = [];
+        $end = 0;
+        while($end <= strlen($content) && strpos($content, '<!-- wp:acf', $end) !== false) {
+            $begin = strpos($content, '<!-- wp:acf', $end);
+            $end = strpos($content, '-->', $begin);
+            $blocks[] = [$begin, $end];
+        }
+
+        //change sentence
+        if (!empty($blocks)) {
+            $pos = strpos($content, $sentence);
+            foreach ($blocks as $block) {
+                if ($block[0] < $pos && $block[1] > $pos) {
+                    $changed_sentence = str_replace('"', "'", $changed_sentence);
+                }
+            }
+        }
+
+        return $changed_sentence;
+    }
+
+    /**
+     * Get post ID from any URL
+     *
+     * @param string $url
+     * @return int|false
+     */
+    public static function get_post_id_from_any_url($url) {
+        $url = Wpil_Settings::makeLinkAbsolute($url);
+
+        $url_parts = parse_url($url);
+        $path = trim($url_parts['path'], '/');
+        $path_parts = explode('/', $path);
+        $slug = end($path_parts);
+
+        // Get all public post types
+        $post_types = get_post_types(array('public' => true));
+
+        // First try exact path match
+        $args = array(
+            'post_type'      => $post_types,
+            'post_status'    => 'publish',
+            'posts_per_page' => 1,
+            'fields'         => 'ids',
+            'no_found_rows'  => true,
+            'update_post_meta_cache' => false,
+            'update_post_term_cache' => false
+        );
+
+        // Try matching the full path first
+        $args['name'] = $path;
+        $query = new WP_Query($args);
+
+        // If no match, try with just the slug
+        if (!$query->have_posts() && !empty($slug)) {
+            $args['name'] = $slug;
+            $query = new WP_Query($args);
+        }
+
+        if ($query->have_posts()) {
+            foreach ($query->posts as $post_id) {
+                $post = get_post($post_id);
+
+                // Verify the slug matches
+                if ($post->post_name !== $slug) {
+                    continue;
+                }
+
+                $post_url = parse_url(get_permalink($post_id));
+                if (trim($post_url['path'], '/') !== $path) {
+                    continue;
+                }
+
+                return $post_id;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Get post model by view link.
      * URLtoPost
      * IDFROMLINK
      * IDFROMURL
@@ -693,6 +1045,7 @@ class Wpil_Post
         global $wpdb;
         $post = null;
         $link = trim($link);
+        $link = Wpil_Link::get_url_redirection($link) ?: $link;
         $starting_link = $link;
 
         // check to see if we've already come across this link
@@ -737,12 +1090,6 @@ class Wpil_Post
 
         if (!empty($post_id)) {
             $post = new Wpil_Model_Post($post_id);
-        } else {
-            $slug = array_filter(explode('/', $link));
-            $term = Wpil_Term::getTermBySlug(end($slug), $link);
-            if(!empty($term)){
-                $post = new Wpil_Model_Post($term->term_id, 'term');
-            }
         }
 
         // if we couldn't find the post and custom permalinks is active
@@ -764,18 +1111,18 @@ class Wpil_Post
             $type = Wpil_Query::postTypes('p');
 
             // now search the db
-			$search = $wpdb->get_col(
-				$wpdb->prepare(
-					'SELECT p.ID ' .
-					" FROM $wpdb->posts AS p INNER JOIN $wpdb->postmeta AS pm ON (pm.post_id = p.ID) " .
-					" WHERE pm.meta_key = 'custom_permalink' " .
-					' AND (pm.meta_value = %s OR pm.meta_value = %s) ' .
-					" {$status} {$type} " .
-					" LIMIT 1",
-					$search_url,
-					$search_url . '/'
-				)
-			);
+            $search = $wpdb->get_col(
+                $wpdb->prepare(
+                    'SELECT p.ID ' .
+                    " FROM $wpdb->posts AS p INNER JOIN $wpdb->postmeta AS pm ON (pm.post_id = p.ID) " .
+                    " WHERE pm.meta_key = 'custom_permalink' " .
+                    ' AND (pm.meta_value = %s OR pm.meta_value = %s) ' .
+                    " {$status} {$type} " .
+                    " LIMIT 1",
+                    $search_url,
+                    $search_url . '/'
+                )
+            );
             // if we found a post
             if(!empty($search)){
                 // that is our new post object
@@ -785,7 +1132,7 @@ class Wpil_Post
 
         // if all that didn't work, the post might be draft or Polylang Pro might be active and we'll have to check for multiple posts with the same name
         // so we'll try pulling the post name from the URL and seeing if that will get us an id
-        if((empty($post) || defined('POLYLANG_PRO')) && is_string($link) && !empty($link) && Wpil_Link::isInternal($link)){
+        if((empty($post) || Wpil_Settings::polylang_enabled()) && is_string($link) && !empty($link) && Wpil_Link::isInternal($link)){
             // get the permalink structure
             $link_structure = get_option('permalink_structure', '');
             if(!empty($link_structure)){
@@ -805,25 +1152,21 @@ class Wpil_Post
                         $link = '/'. trim(str_replace($site_url, '', $link), '/') . '/'; // we're going to assume that the user isn't using a draft post as the home url... That would give us just "/" at this point, and "///" isn't a valid url
                     }
 
-                    // if we couldn't get a 
-                    if(Wpil_Settings::translation_enabled()){
+                    // if polylang is active
+                    if(Wpil_Settings::translation_enabled() && Wpil_Settings::polylang_enabled()){
+                        global $polylang;
 
-                        // if polylang is active
-                        if(defined('POLYLANG_VERSION')){
-                            global $polylang;
+                        if(!empty($polylang)){
+                            // get the link's language
+                            $lang = $polylang->links_model->get_language_from_url($link);
 
-                            if(!empty($polylang)){
-                                // get the link's language
-                                $lang = $polylang->links_model->get_language_from_url($link);
-
-                                // if we got the language, try getting it's term
-                                if(!empty($lang)){
-                                    $language_term = get_term_by('slug', $lang, 'language');
-                                }
-
-                                // and remove any translation effect from the url
-                                $link = $polylang->links_model->remove_language_from_link($link);
+                            // if we got the language, try getting it's term
+                            if(!empty($lang)){
+                                $language_term = get_term_by('slug', $lang, 'language');
                             }
+
+                            // and remove any translation effect from the url
+                            $link = $polylang->links_model->remove_language_from_link($link);
                         }
                     }
 
@@ -877,7 +1220,7 @@ class Wpil_Post
                             $name = str_replace('-', ' ', $name);
                             // and search through our post types
                             $dat = $wpdb->get_col($wpdb->prepare("SELECT `ID` FROM {$wpdb->posts} WHERE `post_title` = %s {$post_types} LIMIT 1", $name)); // for exceedingly long titles, I might consider re-adding the LIKE check. But we'll cross that bridge when we get there
-                        
+
                             // if that still didn't work, check the title across all the post types
                             if(empty($dat)){
                                 $dat = $wpdb->get_col($wpdb->prepare("SELECT `ID` FROM {$wpdb->posts} WHERE `post_title` = %s AND `post_type` != 'revision' LIMIT 1", $name));
@@ -891,6 +1234,26 @@ class Wpil_Post
                         }
                     }
                 }
+            }
+        }
+
+        if(empty($post)){
+            $post_id = self::get_post_id_from_any_url($starting_link);
+
+            // if we've found the post that the link belongs to
+            if(!empty($post_id)){
+                // setup the post object with it
+                $post = new Wpil_Model_Post($post_id);
+            }
+        }
+
+        // if we _still_ haven't found a post
+        if (empty($post)) {
+            // see if the URL is actually for a term instead of a post
+            $slug = array_filter(explode('/', $starting_link));
+            $term = Wpil_Term::getTermBySlug(end($slug), $starting_link);
+            if(!empty($term)){
+                $post = new Wpil_Model_Post($term->term_id, 'term');
             }
         }
 
@@ -950,6 +1313,78 @@ class Wpil_Post
             $ind = key(self::$post_url_cache);
             unset(self::$post_url_cache[$ind]);
         }
+    }
+
+    /**
+     * Run function for all editors
+     *
+     * @param $action
+     * @param $params
+     */
+    public static function editors($action, $params)
+    {
+        $editors = [
+            'Beaver',
+            'Elementor',
+            'Origin',
+            'Oxygen',
+            'Thrive',
+            'Themify',
+            'Muffin',
+            'Enfold',
+            'Cornerstone',
+            'WPRecipe',
+            'Goodlayers',
+            'Divi'
+        ];
+
+        foreach ($editors as $editor) {
+            $class = 'Wpil_Editor_' . $editor;
+            call_user_func_array([$class, $action], $params);
+        }
+    }
+
+    /**
+     * TODO: Fill out so that we can pull the editors that are actually active and run through them.
+     */
+    public static function get_active_editors(){
+        $editors = array();
+        // check for active editors by looking for major constants or classes
+        if(defined('FL_BUILDER_VERSION')){
+            $editors[] = 'Beaver';
+        }
+        if(defined('ELEMENTOR_VERSION')){
+            $editors[] = 'Elementor';
+        }
+        if(defined('SITEORIGIN_PANELS_VERSION')){
+            $editors[] = 'Origin';
+        }
+        if(defined('CT_VERSION')){
+            $editors[] = 'Oxygen';
+        }
+        if(defined('TVE_PLUGIN_FILE') || defined('TVE_EDITOR_URL')){
+            $editors[] = 'Thrive';
+        }
+        if(class_exists('ThemifyBuilder_Data_Manager')){
+            $editors[] = 'Themify';
+        }
+        if(defined('MFN_THEME_VERSION')){
+            $editors[] = 'Muffin';
+        }
+        if(defined('AV_FRAMEWORK_VERSION')){
+            $editors[] = 'Enfold';
+        }
+        if(class_exists('Cornerstone_Plugin')){
+            $editors[] = 'Cornerstone';
+        }
+        if(defined('WPRM_POST_TYPE') && in_array('wprm_recipe', Wpil_Settings::getPostTypes())){
+            $editors[] = 'WPRecipe';
+        }
+        if(defined('GDLR_CORE_LOCAL')){
+            $editors[] = 'Goodlayers';
+        }
+        
+        return $editors;
     }
 
     /**

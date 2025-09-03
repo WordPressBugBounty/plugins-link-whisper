@@ -1,8 +1,7 @@
 <?php
 
-declare(strict_types=1);
-
-namespace ZipStream;
+declare (strict_types=1);
+namespace LWVendor\ZipStream;
 
 /**
  * ZipStream execution operation modes
@@ -13,7 +12,6 @@ enum OperationMode
      * Stream file into output stream
      */
     case NORMAL;
-
     /**
      * Simulate the zip to figure out the resulting file size
      *
@@ -21,7 +19,6 @@ enum OperationMode
      * deflation is disabled.
      */
     case SIMULATE_STRICT;
-
     /**
      * Simulate the zip to figure out the resulting file size
      *

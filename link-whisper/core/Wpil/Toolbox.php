@@ -7,7 +7,9 @@
 class Wpil_Toolbox
 {
 
+    private static $encryption_possible = null;
     private static $pillar_ids = null;
+    private static $max_package_size = 0;
 
     /**
      * Escapes strings for "LIKE" queries
@@ -15,6 +17,157 @@ class Wpil_Toolbox
     public static function esc_like($string = ''){
         global $wpdb;
         return '%' . $wpdb->esc_like($string) . '%';
+    }
+
+    /**
+     * Check if OpenSSL is available and encryption is not disabled with filter.
+     *
+     * @return bool Whether encryption is possible or not.
+     */
+    public static function is_available(){
+        if(null === self::$encryption_possible){
+            self::$encryption_possible = extension_loaded('openssl');
+        }
+
+        return (bool) self::$encryption_possible;
+    }
+
+    /**
+     * Get encryption key.
+     *
+     * @return string Key.
+     */
+    public static function get_key(){
+        if(defined('WPIL_CUSTOM_ENCRYPTION_KEY') && '' !== WPIL_CUSTOM_ENCRYPTION_KEY){
+            return WPIL_CUSTOM_ENCRYPTION_KEY;
+        }
+
+        if(defined('LOGGED_IN_KEY') && '' !== LOGGED_IN_KEY){
+            return LOGGED_IN_KEY;
+        }
+
+        return '';
+    }
+
+    /**
+     * Get salt.
+     *
+     * @return string Salt.
+     */
+    public static function get_salt(){
+        if(defined('WPIL_CUSTOM_ENCRYPTION_SALT') && '' !== WPIL_CUSTOM_ENCRYPTION_SALT){
+            return WPIL_CUSTOM_ENCRYPTION_SALT;
+        }
+
+        if(defined('LOGGED_IN_SALT') && '' !== LOGGED_IN_SALT){
+            return LOGGED_IN_SALT;
+        }
+
+        return '';
+    }
+
+    /**
+     * Encrypt data.
+     * 
+     * @param  mixed $value Original string.
+     * @return string       Encrypted string.
+     */
+    public static function encrypt($value){
+        if(!self::is_available()){
+            return $value;
+        }
+
+        $method  = 'aes-256-ctr';
+        $ciphers = openssl_get_cipher_methods();
+        if(!in_array($method, $ciphers, true)){
+            $method = $ciphers[0];
+        }
+
+        $ivlen = openssl_cipher_iv_length($method);
+        $iv    = openssl_random_pseudo_bytes($ivlen);
+
+        $raw_value = openssl_encrypt($value . self::get_salt(), $method, self::get_key(), 0, $iv);
+        if(!$raw_value){
+            return $value;
+        }
+
+        return base64_encode($iv . $raw_value);
+    }
+
+    /**
+     * Decrypt string.
+     *
+     * @param  string $raw_value Encrypted string.
+     * @return string            Decrypted string.
+     */
+    public static function decrypt($raw_value){
+        if(!self::is_available()){
+            return $raw_value;
+        }
+
+        $method  = 'aes-256-ctr';
+        $ciphers = openssl_get_cipher_methods();
+        if(!in_array($method, $ciphers, true)){
+            $method = $ciphers[0];
+        }
+
+        $raw_value = base64_decode($raw_value, true);
+
+        $ivlen = openssl_cipher_iv_length($method);
+        $iv    = substr($raw_value, 0, $ivlen);
+
+        $raw_value = substr($raw_value, $ivlen);
+
+        if(!$raw_value || strlen($iv) !== $ivlen){
+            return $raw_value;
+        }
+
+        $salt = self::get_salt();
+
+        $value = openssl_decrypt($raw_value, $method, self::get_key(), 0, $iv);
+        if(!$value || substr($value, - strlen($salt)) !== $salt && $salt !== ''){
+            return $raw_value;
+        }
+
+        return (strlen($salt)) > 0 ? substr($value, 0, - strlen($salt)): $value;
+    }
+
+    /**
+     * Recursively encrypt array of strings.
+     *
+     * @param  mixed $data Original strings.
+     * @return string       Encrypted strings.
+     */
+    public static function deep_encrypt($data){
+        if(is_array($data)){
+            $encrypted = [];
+            foreach($data as $key => $value){
+                $encrypted[self::encrypt($key)] = self::deep_encrypt($value);
+            }
+
+            return $encrypted;
+        }
+
+        return self::encrypt($data);
+    }
+
+    /**
+     * Recursively decrypt array of strings.
+     *
+     * @param  string $data Encrypted strings.
+     * @return string       Decrypted strings.
+     */
+    public static function deep_decrypt($data){
+        if(is_array($data)){
+            $decrypted = [];
+            foreach($data as $key => $value){
+                $decrypted[self::decrypt($key)] = self::deep_decrypt($value);
+            }
+
+            return $decrypted;
+        }
+
+        return self::decrypt($data);
     }
 
     /**
@@ -853,31 +1006,34 @@ class Wpil_Toolbox
         switch ($location) {
             /* Dashboard Report */
             case 'dashboard-intro':
-                $text = esc_attr__('This is the Link Whisper Dashboard page. It\'s job is to provide you with a high-level overview of your site, and to give you access to the other powerful reports that Link Whisper has to offer.', 'wpil');
+                $text = esc_attr__('This is the Link Whisper Dashboard. It gives you a high-level overview of your site and quick access to all major reports.', 'wpil');
                 break;
             case 'dashboard-report-tabs':
-                $text = esc_attr__('Link Whisper has several different reports that offer detailed and specific information about your site.', 'wpil');
+                $text = esc_attr__('Link Whisper\'s main reports are listed here.', 'wpil');
                 break;
             case 'dashboard-link-report-tab':
-                $text = esc_attr__('The Links Report is a full report of all the links on this site broken down by post. The report also allows you to easily create and delete links between your posts.', 'wpil');
+                $text = esc_attr__('The Links Report shows every link on your site, organized by post. Use it to quickly create or remove links between your content.', 'wpil');
                 break;
             case 'dashboard-domain-report-tab':
-                $text = esc_attr__('The Domains Report is a full report of all your site\'s links broken down by domain. The report also allows you to easily add or remove attributes from links, and mass delete links by domain.', 'wpil');
+                $text = esc_attr__('The Domains Report breaks down your site’s links by domain. You can add/remove link attributes and bulk-delete links by domain.', 'wpil');
                 break;
             case 'dashboard-click-report-tab':
-                $text = esc_attr__('The Clicks Report shows you all the clicks that your links have received, broken down by post.', 'wpil');
+                $text = esc_attr__('The Clicks Report displays all link clicks across your site, broken down by post, so you can see what’s getting traffic.', 'wpil');
                 break;
             case 'dashboard-broken-links-report-tab':
-                $text = esc_attr__('The Broken Links Report shows you all the broken links that Link Whisper has detected on your site.', 'wpil');
+                $text = esc_attr__('The Broken Links Report lists all detected broken links so you can fix or remove them.', 'wpil');
                 break;
             case 'dashboard-visual-sitemaps-report-tab':
-                $text = sprintf(esc_attr__('The Visual Sitemaps Report is where you can view the sitemaps that Link Whisper generates.%sThe sitemaps give you a graphical representation of your site so you can easily see things like how your posts are linked together and what domains you\'re linking to.%sIf you have AI data downloaded, the sitemaps will also be able to show you what posts are related to each other, and what products you are currently linking to.', 'wpil'), '<br><br>', '<br><br>');
+                $text = sprintf(esc_attr__('The Visual Sitemap Report uses charts to show how your posts are linked and what domains you\'re linking to.%sIf AI data is available, it also reveals related posts and linked products.', 'wpil'), '<br><br>');
                 break;
             case 'dashboard-run-link-scan-button':
-                $text = sprintf(esc_attr__('The "Run A Link Scan" button activates Link Whisper\'s active link scan.%sThe Link Scan searches over the entire site to find all of its links so that they can be used in the reports.%sThe Link Scan is normally only needed to be activated when changing major settings or if the Links Report data is out of sync with the site.', 'wpil'), '<br><br>', '<br><br>');
+                $text = sprintf(esc_attr__('The "Run A Link Scan" button starts a full site scan to detect all links for use in reports.%sUsually only needed after major setting changes or if link data appears out of sync.', 'wpil'), '<br><br>');
                 break;
             case 'dashboard-link-stats-widget':
                 $text = esc_attr__('The Link Stats widget shows you a high-level overview of the site\'s posts and links.', 'wpil');
+                break;
+            case 'dashboard-report-loading-bar':
+                $text = esc_attr__('The Scan Progress bar shows you the progress of the wizard\'s scanning. It also provides an estimate of how long it will be until the scan is complete.', 'wpil');
                 break;
             case 'dashboard-link-stats-widget-posts-crawled-stat':
                 $text = esc_attr__('The Posts Crawled stat says how many posts Link Whisper has scanned for links.', 'wpil');
@@ -886,25 +1042,25 @@ class Wpil_Toolbox
                 $text = esc_attr__('The Links Found stat says how many links Link Whisper found while scanning.', 'wpil');
                 break;
             case 'dashboard-link-stats-widget-internal-links-stat':
-                $text = esc_attr__('The Internal Links stat says how many links on the site point to other posts on this site.', 'wpil');
+                $text = esc_attr__('The Internal Links stat displays the number of links pointing to other posts within your site.', 'wpil');
                 break;
             case 'dashboard-link-stats-widget-orphaned-posts-stat':
-                $text = sprintf(esc_attr__('The Orphaned Posts stat says how many posts on this site do not have any links pointing to them.%sClicking on the stat will take you to the Orphaned Posts report, where you can quickly create links pointing to your orphaned posts.', 'wpil'), '<br><br>');
+                $text = sprintf(esc_attr__('Shows how many posts have no internal links pointing to them.%sClick to view the Orphaned Posts Report and quickly add links to them.', 'wpil'), '<br><br>');
                 break;
             case 'dashboard-link-stats-widget-broken-links-stat':
-                $text = sprintf(esc_attr__('The Broken Links stat says how many broken links Link Whisper has detected on the site.%sClicking on the stat will take you to the Broken Links Report.', 'wpil'), '<br><br>');
+                $text = sprintf(esc_attr__('The Broken Links stat says how many broken links have been detected on the site.%sClicking on the stat will take you to the Broken Links Report.', 'wpil'), '<br><br>');
                 break;
             case 'dashboard-link-stats-widget-broken-videos-stat':
-                $text = sprintf(esc_attr__('The Broken Video Links stat says how many broken video links Link Whisper has detected on the site.%sClicking on the stat will take you to the Broken Links Report, and will set it to show you all the broken videos that have been detected.', 'wpil'), '<br><br>');
+                $text = sprintf(esc_attr__('Shows how many broken video links have been found.%sClick to view any video issues on the Broken Links Report.', 'wpil'), '<br><br>');
                 break;
             case 'dashboard-link-stats-widget-404-links-stat':
-                $text = sprintf(esc_attr__('The 404 Errors stat says how many 404 pages Link Whisper has detected on the site.%sClicking on the stat will take you to the Broken Links Report, and will set it to show you all of the 404 pages on the site.', 'wpil'), '<br><br>');
+                $text = sprintf(esc_attr__('The 404 Errors stat show how many 404 links have been detected.%sClick to view them in the Broken Links Report.', 'wpil'), '<br><br>');
                 break;
             case 'dashboard-domains-widget':
                 $text = esc_attr__('The Most Linked To Domains widget shows you the domains that your site is linking to the most.', 'wpil');
                 break;
             case 'dashboard-internal-external-links-widget':
-                $text = esc_attr__('The Internal vs External links widget shows you how many links you have pointing between posts on this site, compared to how many links are pointing to other sites.', 'wpil');
+                $text = esc_attr__('The Internal vs External links widget compares how many links point to posts on this site vs. links pointing to external sites.', 'wpil');
                 break;
             /* Links Report */
             case 'link-report-header':
@@ -953,28 +1109,28 @@ class Wpil_Toolbox
                 $text = esc_attr__('This is the Link Whisper Outbound Suggestion panel. The suggestions shown here are for links that will be inserted into this post, and will point to other posts on the site.', 'wpil');
                 break;
             case 'outbound-suggestions-link-orphaned':
-                $text = esc_attr__('Turning "On" the option to "Only Suggest Links to Orphaned Posts" will tell Link Whisper to generate suggestions pointing to posts that don\'t have any links currently pointing to them.', 'wpil');
+                $text = esc_attr__('Turning "On" the option to "Only Link to Orphaned Posts" will tell Link Whisper to generate suggestions pointing to posts that don\'t have any links currently pointing to them.', 'wpil');
                 break;
             case 'outbound-suggestions-link-same-parent':
                 $text = esc_attr__('Turning "On" the option to "Only Suggest Links to Posts With the Same Parent as This Post" will tell Link Whisper to generate suggestions pointing to posts that have the same parent post as this one.', 'wpil');
                 break;
             case 'outbound-suggestions-link-same-category':
-                $text = esc_attr__('Turning "On" the option to "Only Show Link Suggestions in the Same Category as This Post" will tell Link Whisper to only make linking suggestions to posts that are in the same categories as the current post.', 'wpil') . '<br><br>' . esc_attr__('When you turn on this option, you will see a dropdown of the post\'s current categories so you can further narrow down the categories of posts to search in for suggestions.', 'wpil');
+                $text = esc_attr__('Turning "On" the option to "Only Link in This Post\'s Categories" will tell Link Whisper to only make linking suggestions to posts that are in the same categories as the current post.', 'wpil') . '<br><br>' . esc_attr__('When you turn on this option, you will see a dropdown of the post\'s current categories so you can further narrow down the categories of posts to search in for suggestions.', 'wpil');
                 break;
             case 'outbound-suggestions-link-same-tags':
-                $text = esc_attr__('Turning "On" the option to "Only Show Link Suggestions with the Same Tag as This Post" will tell Link Whisper to only make linking suggestions to posts that have the same tags as the current post.', 'wpil') . '<br><br>' . esc_attr__('When you turn on this option, you will see a dropdown of the post\'s current tags so you can further narrow down the number of tagged posts to search for suggestions.', 'wpil');
+                $text = esc_attr__('Turning "On" the option to "Only Suggest Posts with the Same Tags" will tell Link Whisper to only make linking suggestions to posts that have the same tags as the current post.', 'wpil') . '<br><br>' . esc_attr__('When you turn on this option, you will see a dropdown of the post\'s current tags so you can further narrow down the number of tagged posts to search for suggestions.', 'wpil');
                 break;
             case 'outbound-suggestions-link-post-type':
-                $text = esc_attr__('Turning "On" the option to "Select the Post Types to use in Suggestions" will allow you to restrict Link Whisper\'s suggestions to posts in specific post types.', 'wpil') . '<br><br>' . esc_attr__('This is helpful if you want to target a particular post type for linking, or you want to completely ignore a post type from the suggestions.', 'wpil');
+                $text = esc_attr__('Turning "On" the option to "Select Linking Post Types" will allow you to restrict Link Whisper\'s suggestions to posts in specific post types.', 'wpil') . '<br><br>' . esc_attr__('This is helpful if you want to target a particular post type for linking, or you want to completely ignore a post type from the suggestions.', 'wpil');
                 break;
             case 'outbound-suggestions-regenerate-suggestions':
                 $text = esc_attr__('The "Regenerate Suggestions" button allows you to regenerate the suggestions after changing any of the above linking options.', 'wpil');
                 break;
             case 'outbound-suggestions-export-support':
-                $text = esc_attr__('The "Export data for support" link is used to generate a diagnostic export when contacting Link Whisper support. It contains information about this post, and some information about the site to help Support diagnose problems if they are occuring.', 'wpil');
+                $text = esc_attr__('The "Export Support Data" link is used to generate a diagnostic export when contacting Link Whisper support. It contains information about this post, and some information about the site to help Support diagnose problems if they are occuring.', 'wpil');
                 break;
             case 'outbound-suggestions-export-excel':
-                $text = esc_attr__('The "Export Post Data to Excel" exports this post\'s link information to an Excel spreadsheet. The export contains a full list of this post\'s Inbound Internal, Outbound Internal, and External links.', 'wpil');
+                $text = esc_attr__('The "Export Links to Excel" exports this post\'s link information to an Excel spreadsheet. The export contains a full list of this post\'s Inbound Internal, Outbound Internal, and External links.', 'wpil');
                 break;
             case 'outbound-suggestions-suggestion-data':
                 $text = esc_attr__('The "Export Suggestion Data to CSV" exports the all of the suggestion data that Link Whisper has generated for this post to a .CSV spreadsheet.', 'wpil');
@@ -983,13 +1139,13 @@ class Wpil_Toolbox
                 $text = esc_attr__('The "Add Inbound Links" button is a shortcut to the Inbound Suggestion page for this post. Clicking on it will take you to the Inbound Suggestion Page for this post so you can quickly create links pointing to this post.', 'wpil');
                 break;
             case 'outbound-suggestions-filter-date':
-                $text = esc_attr__('The "Filter Displayed Posts by Published Date" filter allows you to hide all suggestions for posts that were published at times outside of the selected range.', 'wpil') . '<br><br>' . esc_attr__('By default, suggestions are shown for posts published between January, 1, 2000 and the present day.', 'wpil');
+                $text = esc_attr__('The "Filter by Date" filter allows you to hide all suggestions for posts that were published at times outside of the selected range.', 'wpil') . '<br><br>' . esc_attr__('By default, suggestions are shown for posts published between January, 1, 2000 and the present day.', 'wpil');
                 break;
             case 'outbound-suggestions-filter-keywords':
                 $text = esc_attr__('The "Filter Suggested Posts by Keyword" filter allows you to search the generated suggestions for suggestions that contain a specific word or phrase.', 'wpil') . '<br><br>' . esc_attr__('(Give it a try, you should see the number of suggestions trim up fast)', 'wpil');
                 break;
             case 'outbound-suggestions-filter-ai-score':
-                $text = esc_attr__('The "Filter Suggestions by AI Score" filter The "Filter Suggestions by AI Score" allows you to filter the current suggestions so that you\'re only shown suggestions that AI thinks are related to the post.', 'wpil') . '<br><br>' . esc_attr__('To use it, just move the purple slider to the right until it reaches the desired limit for how related a post needs to be in order to be suggested.', 'wpil') . '<br><br>' . esc_attr__('(Try setting it to 70%, you should see the suggestions become much more like this post)', 'wpil');
+                $text = esc_attr__('The "Filter by AI Score" filter allows you to filter the current suggestions so that you\'re only shown suggestions that AI thinks are related to the post.', 'wpil') . '<br><br>' . esc_attr__('To use it, just move the purple slider to the right until it reaches the desired limit for how related a post needs to be in order to be suggested.', 'wpil') . '<br><br>' . esc_attr__('(Try setting it to 70%, you should see the suggestions become much more like this post)', 'wpil');
                 break;
             case 'outbound-suggestions-sort-suggestions':
                 $options =
@@ -1009,7 +1165,22 @@ class Wpil_Toolbox
         }
 
         if(!empty($text)){
-            $text = 'data-wpil-tooltip-content="' . $text . '"';
+            // create an estimate of how long the popup should show
+            // start with our baseline reading speed for a really slow reader
+            $wpm = 150;
+            // find out how many words per second that is
+            $wps = ($wpm/60);
+            // count the number of words in the text
+            $wcount = Wpil_Word::getWordCount($text);
+            // calculate how long it will take to read
+            $spd = ($wps * $wcount) * 100;
+
+            // make sure that it's at least 4.5 seconds
+            if($spd < 4500){
+                $spd = 4500;
+            }
+
+            $text = 'data-wpil-tooltip-content="' . $text . '" data-wpil-tooltip-read-time="' . $spd . '"';
         }
 
         return $text;
@@ -1119,4 +1290,213 @@ class Wpil_Toolbox
         // Check if array is associative
         return count(array_filter(array_keys($array), 'is_string')) > 0;
     }
+
+    /**
+     * Creates a standard content id so we can tell if a post's content has changed
+     **/
+    public static function create_post_content_id($post){
+
+        if(empty($post) || !is_a($post, 'Wpil_Model_Post')){
+            return false;
+        }
+        
+        $content = $post->getContent();
+        
+        // replace unicode chars with their decoded forms
+        $replace_unicode = array('\u003c', '\u003', '\u0022');
+        $replacements = array('<', '>', '"');
+
+        $content = str_ireplace($replace_unicode, $replacements, $content);
+
+        // replace any base64ed image urls
+        $content = preg_replace('`src="data:image\/(?:png|jpeg);base64,[\s]??[a-zA-Z0-9\/+=]+?"`', '', $content);
+        $content = preg_replace('`alt="Source: data:image\/(?:png|jpeg);base64,[\s]??[a-zA-Z0-9\/+=]+?"`', '', $content);
+
+        // decode page builder encoded sections
+        $content = Wpil_Suggestion::decode_page_builder_content($content);
+
+        // remove the heading tags from the text
+        $content = mb_ereg_replace('<h1(?:[^>]*)>(.*?)<\/h1>|<h2(?:[^>]*)>(.*?)<\/h2>|<h3(?:[^>]*)>(.*?)<\/h3>|<h4(?:[^>]*)>(.*?)<\/h4>|<h5(?:[^>]*)>(.*?)<\/h5>|<h6(?:[^>]*)>(.*?)<\/h6>', '', $content);
+
+        // remove the head tag if it's present. It should only be present if processing a full page stored in the content
+        if(false !== strpos($content, '<head')){
+            $content = mb_ereg_replace('<head(?:[^>]*)>(.*?)<\/head>', '', $content);
+        }
+
+        // remove any title tags that might be present. These should only be present if processing a full page stored in the content
+        if(false !== strpos($content, '<title')){
+            $content = mb_ereg_replace('<title(?:[^>]*)>(.*?)<\/title>', '', $content);
+        }
+
+        // remove any meta tags that might be present. These should only be present if processing a full page stored in the content
+        if(false !== strpos($content, '<meta')){
+            $content = mb_ereg_replace('<meta(?:[^>]*)>(.*?)<\/meta>', '', $content);
+        }
+
+        // remove any link tags that might be present. These should only be present if processing a full page stored in the content
+        if(false !== strpos($content, '<link')){
+            $content = mb_ereg_replace('<link(?:[^>]*)>(.*?)<\/link>', '', $content);
+        }
+
+        // remove any script tags that might be present. We really don't want to suggest links for schema sections
+        if(false !== strpos($content, '<script')){
+            $content = mb_ereg_replace('<script(?:[^>]*)>(.*?)<\/script>', '', $content);
+        }
+
+        // remove any YooTheme JSON that's in the content
+        if( false !== strpos($content, '<!--more-->') && (false !== strpos($content, '<!--') || false !== strpos($content, '<!-- ')) && Wpil_Editor_YooTheme::yoo_active()){
+            $content = mb_ereg_replace('<!--\s*?(\{(?:.*?)\})\s*?-->', '', $content);
+        }
+
+        // if there happen to be any css tags, remove them too
+        if(false !== strpos($content, '<style')){
+            $content = mb_ereg_replace('<style(?:[^>]*)>(.*?)<\/style>', '', $content);
+        }
+
+        // if there are any 'pre' tags, remove them from the content
+        if(false !== strpos($content, '<pre')){
+            $content = mb_ereg_replace('<pre(?:[^>]*)>(.*?)<\/pre>', "\n", $content);
+        }
+
+        // remove any shortcodes that the user has defined
+        $content = Wpil_Suggestion::removeShortcodes($content);
+
+        // remove page builder modules that will be turned into things like headings, buttons, and links
+        $content = Wpil_Suggestion::removePageBuilderModules($content);
+
+        // remove elements that have certain classes
+        $content = Wpil_Suggestion::removeClassedElements($content);
+
+        // remove any tags that the user doesn't want to create links in
+        $content = Wpil_Suggestion::removeIgnoredContentTags($content);
+
+        return md5(strip_tags($content));
+    }
+
+    /**
+     * Obtains a list of all the known urls on the site that we are supposed to process.
+     * @param bool $relative Should we only concern ourselves with returning a list of relative links? Default is yes to save space
+     **/
+    public static function get_site_page_urls($relative = true){
+        $urls = array();
+        $ids = Wpil_Report::get_all_post_ids();
+        if(!empty($ids)){
+            foreach($ids as $id){
+                $post = new Wpil_Model_Post($id);
+                $link = $post->getViewLink();
+
+                if(empty($link)){
+                    continue;
+                }
+
+                $urls[$post->get_pid()] = ($relative) ? wp_make_link_relative($link): $link;
+            }
+        }
+        $ids = Wpil_Report::get_all_term_ids();
+        if(!empty($ids)){
+            foreach($ids as $id){
+                $post = new Wpil_Model_Post($id, 'term');
+                $link = $post->getViewLink();
+
+                if(empty($link)){
+                    continue;
+                }
+
+                $urls[$post->get_pid()] = ($relative) ? wp_make_link_relative($link): $link;
+            }
+        }
+
+        return $urls;
+    }
+
+    /**
+     * 
+     **/
+    public static function track_process_progress($process = '', $display_name = '', $completed = 0, $remaining = 0, $total = ''){
+        /**
+         * Currently tracked processes are
+         * * post_scanning
+         * * link_scanning
+         * * target_keyword_scanning
+         * * autolink_keyword_importing
+         **/
+
+
+        $tracking = get_transient('wpil_loading_progress_tracker');
+
+        // if we don't have any tracking data
+        if(empty($tracking)){
+            $tracking = array(
+                $process => array(
+                    'display_name' => $display_name,
+                    'total' => $total,
+                    'total_completed' => $completed,
+                    'start' => microtime(true),
+                    'runs' => array(
+                        array(
+                            'completed' => $completed, // #completed during this processing run
+                            'remaining' => $remaining, // #remaining as of this run
+                            'time' => microtime(true)
+                        )
+                    )
+                )
+            );
+        }elseif(!isset($tracking[$process])){
+            // if this is the first time for this process
+            $tracking[$process] = array(
+                'display_name' => $display_name,
+                'total' => $total,
+                'total_completed' => $completed,
+                'start' => microtime(true),
+                'runs' => array(
+                    array(
+                        'completed' => $completed,
+                        'remaining' => $remaining,
+                        'time' => microtime(true)
+                    )
+                )
+            );
+        }else{
+            // if this is adding another processing run to the list
+            $tracking[$process]['total_completed'] += $completed;
+            $tracking[$process]['runs'][] = array(
+                'completed' => $completed,
+                'remaining' => $remaining,
+                'time' => microtime(true)
+            );
+        }
+
+        set_transient('wpil_loading_progress_tracker', $tracking, 15 * MINUTE_IN_SECONDS);
+    }
+
+    /**
+     * 
+     **/
+    public static function clear_tracked_process_progress(){
+        delete_transient('wpil_loading_progress_tracker');
+    }
+
+    /**
+     * Gets the max_allowable_package size for the current database
+     **/
+    public static function get_max_allowable_package_size(){
+        global $wpdb;
+
+        if(!empty(self::$max_package_size)){
+            return self::$max_package_size;
+        }
+
+        $result = $wpdb->get_row("SHOW VARIABLES LIKE 'max_allowed_packet'");
+        if ($result) {
+            self::$max_package_size = (int)$result->Value;
+        }
+
+        return self::$max_package_size;
+    }
+
+    public static function get_version_number(){
+        $plugin_data = get_plugin_data(WP_INTERNAL_LINKING_PLUGIN_DIR . 'link-whisper.php');
+        return (isset($plugin_data['Version'])) ? sanitize_text_field($plugin_data['Version']): WPIL_PLUGIN_VERSION_NUMBER; // WPIL_PLUGIN_VERSION_NUMBER number _should_ be the current version, but sometimes it's not so we rely on the plugin data first.
+    }
+
 }

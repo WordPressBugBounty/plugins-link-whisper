@@ -58,6 +58,8 @@ class Wpil_Export
      */
     public static function getExportData($post)
     {
+        global $wpdb;
+
         // detach any hooks known to cause problems in the loading
         Wpil_Base::remove_problem_hooks(true);
 
@@ -74,10 +76,12 @@ class Wpil_Export
 
         //export settings
         $settings = [];
-        foreach (Wpil_Settings::$keys as $key) {
-            $settings[$key] = get_option($key, null);
+        $setting_data = $wpdb->get_results("SELECT * FROM {$wpdb->options} where option_name LIKE 'wpil_%'");
+        foreach ($setting_data as $dat) {
+            //$settings[$key] = get_option($key, null);
+            $settings[$dat->option_name] = maybe_unserialize($dat->option_value);
         }
-        $settings['ignore_words'] = get_option('wpil_2_ignore_words', null);
+        //$settings['ignore_words'] = get_option('wpil_2_ignore_words', null);
 
         $is_admin = current_user_can('activate_plugins');
 
@@ -128,6 +132,8 @@ class Wpil_Export
             'ACF_active' => class_exists('ACF'),
             'table_statuses' => self::get_table_data(),
             'active_plugins' => ($is_admin) ? get_option('active_plugins', array()): 'User not an admin',
+            'has_oai_api_key' => $has_open_ai_key,
+            'oai_processing_status' => json_encode(Wpil_AI::get_ai_batch_processing_status()),
             'settings' => $settings
         ];
 
@@ -267,12 +273,7 @@ class Wpil_Export
 
         if ($count == 1) {
             // if this is the first go round, clear any old exports
-            $files = glob($dir . '*_export.csv');
-            if(!empty($files)){
-                foreach($files as $file){
-                    unlink($file);
-                }
-            }
+            self::clear_exports();
 
             $fp = fopen($dir . $filename, 'w');
             switch ($type) {
