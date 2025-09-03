@@ -3744,6 +3744,44 @@ function triggerConfettiExplosion() {
     }
 
     /**
+     * Gets if the user wants to try clearing the CDN cache after link deletes
+     * Returns false by default, and only true if the user has activated the setting.
+     **/
+    public static function clear_cdn()
+    {
+        return (!empty(get_option('wpil_clear_cdn_link_delete', false)));
+    }
+
+    /**
+     * Gets if the user wants to try flushing the object cache after unspecified actions
+     * Returns false by default, and only true if the user has activated the setting.
+     **/
+    public static function flush_object_cache()
+    {
+        return (!empty(get_option('wpil_object_cache_flush', false)));
+    }
+
+    /**
+     * Gets if the user wants to try optimizing the options table.
+     * Returns false by default, and only true if the user has activated the setting.
+     * @return bool
+     **/
+    public static function get_if_options_should_optimize()
+    {
+        return (!empty(get_option('wpil_optimize_option_table', false)));
+    }
+
+    /**
+     * Gets if the user wants to try updating the post after certain actions. (Viz, link deletes)
+     * Returns false by default, and only true if the user has activated the setting.
+     * @return bool
+     **/
+    public static function update_post_after_actions()
+    {
+        return (!empty(get_option('wpil_update_post_after_action', false)));
+    }
+
+    /**
      * Gets if the user wants to make suggestion matches based on some of the words in the post title.
      **/
     public static function matchPartialTitles()

@@ -3,7 +3,7 @@ Contributors: linkwhspr
 Tags: links, SEO, internal linking, link building, orphan content
 Requires at least: 4.6
 Tested up to: 6.8.2
-Stable Tag: 0.8.5
+Stable Tag: 0.8.6
 Requires PHP: 5.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -158,8 +158,11 @@ We are confident that you’ll be happy with Link Whisper Premium. However, if y
 15. [Premium] The URL Changer allows you to update old links to point to new URLs.
 
 == Changelog ==
+= 0.8.6 =
+* [BUGFIX] Fixing password generation error.
+
 = 0.8.5 =
-* [ADJUSTMENT] Version bump to fix misformatted.
+* [ADJUSTMENT] Version bump to fix misformatted files.
 
 = 0.8.4 =
 * [ADJUSTMENT] Adjusting the content measuring tools to reduce download size.

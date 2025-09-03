@@ -6,17 +6,13 @@
  */
 class Wpil_Toolbox
 {
-
     private static $encryption_possible = null;
     private static $pillar_ids = null;
     private static $max_package_size = 0;
 
-    /**
-     * Escapes strings for "LIKE" queries
-     **/
-    public static function esc_like($string = ''){
-        global $wpdb;
-        return '%' . $wpdb->esc_like($string) . '%';
+
+    public static function register(){
+        add_action('wp_ajax_wpil_flush_object_cache', array(__CLASS__, 'ajax_flush_object_cache'));
     }
 
     /**
@@ -170,6 +166,15 @@ class Wpil_Toolbox
         return self::decrypt($data);
     }
 
+
+    /**
+     * Escapes strings for "LIKE" queries
+     **/
+    public static function esc_like($string = ''){
+        global $wpdb;
+        return '%' . $wpdb->esc_like($string) . '%';
+    }
+
     /**
      * Gets if custom rules have been added to the .htaccess file
      **/
@@ -236,6 +241,154 @@ class Wpil_Toolbox
     }
 
     /**
+     * Attempts to clear the CDN cache for a specific post
+     **/
+    public static function attempt_cdn_clearing($post_id, $type){
+        // exit if we're not supposed to be clearing the cache
+        if(empty($post_id) || !Wpil_Settings::clear_cdn()){
+            return;
+        }
+
+        // if WP Rocket is available
+        if(function_exists('rocket_clean_post') && $type === 'post'){
+            // try using it to clear the cache
+            rocket_clean_post($post_id);
+        }elseif(function_exists('rocket_clean_term') && $type === 'term'){
+            $term = get_term($post_id);
+            if(!empty($term) && !is_a($term, 'WP_Error')){
+                rocket_clean_post($post_id, $term->taxonomy);
+            }
+        }else{
+            self::clear_varnish_cache($post_id, $type);
+        }
+    }
+
+    /**
+     * Makes a call to attempt to clear the Varnish cache for a specific post
+     **/
+    public static function clear_varnish_cache($post_id, $type = 'post'){
+        // create our post object
+        $post = new Wpil_Model_Post($post_id, $type);
+
+        // try getting it's view link        
+        $view_link = $post->getViewLink();
+
+        // if that didn't work
+        if(empty($view_link)){
+            // exit
+            return;
+        }
+
+		$url_parts = wp_parse_url($view_link);
+
+        if(!isset($url_parts['host']) || empty($url_parts['host'])){
+            return;
+        }
+
+        // obtain the information that we'll need to make the ping
+        $protocol = ((isset($url_parts['scheme'])) ? $url_parts['scheme']: (is_ssl() ? 'https': 'http')) . '://';
+        $host = $url_parts['host']; // todo consider pulling the site host if this misses.
+        $path = (isset($url_parts['path'])) ? $url_parts['path'] : '';
+
+        // create a list of addresses to ping
+        $addresses = array(
+            'localhost',
+            '127.0.0.1',
+            '::1'
+        );
+
+        // get the port that we'll be targeting and allow filtering
+        $port = apply_filters('wpil_filter_varnish_purge_port', 6081);
+
+        // if we have a port
+        if(!empty($port) && is_numeric($port)){
+            // add it to the host header
+            $host . ':' . $port;
+        }
+
+		// go over the address list and ping each one
+		foreach($addresses as $address) {
+
+			// assemble the URL to ping
+			$call_url = $protocol . $address . $path;
+
+            // assemble the headers
+            $headers = 	array(
+                'sslverify' => false,
+                'method'    => 'PURGE',
+                'headers'   => array(
+                    'host'           => $host,
+                    'X-Purge-Method' => 'default',
+                ),
+            );
+
+            // make the call
+			wp_remote_request($call_url, $headers);
+		}
+    }
+
+    /**
+     * Triggers a post update after clearing the post cache to _hopefully_ get around caching issues.
+     * Only focussing on clearing caches for posts, there doesn't seem to be much need on terms
+     **/
+    public static function trigger_clean_post_update($post_id, $type = 'post'){
+        // exit if we're not supposed to be updating the post
+        if(empty($post_id) || !Wpil_Settings::update_post_after_actions()){
+            return;
+        }
+
+        if($type === 'post'){
+            // delete the existing cache for this post
+            wp_cache_delete($post_id, 'posts');
+            // get a fresh version from the DB to make sure it exists
+            $post = get_post($post_id);
+            // if it does and there were no issues
+            if(!empty($post) && !is_a($post, 'WP_Error')){
+                // "update" the post
+                wp_update_post(array(
+                    'ID' => $post->ID
+                ));
+            }
+        }
+    }
+
+    /**
+     * Attempts to flush any active object cache
+     **/
+    public static function attempt_object_cache_flush(){
+        global $wp_object_cache;
+
+        // exit if we're not supposed to be clearing the cache
+        if(!Wpil_Settings::flush_object_cache()){
+            return;
+        }
+
+        if(!empty($wp_object_cache) && method_exists($wp_object_cache, 'flush')){
+            try {
+                $wp_object_cache->flush();
+            } catch (Throwable $t) {
+            } catch (Exception $e) {
+            }
+        }
+    }
+
+    /**
+     * Attempts to flush any active object cache via AJAX
+     **/
+    public static function ajax_flush_object_cache(){
+        // if:
+        if( is_admin() && // we're in the admid
+            isset($_POST['nonce']) && // we have a nonce
+            wp_verify_nonce($_POST['nonce'], 'wpil-flush-object-cache') && // the nonce is good
+            current_user_can(apply_filters('wpil_filter_main_permission_check', 'manage_categories', Wpil_Base::get_current_page()))) // and the user can use LinkWhisper
+        {
+            // flush the cache
+            self::attempt_object_cache_flush();
+        }
+        die();
+    }
+
+    /**
      * Checks to see if the current post is a pillar content post.
      * Currently only checks for Rank Math setting
      * 
@@ -255,6 +408,31 @@ class Wpil_Toolbox
         }
 
         return in_array($post_id, self::$pillar_ids);
+    }
+
+    /**
+     * Optimizes the option table if the user has enabled optimizing of the table.
+     * This is firing the "OPTIMIZE TABLE" command on the options table, not removing temp data or cleaning up rows of data
+     **/
+    public static function maybe_optimize_options_table(){
+        global $wpdb;
+        
+        // if the user hasn't opted to optimize the options table or we're waiting for the optimizing to cooldown
+        if(!Wpil_Settings::get_if_options_should_optimize()){
+            // exit
+            return;
+        }
+
+        // get the options table information
+        $option_status = $wpdb->get_row("SHOW TABLE STATUS WHERE Name = '{$wpdb->options}'");
+        if( !empty($option_status) &&               // if there's data
+            isset($option_status->Engine) &&        // and the engine is set
+            $option_status->Engine === 'InnoDB' &&  // and we're working with an "InnoDB" table
+            isset($option_status->Data_free) &&     // and there's overhead
+            $option_status->Data_free > 1000000000  // and there's more than a GB tied up in overhead
+        ){
+            $optimize = $wpdb->get_row("OPTIMIZE TABLE `{$wpdb->options}`");
+        }
     }
 
     /**
@@ -990,6 +1168,105 @@ class Wpil_Toolbox
         return $posts;
     }
 
+    /**
+     * Checks to see if we're pretty sure that the current action was instagated by a REST call from an external source
+     **/
+    public static function is_doing_external_rest_api_action(){
+        $doing_rest = false;
+
+        if(!defined('REST_REQUEST')){
+            return $doing_rest;
+        }
+
+        // if
+        if(
+            (isset($_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW']) && // the application user && password are set
+            !empty($_SERVER['PHP_AUTH_USER']) && !empty($_SERVER['PHP_AUTH_PW'])) || // and not empty OR
+            (isset($_SERVER['HTTP_AUTHORIZATION']) && !empty($_SERVER['HTTP_AUTHORIZATION'])) // the application user && password are set
+        ){
+            // we must be looking at a REST API created post action
+            $doing_rest = true;
+        }elseif(isset($_SERVER['REQUEST_URI']) && !empty($_SERVER['REQUEST_URI'])){ // if there is a path available
+            // check if we're looking at the post|page endpoint
+            $rest_url = trailingslashit(rest_url('/wp/v2/posts'));
+            $request_url = trailingslashit($_SERVER['REQUEST_URI']);
+            $pos = strrpos($rest_url, $request_url);
+            if(false === $pos){
+                $rest_url = trailingslashit(rest_url('/wp/v2/pages'));
+                $pos = strrpos($rest_url, $request_url);
+            }
+
+            // if we are looking at a post|page endpoint, and there are no other parameters
+            if(false !== $pos && strlen($rest_url) === ($pos + strlen($request_url))){
+                // we must be looking at a REST API created post
+                $doing_rest = true;
+            }
+        }
+
+        return $doing_rest;
+    }
+
+    /**
+     * Programatically generates an application password for a specific application
+     **/
+    public static function create_application_password_for_user($user_id, $app_name){
+        // Ensure the necessary files are included
+        if(!class_exists('WP_Application_Passwords')){
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/user.php';
+        }
+    
+        // make sure there isn't already a password with this name
+        self::revoke_application_passwords_by_name($user_id, $app_name, true);
+
+        // Generate a new application password
+        $new_password = wp_generate_password(24, false); // 24 characters, no special characters
+        $args = array(
+            'name'     => $app_name,
+            'password' => $new_password,
+        );
+
+        $item = WP_Application_Passwords::create_new_application_password($user_id, $args);
+
+        if(is_wp_error($item)){
+            // Handle error
+            return $item;
+        }
+
+        // return the password so we can do something with it
+        return $item[0];
+    }
+
+    /**
+     * Revokes purpose specific application passwords for users by application name
+     **/
+    public static function revoke_application_passwords_by_name($user_id, $app_name, $clear = false){
+        // Retrieve existing application passwords
+        $passwords = get_user_meta($user_id, '_application_passwords', true);
+
+        if(empty($passwords)){
+            // No application passwords found
+            return false;
+        }
+    
+        // Filter out passwords that match the given name
+        $updated_passwords = array_filter($passwords, function($password) use ($app_name, $clear){
+            if( $password['name'] === $app_name && // if this is one of our named LW passwords AND
+                ($clear ||  // we're supposed to clear all the LW named passwords OR
+                !$clear && $password['created'] < (time() - (MINUTE_IN_SECONDS * 5) )))   // this password has expired
+            {
+                return false;
+            }else{
+                return true;
+            }
+        });
+    
+        // Update the user's application passwords
+        update_user_meta($user_id, '_application_passwords', $updated_passwords);
+    
+        return true;
+    }
+
     public static function is_over_memory_limit(){
         $memory_break_point = Wpil_Report::get_mem_break_point();
         return (('disabled' !== $memory_break_point && memory_get_usage() > $memory_break_point));
@@ -1104,6 +1381,178 @@ class Wpil_Toolbox
             case 'link-report-table-first-item-':
             case 'link-report-table-first-item-':
             case 'link-report-table-first-item-':
+            /* Domains Report */
+            case 'domain-report-intro':
+                $text = esc_attr__('The Link Whisper Domains Report shows you all of the links on your site grouped by the domain that they are pointing to.', 'wpil');
+                break;
+            case 'domain-report-export':
+                $text = esc_attr__('The Domains Report Export buttons allow you to export the entire report to a .CSV file.', 'wpil') . '<br><br>' . esc_attr__('The "Detailed Export" exports all of the links in one big file, with each link getting it\'s own row in the spreadsheet. In addition to the link, information about its anchor, the domain that it points to, and the post that it\'s in is included in the export.', 'wpil') . '<br><br>' . esc_attr__('The "Summary Export" is a more condensed export which lists the domains that links are pointing to, the number of links pointing to each of them, and the number of posts that contain links for that specific domain.', 'wpil');
+                break;
+            case 'domain-report-search':
+                $text = esc_attr__('The Search form allows you to search for specific links or domains that you want to see in the report.', 'wpil');
+                break;
+            case 'domain-report-search-domains':
+                $text = esc_attr__('Selecting the option to search by "Domain" tells Link Whisper to find links with specific domains that match your search term.', 'wpil') . '<br><br>' . esc_attr__('This only searches for matching domains, so long URLs that contain the search term outside the domain won\'t be shown.', 'wpil');
+                break;
+            case 'domain-report-search-links':
+                $text = esc_attr__('Selecting the option to search by "Links" tells Link Whisper to search for links that contain your search term somewhere in it\'s URL.', 'wpil') . '<br><br>' . esc_attr__('This is a broader search than the "Domain" search, and will show links that have matches in either the domain or the URL path.', 'wpil');
+                break;
+            case 'domain-report-search-show-untargetted':
+                $text = esc_attr__('Selecting the option to search by "Show Untargeted" tells Link Whisper to find all the internal links that couldn\'t be traced to a specific post. In most cases, these are 404 links that haven\'t been redirected and should be updated.', 'wpil');
+                break;
+            case 'domain-report-table':
+                $text = esc_attr__('This is the Domain Report Table, and it shows all the domains that you\'re currently linking to on this site.', 'wpil') . '<br><br>' . esc_attr__('It also allows you to set domain-specific link attributes, see what posts have links for each domain, and what the individual links are.', 'wpil');
+                break;
+            case 'domain-report-table-domain-col':
+            case 'domain-report-table-attr-col':
+                $text = esc_attr__('The "Applied Domain Attributes" column allows you to set link attributes all of the links pointing to a specific domain. The attributes that you set here will override the attributes in the links themselves, so it\'s a great way to update old links, or to make sure all your links are behaving uniformly', 'wpil') . '<br><br>' . esc_attr__('For example, if you were linking to "wikipedia.org", and you wanted to make all of those links "nofollow" to be sure Google stays on your site and doesn\t follow them. You can set the "No Follow" attribute for wikipedia, and then click the blue "Update" button to set that attribute for all links pointing to wikipedia.', 'wpil');
+                break;
+            case 'domain-report-table-posts-col':
+                $text = esc_attr__('The "Posts" column shows you all the posts that contain links for the current domain.', 'wpil');
+                break;
+            case 'domain-report-table-links-col':
+                $text = esc_attr__('The "Links" column shows you all of the links that Link Whisper has dectected for the current domain.', 'wpil') . '<br><br>' . esc_attr__('From the dropdown, you can see more information about each detected link, quickly check out the link on the frontend, change its URL, or delete it.', 'wpil') . '<br><br>' . esc_attr__('You can quick delete all of the links from a specific domain by opening the dropdown, clicking on the "Select All" checkbox, and then clicking the "Delete Selected" button. This is a great way of quickly removing links to dead sites, or domains that you no longer wish to link to.', 'wpil');
+                break;
+            /* Clicks Report */
+            case 'click-report-intro':
+                $text = esc_attr__('The Link Whisper Clicks Report shows you all the link clicks that Link Whisper has tracked on your website.', 'wpil');
+                break;
+            case 'click-report-filter':
+                $text = esc_attr__('The post type filter allows you to filter the report table so that it only shows you posts from a specific post type.', 'wpil');
+                break;
+            case 'click-report-export':
+                $text = esc_attr__('The Click Report Export buttons allow you to export the last 30 days of clicks recorded in the report to a .CSV file.', 'wpil') . '<br><br>' . esc_attr__('The "Detailed Export" exports a list of all of the top-clicked links, broken down by the post that they\'re in. In addition, the export lists the link\'s URL, the number of clicks that it\'s gotten, and when the link was created if known.', 'wpil') . '<br><br>' . esc_attr__('The "Summary Export" is a more condensed export which lists the total number of clicks the links on each post have recieved.', 'wpil');
+                break;
+            case 'click-report-erase-data':
+                $text = esc_attr__('The "Erase Click Data" button tells Link Whisper to delete all of the click data stored in the database.', 'wpil') . '<br><br>' . esc_attr__('Please only delete this data when you are sure that you won\'t be needing it.', 'wpil');
+                break;
+            case 'click-report-search':
+            case 'click-report-table':
+                $text = esc_attr__('This is the Clicks Report table. It lists all of the posts that Link Whisper is set to monitor link clicks on, and shows you the high-level results of the tracking.', 'wpil');
+                break;
+            case 'click-report-table-post-col':
+                $text = esc_attr__('The "Post" column shows the title of each post that Link Whisper is tracking link clicks on.', 'wpil') . '<br><br>' . esc_attr__('The column is sortable, and clicking on it will sort the listed posts alphabetically.', 'wpil');
+                break;
+            case 'click-report-table-published-col':
+                $text = esc_attr__('The "Published" column shows when each of the posts was published.', 'wpil') . '<br><br>' . esc_attr__('This column is sortable and clicking on it will sort the posts according to age.', 'wpil');
+                break;
+            case 'click-report-table-type-col':
+                $text = esc_attr__('The "Post Type" column shows the post type of each of the listed posts.', 'wpil') . '<br><br>' . esc_attr__('The column is sortable, and clicking on it will sort the posts alphabetically by post type.', 'wpil');
+                break;
+            case 'click-report-table-link-clicks-col':
+                $text = esc_attr__('The "Link Clicks" column shows number of clicks tracked for each post.', 'wpil') . '<br><br>' . esc_attr__('Clicking on a dropdown containing link clicks will tell you more about the clicks that have been tracked, and will allow you to go to the "Detailed Click Report" area.', 'wpil') . '<br><br>' . esc_attr__('The column is sortable, and clicking on it will sort the posts based on the number of clicks each post has tracked.', 'wpil');
+                break;
+            case 'click-report-table-link-clicks-dropdown-open':
+            /* Broken Links Report */
+            case 'broken-link-report-intro':
+                $text = esc_attr__('The Link Whisper Broken Links Report lists all of the broken links that it has detected on this site.', 'wpil');
+                break;
+            case 'broken-link-report-codes':
+                $text = esc_attr__('The "Status Codes" selector allows you to pick the kinds of broken links shown in the report table, based on error code', 'wpil') . '<br><br>' . esc_attr__('By default, the report shows 404, 501, and 503 links, as well as links that point to sites that no longer exist or are misformatted.', 'wpil') . '<br><br>' . esc_attr__('To change what\'s shown in the report table, please select the kinds of broken links that you want to see, and then click the "Search" button.', 'wpil');
+                break;
+            case 'broken-link-report-filter':
+                $text = esc_attr__('', 'wpil');
+                break;
+            case 'broken-link-report-export':
+                $text = esc_attr__('The "Export to CSV" button allows you to export all of the broken links shown in the report to a .CSV file.', 'wpil') . '<br><br>' . esc_attr__('The export file will contain links from all the statuses selected in the "Status Codes" setting.', 'wpil') . '<br><br>' . esc_attr__('So if for example you only want to export 404 links, you can do it by selecting only the 404 error code in the "Status Codes" selector and then clicking the "Export to CSV" button.', 'wpil');
+                break;
+            case 'broken-link-report-scan-links':
+                $text = esc_attr__('The "Scan for Broken Links" button tells Link Whisper to clear the old broken link data, and rescan the site for broken links.', 'wpil');
+                break;
+            case 'broken-link-report-table':
+                $text = esc_attr__('This is the Broken Links Report table. It lists all of the broken links that Link Whisper has detected on your site, and allows you to modify or delete the links as needed.', 'wpil');
+                break;
+            case 'broken-link-report-table-bulk-delete':
+                $text = esc_attr__('This is the link Delete Selected button, it enables you to delete many broken links quickly and easily.', 'wpil') . '<br><br>' . esc_attr__('To do this, simply click on the checkboxes next to the links that you want to delete, and then click the button.', 'wpil') . '<br><br>' . esc_attr__('Link Whisper will then go into each post, and will remove the broken link from it\'s content.', 'wpil');
+                break;
+            case 'broken-link-report-table-checkbox-col':
+                $text = esc_attr__('These are the broken link selection checkboxes. Clicking on one of them will "select" the broken link so that it can be quickly deleted with the "Delete Selected" button.', 'wpil');
+                break;
+            case 'broken-link-report-table-post-col':
+                $text = esc_attr__('The "Post" column shows the titles of the post where the broken link is located.', 'wpil') . '<br><br>' . esc_attr__('The column is sortable, and clicking on it will sort the listed posts alphabetically by title.', 'wpil');
+                break;
+            case 'broken-link-report-table-post-type-col':
+                $text = esc_attr__('The "Post Type" column lists the "post type" of the post where the broken link is located.', 'wpil');
+                break;
+            case 'broken-link-report-table-broken-url-col':
+                $text = esc_attr__('The "Broken URL" column shows the broken link\'s URL so you can easily see where it is pointing to.', 'wpil') . '<br><br>' . esc_attr__('If you hover over the URL, you\'ll see a hover menu appear with the options to "Ignore" and "Edit".', 'wpil') . '<br><br>' . esc_attr__('Clicking on the "Ignore" option will tell Link Whisper that the link isn\'t broken and that it should not list the link in the report.', 'wpil') . '<br><br>' . esc_attr__('Clicking on the "Edit" button will open the URL editor for the link and will allow you to update the link\'s URL so that it is no longer broken.', 'wpil');
+                break;
+            case 'broken-link-report-table-anchor-col':
+                $text = esc_attr__('The "Anchor" column shows the anchor text for the broken link so you can see what the link\'s text is.', 'wpil');
+                break;
+            case 'broken-link-report-table-sentence-col':
+                $text = esc_attr__('The "Sentence" column shows the larger sentence that the broken link is in to give an idea of the context that it exists in.', 'wpil');
+                break;
+            case 'broken-link-report-table-type-col':
+                $text = esc_attr__('The "Type" column says if a broken link is internal or external. Internal links point to other posts on the site, while external links point to other sites.', 'wpil') . '<br><br>' . esc_attr__('The column is sortable, and clicking on it will sort the broken links by if they are internal or external.', 'wpil');
+                break;
+            case 'broken-link-report-table-status-col':
+                $text = esc_attr__('The "Status" column says what kind of broken link the current broken link is.') . '<br><br>' . esc_attr__('For example, if the broken link is a "404" type, the status will be "404 Not Found". If it was a "403" type, the status will be "403 Forbidden".') . '<br><br>' . esc_attr__('Currently, there are 48 different error codes that Link Whisper tracks.', 'wpil');
+                break;
+            case 'broken-link-report-table-discovered-col':
+                $text = esc_attr__('The "Discovered" column says when Link Whisper detected the broken link.', 'wpil');
+                break;
+            case 'broken-link-report-table-delete-col':
+                $text = esc_attr__('The blue "X" buttons allow you to quickly delete a single broken link. Just click on the "X", and Link Whisper will remove the broken link from the post that it\'s on.', 'wpil');
+                break;
+            /* Visual Sitemaps */
+            case 'visual-sitemap-report-intro':
+                $text = esc_attr__('The Visual Sitemaps Report is where you can see the sitemaps that Link Whisper creates to provide you with a visual representation of your site.', 'wpil');
+                break;
+            case 'visual-sitemap-report-generate-initial-maps':
+            case 'visual-sitemap-report-generate-maps':
+                $text = esc_attr__('Clicking on the "Generate Sitemaps" button will tell Link Whisper to clear the old sitemap data, and generate new maps. This is very helpful if you see that there are standard sitemaps missing or the standard sitemaps are out of sync with the site.', 'wpil') . '<br><br>' . esc_attr__('Regenerating the Sitemaps won\'t affect sitemaps that you create via .CSV upload. Those are managed from the "Manage Custom Sitemaps" section.', 'wpil');
+                break;
+            case 'visual-sitemap-report-select-maps':
+                $text = esc_attr__('The "Select Sitemap" dropdown allows you to select the sitemap you want to see in the Sitemap field.', 'wpil');
+                break;
+            case 'visual-sitemap-report-display-map':
+                $text = esc_attr__('After selecting a sitemap, you\'ll need to click on this "Display Sitemap" button to tell Link Whisper to show the selected sitemap in the Sitemap Field.', 'wpil');
+                break;
+            case 'visual-sitemap-report-manage-sitemaps':
+                $text = esc_attr__('The "Manage Custom Sitemaps" section allows you to create and delete your own custom sitemaps.', 'wpil');
+                break;
+            case 'visual-sitemap-report-labels':
+                $text = esc_attr__('The "Show/Hide Labels" button allows you to tell Link Whisper if it should show post titles in the sitemaps or not.', 'wpil') . '<br><br>' . esc_attr__('On very large sitemaps, it can be helpful to turn off the labels so it\'s easier to see the data.', 'wpil');
+                break;
+            case 'visual-sitemap-report-filter-maps':
+                $text = esc_attr__('The "Filter Sitemap Data" allows you to filter sitemaps so they only show posts that have titles matching your search term.', 'wpil');
+                break;
+            case 'visual-sitemap-table':
+                $text = esc_attr__('This is the Sitemap Field, and it\'s where Link Whisper will display all of your sitemaps.', 'wpil') . '<br><br>' . esc_attr__('You can zoom the field in and out to get a better look at the map, as well click-drag the window around to naviagte the map.', 'wpil') . '<br><br>' . esc_attr__('Right clicking on any of the post "dots" will open a quick menu that you can use to create links for the post that you clicked on.', 'wpil');
+                break;
+            case 'visual-sitemap-table-settings-menu':
+                $text = esc_attr__('The Sitemap Settings give you advanced control over the sitemap currently being displayed.', 'wpil') . '<br><br>' . esc_attr('<a href="https://linkwhisper.com/knowledge-base/what-are-the-sitemap-settings-and-what-do-they-do/" target="_blank">' . __('You can read more about the settings, and how they work, here.', 'wpil') . '</a>');
+                break;
+            /* Post Edit: Related Posts */
+            case 'related-posts-intro':
+                $text = esc_attr__('The Link Whisper Related Posts section allows you to manually control what posts are shown inside the Related Posts widget for this post.', 'wpil') . '<br><br>' . esc_attr__('You can select as many posts as you want to see listed in this post\'s widget, and clicking the "Refresh Auto Selected Links" inside of the Related Post Settings area won\'t reset them.', 'wpil');
+                break;
+            case 'related-posts-active':
+                $text = esc_attr__('This checkbox allows you to set if the Related Posts widget is active for this post or not.', 'wpil') . '<br><br>' . esc_attr__('Unchecking it will turn off the Related Posts widget for this post, and it won\'t affect other posts.', 'wpil');
+                break;
+            case 'related-posts-current-related':
+                $text = esc_attr__('This area shows all of the posts that are currently being linked to by this post\'s Related Posts widget. To remove a post from the widget, simply uncheck a post and click the "Update Related Posts" button.', 'wpil') . '<br><br>' . esc_attr__('(Clicking on the "Update Post" button won\'t save the selection.)', 'wpil');
+                break;
+            case 'related-posts-search':
+                $text = esc_attr__('This is the Related Posts search area, and it allows you to search for posts to include in the Related Posts widget for this post. Simply type a few letters or a word in the field, and Link Whisper will find you posts that have titles containing your search text.', 'wpil') . '<br><br>' . esc_attr__('Once the search is complete, you can select the posts that you want to show in the widget by clicking on their checkboxes and clicking the "Add Posts" button.', 'wpil') . '<br><br>' . esc_attr__('After adding the posts, and when you\'re satisfied with the selection, please click on the "Update Related Posts" to save them to the widget.', 'wpil');
+                break;
+            case 'related-posts-update':
+                $text = esc_attr__('This is the Related Posts Update button. Whenever you make a change to the related posts in this area, you\'ll need to click on this button to save the changes to the widget.', 'wpil') . '<br><br>' . esc_attr__('(Clicking on the post\'s "Update" or "Publish" button won\'t save the changes you make to the widget.)', 'wpil');
+                break;
+            /* Post Edit: Target Keywords */
+            case 'target-keywords-intro':
+                $text = esc_attr__('This is the Target Keyword Panel. It\'s used for setting and changing the Target Keywords for this post.', 'wpil') . '<br><br>' . esc_attr__('Target Keywords improve the suggestions, focus your links to emphasis specific keywords, and to help adjust what kinds of suggestions are shown to you.', 'wpil') . '<br><br>' . esc_attr__('How the Target Keywords are used depends on what kind of suggestions are being generated.', 'wpil') . '<br><br>' . esc_attr__('For Outbound Suggestions, (in the post editing screen), Link Whisper removes any suggestions that contain the keywords. This is because creating a link containing one of the Target Keywords indicates to search engines that the post that is being linking to should rank for that keyword. Since this is exactly opposite to what we want to achieve, the suggestions containing the keywords are removed.', 'wpil') . '<br><br>' . esc_attr__('On the Inbound Suggestions page, Link Whisper prioritizes suggestions that contain the Target Keywords. This is because we\'re trying to make the target post rank for specific keywords, and having links that contain them is a good thing.', 'wpil');
+                break;
+            case 'target-keywords-types':
+                $text = esc_attr__('These are the types of Target Keyword that are currently available. Each tab represents a source that has provided keywords to Link Whisper', 'wpil') . '<br><br>' . esc_attr__('Clicking on one of the keyword tabs will show you the keywords from the specific source of keywords.', 'wpil');
+                break;
+            case 'target-keywords-checkboxes':
+                $text = esc_attr__('To set the keywords for this post, just click the checkbox next to the keyword.', 'wpil') . '<br><br>' . esc_attr__('To unset a keyword, uncheck the the checkbox next to the keyword.', 'wpil');
+                break;
+            case 'target-keywords-update':
+                $text = esc_attr__('After checking or unchecking keywords, you\'ll need to click the "Update Existing Keywords" button to save them.', 'wpil');
+                break;
             /* Post Edit: Outbound Suggestions */
             case 'outbound-suggestions-intro':
                 $text = esc_attr__('This is the Link Whisper Outbound Suggestion panel. The suggestions shown here are for links that will be inserted into this post, and will point to other posts on the site.', 'wpil');
@@ -1162,6 +1611,143 @@ class Wpil_Toolbox
             case 'outbound-suggestions-table':
                 $text = esc_attr__('This is the suggestion table, it contains all of the suggestions that Link Whisper has for links that could be created inside of this post.', 'wpil') . '<br><br>' . esc_attr__('The table is designed to give you a wide selection of links to choose from so that you can pick out the best ones.', 'wpil') . '<br><br>' . esc_attr__('To add a link, simply click on the checkbox to it\'s left, and then click the "Insert Link Into Post" button. If you want to insert multiple links at once, just select all of the suggestions you like and then click the "Insert Link Into Post" button.', 'wpil');
                 break;
+            /* Inbound Suggestions */
+            case 'inbound-suggestions-intro':
+                $text = esc_attr__('This is the Inbound Suggestions Page. It generates linking suggestions that point to the target page, making it very easy to focus links on specific posts.', 'wpil');
+                break;
+            case 'inbound-suggestions-return-to-report':
+                $text = esc_attr__('The "Return to Report" button takes you back to the screen that you were on before opening the Inbound Suggestions Page.', 'wpil');
+                break;
+            case 'inbound-suggestions-link-target':
+                $text = esc_attr__('This is the post that all of the links created on this page will point to.', 'wpil');
+                break;
+            case 'inbound-suggestions-link-source':
+                $text = esc_attr__('This is the post where the links will be created.', 'wpil');
+                break;
+            case 'inbound-suggestions-keyword-search':
+                $text = esc_attr__('The "Search by Keyword" feature allows you to tell Link Whisper to search through all the posts on the site and find sentences to suggest that contain your search term.') . '<br><br>' . esc_attr__('This triggers a new search for suggestions, it doesn\'t filter the existing results.', 'wpil');
+                break;
+            case 'inbound-suggestions-link-stats':
+                $text = esc_attr__('These are the target post\'s current Inbound Internal, Outbound Internal and Outbound External links.') . '<br><br>' . esc_attr__('You can hide this panel by clicking on the "Target Post\'s Link Stats" button.', 'wpil');
+                break;
+            case 'inbound-suggestions-table':
+                $text = esc_attr__('This is the Inbound Suggestions table, and it contains all of the suggestions Link Whisper has for creating links to the target post.', 'wpil');
+                break;
+            case 'inbound-suggestions-same-category':
+                $text = esc_attr__('Turning "On" the option to "Only Link in This Post\'s Categories" will tell Link Whisper to only make linking suggestions from posts that are in the same categories as the current post.', 'wpil') . '<br><br>' . esc_attr__('When you turn on this option, you will see a dropdown of the target post\'s current categories so you can further narrow down the categories of posts to search in for suggestions.', 'wpil');
+                break;
+            case 'inbound-suggestions-same-tags':
+                $text = esc_attr__('Turning "On" the option to "Only Suggest Posts with the Same Tags" will tell Link Whisper to only make linking suggestions from posts that have the same tags as the current post.', 'wpil') . '<br><br>' . esc_attr__('When you turn on this option, you will see a dropdown of the target post\'s current tags so you can further narrow down the number of tagged posts to search for suggestions.', 'wpil');
+                break;
+            case 'inbound-suggestions-same-parent':
+                $text = esc_attr__('Turning "On" the option to "Only Suggest Links to Posts With the Same Parent as This Post" will tell Link Whisper to generate suggestions from posts that have the same parent post as this one.', 'wpil');
+                break;
+            case 'inbound-suggestions-select-post-type':
+                $text = esc_attr__('Turning "On" the option to "Select Linking Post Types" will allow you to restrict Link Whisper\'s suggestions to posts from specific post types.', 'wpil') . '<br><br>' . esc_attr__('This is helpful if you want to get linking suggestions from a particular post type, or you want to exclude suggestions from specific post types.', 'wpil');
+                break;
+            case 'inbound-suggestions-filter-date':
+                $text = esc_attr__('The "Filter by Date" filter allows you to hide all suggestions from posts that were published at times outside of the selected range.', 'wpil') . '<br><br>' . esc_attr__('By default, suggestions are shown for posts published between January, 1, 2000 and the present day.', 'wpil');
+                break;
+            case 'inbound-suggestions-filter-keywords':
+                $text = esc_attr__('The "Filter by Keyword" filter allows you to search the generated suggestions for suggestions that contain a specific word or phrase.', 'wpil') . '<br><br>' . esc_attr__('(Give it a try, you should see the number of suggestions trim up fast)', 'wpil');
+                break;
+            case 'inbound-suggestions-filter-ai-score':
+                $text = esc_attr__('The "Filter by AI Score" filter allows you to filter the current suggestions so that you\'re only shown suggestions that AI thinks are related to the post.', 'wpil') . '<br><br>' . esc_attr__('To use it, just move the purple slider to the right until it reaches the desired limit for how related a post needs to be in order to be suggested.', 'wpil') . '<br><br>' . esc_attr__('(Try setting it to 70%, you should see the suggestions become much more like this post)', 'wpil');
+                break;
+            case 'inbound-suggestions-sort-suggestions':
+                $style = esc_attr('style="margin-bottom: 10px;"');
+                $options =
+                '<ul>
+                    <li '. $style .'><strong>• ' . esc_attr__('AI Score:', 'wpil') . '</strong> ' . esc_attr__('Sort based on how related AI thinks the suggestion is to the target post.', 'wpil') . '</li>
+                    <li '. $style .'><strong>• ' . esc_attr__('Suggestion Score:', 'wpil') . '</strong> ' . esc_attr__('Sort based on how related Link Whisper thinks the suggestion is to the target post.', 'wpil') . '</li>
+                    <li '. $style .'><strong>• ' . esc_attr__('Publish Date:', 'wpil') . '</strong> ' . esc_attr__('Sort by the suggestions by the age of the suggested post.', 'wpil') . '</li>
+                    <li '. $style .'><strong>• ' . esc_attr__('Inbound Internal Links:', 'wpil') . '</strong> ' . esc_attr__('Sort the suggestions according to the number of Inbound Internal Links the suggested posts have.', 'wpil') . '</li>
+                    <li '. $style .'><strong>• ' . esc_attr__('Outbound Internal Links:', 'wpil') . '</strong> ' . esc_attr__('Sort the suggestions according to the number of Outbound Internal Links the suggested posts have.', 'wpil') . '</li>
+                    <li '. $style .'><strong>• ' . esc_attr__('Outbound External Links:', 'wpil') . '</strong> ' . esc_attr__('Sort the suggestions according to the number of Outbound External Links the suggested posts have.', 'wpil') . '</li>
+                </ul>';
+                $text = esc_attr__('The suggestion sorting area allows you to sort the available suggestions for your convenience.', 'wpil') . '<br><br>' . esc_attr__('Currently, suggestions can be sorted by:', 'wpil')  . '<br>' . $options;
+                break;
+            case 'inbound-suggestions-select-suggestion':
+                $text = esc_attr__('These checkboxes allow you to select what links should be created when you click the "Add Links" button.', 'wpil');
+                break;
+            case 'inbound-suggestions-suggested-sentence':
+                $text = esc_attr__('These are the individual sentences where the links will be inserted.', 'wpil') . '<br><br>' . esc_attr__('If multiple sentences were found for a post, Link Whisper will give you a dropdown of possible sentences so that you can pick the best one for the link.', 'wpil') . '<br><br>' . esc_attr__('You can adjust the anchor text of the suggested link by clicking on the words in the sentence, and the blue "link" in the sentence will change to show you what the link would look like if you inserted it.', 'wpil') . '<br><br>' . esc_attr__('Double-clicking on a word will set the link to just contain that one word, and you can edit the text of the sentence itself by clicking on the "Edit Sentence" button.', 'wpil');
+                break;
+            case 'inbound-suggestions-suggested-post':
+                $text = esc_attr__('The "Posts To Create Links In" column lists the posts Link Whisper has found the suggested sentences in, and gives some helpful information about the post.', 'wpil');
+                break;
+            case 'inbound-suggestions-suggested-post-published':
+                $text = esc_attr__('The Date Published column says when the suggested post was published.', 'wpil');
+                break;
+            /* Autolinking */
+            case 'autolinking-intro':
+                $text = esc_attr__('This is the Link Whisper Auto-Linking Report. It allows you to automatically create links on your site based on specific keywords that you define.', 'wpil');
+                break;
+            case 'autolinking-create-one':
+                $text = esc_attr__('The quick create area allows you to create one autolink quickly by just entering in the keyword that you want to link with, and the URL that should be used for the link.', 'wpil') . '<br><br>' . esc_attr__('Once you\'ve entered them, just click on the "Create Autolink Rule" button, and then Link Whisper will examine all of the posts on the site and will insert your link wherever possible.', 'wpil') . '<br><br>' . esc_attr__('In addition to this active scanning when the autolinking rule is created, Link Whisper will also passively monitor your content, and will insert the link into any new posts that contain the keyword.', 'wpil');
+                break;
+            case 'autolinking-create-one-settings':
+                $text = esc_attr__('The Autolinking Settings allow you to control where autolinks are inserted, how many to insert, and special circumstances that should be considered when inserting links.', 'wpil') . '<br><br>' . sprintf(esc_attr__('If you would like to know more about the settings, we have a %s that explains them and how they work in more detail.', 'wpil'), esc_attr('<a href="https://linkwhisper.com/knowledge-base/how-to-use-the-auto-linking-feature/#controlling-link-insertion" target="_blank">'.__('Knowledge Base article', 'wpil').'</a>'));
+                break;
+            case 'autolinking-bulk-settings':
+                $text = 
+                    esc_attr__('The Autolinking Bulk Actions allow you to create and modify large numbers of Autolinking Rules easily.', 'wpil') . 
+                    '<br><br>' . 
+                    esc_attr__('They allow you to:', 'wpil') . 
+                    '<br><br>' . 
+                    '<ul>' .
+                    '<li>• ' . sprintf(esc_attr__('Quickly create many Autolinking Rules at once. (%s)', 'wpil'), esc_attr('<a href="https://linkwhisper.com/knowledge-base/how-to-i-bulk-create-autolinks/" target="_blank">' . __('Read more here', 'wpil') . '</a>')) . '</li>' .
+                    '<li>• ' . esc_attr__('Re-scan the site to see if there are any places that need to have an autolink inserted.', 'wpil') . '</li>' .
+                    '<li>• ' . esc_attr__('Export a .CSV file of all the site\'s Autolinking Rules. (This export can be imported on other sites with the Bulk Create option)', 'wpil') . '</li>' .
+                    '<li>• ' . esc_attr__('Quickly mass delete selected Autolinking Rules.', 'wpil') . '</li>' .
+                    '</ul>';
+                break;
+            case 'autolinking-search':
+                $text = 
+                    esc_attr__('The Autolinking Search function allows you find specific Autolinking Rules. It doesn\'t search for posts that have been autolinked.', 'wpil') . 
+                    '<br><br>' . 
+                    esc_attr__('You can search by "Keyword" or by "Link".', 'wpil');
+                break;
+            case 'autolinking-refresh-report':
+                $text = 
+                esc_attr__('The "Refresh Auto-Linking Report" tells Link Whisper to scan the entire site to find all of the autolinks that have been inserted.', 'wpil') . 
+                '<br><br>' . 
+                esc_attr__('The scan does not create new links, it only finds the ones that have been inserted so that they can be listed in the report table.', 'wpil');
+                break;
+            case 'autolinking-table':
+                $text = 
+                esc_attr__('The Autolinking Report Table lists all of the existing Autolinking Rules, the number of times that their links have been inserted on the site, and the posts that they\'ve been inserted in.', 'wpil');
+                break;
+            case 'autolinking-table-keyword-col':
+                /*$text = 
+                esc_attr__('The Autolinking Table\'s "Keyword" column lists all of the keywords that will be used.', 'wpil') . 
+                '<br><br>' . 
+                esc_attr__('The scan does not create new links, it only finds the ones that have been inserted so that they can be listed in the report table.', 'wpil');
+                break;*/
+            case 'autolinking-table-link-col':
+            case 'autolinking-table-possible-links-col':
+            case 'autolinking-table-links-added-col':
+            case 'autolinking-table-delete-col':
+            /* Target Keyword Page */
+            case 'target-keyword-report-intro':
+            case 'target-keyword-report-filter':
+            case 'target-keyword-report-search':
+            case 'target-keyword-report-refresh':
+            case 'target-keyword-report-table':
+            case 'target-keyword-report-table-post-col':
+            case 'target-keyword-report-table-active-col':
+            case 'target-keyword-report-table-organic-col':
+            case 'target-keyword-report-table-custom-keyword-col':
+            case 'target-keyword-report-table-page-content-keyword-col':
+            case 'target-keyword-report-table-ai-generated-keyword-col':
+            case 'target-keyword-report-table-gsc-keyword-col':
+            case 'target-keyword-report-table-yoast-keyword-col':
+            case 'target-keyword-report-table-rank-math-keyword-col':
+            case 'target-keyword-report-table-aioseo-keyword-col':
+            case 'target-keyword-report-table-seopress-keyword-col':
+            case 'target-keyword-report-table-squirrly-keyword-col':
+            case 'target-keyword-report-table-aioseo-keyword-col':
+            /* URL Changer */
         }
 
         if(!empty($text)){
@@ -1251,7 +1837,7 @@ class Wpil_Toolbox
             if (is_array($value)) {
                 $result .= self::encode_array($value);
             } else {
-                $result .= self::custom_json_encode($value);
+//                $result .= self::custom_json_encode($value);
             }
     
             // Free memory if necessary
@@ -1499,4 +2085,57 @@ class Wpil_Toolbox
         return (isset($plugin_data['Version'])) ? sanitize_text_field($plugin_data['Version']): WPIL_PLUGIN_VERSION_NUMBER; // WPIL_PLUGIN_VERSION_NUMBER number _should_ be the current version, but sometimes it's not so we rely on the plugin data first.
     }
 
+    /**
+     * Gets the stats for the main files so we can check if object caching is messing with us!
+     **/
+    public static function get_file_stats(){
+        $stats = array();
+        $files = array(
+            'Base', 'Error', 'Keyword', 'Link',
+            'License', 'Post', 'Report', 'StemmerLoader',
+            'Term', 'URLChanger', 'TargetKeyword', 'SiteConnector',
+            'ClickTracker', 'Rest', 'Toolbox', 'Widgets', 'AI',
+            'Sitemap', 'Telemetry', 'Email', 'Dashboard', 'Excel',
+            'Export', 'Filter', 'Phrase', 'Query', 'SearchConsole',
+            'Settings', 'Suggestion', 'Wizard', 'Word'
+        );
+
+        foreach($files as $file){
+            $path = WP_INTERNAL_LINKING_PLUGIN_DIR . 'core/Wpil/' . $file . '.php';
+            $stats[$file] = array(
+                'time' => filemtime($path),
+                'state' => md5_file($path)
+            );
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Checks to see if it looks like one or more of the Link Whisper files have gotten stuck in the site's caching system and needs a refresh
+     **/
+    public static function check_if_cached(){
+        $file_stats = self::get_file_stats();
+
+        $times = array(); // ATM, we're just checking the times
+        foreach($file_stats as $stat){
+            $times[] = $stat['time'];
+        }
+
+        $update_times = array_unique($times);
+
+        // if all of the times are the same
+        if(count($update_times) === 1){
+            // we're not stuck
+            return false;
+        }
+
+        // if all the files were updated at around the same time
+        if(max($update_times) - min($update_times) < 15){
+            return false;
+        }
+
+        // if we're here, we could be stuck
+        return true;
+    }
 }
