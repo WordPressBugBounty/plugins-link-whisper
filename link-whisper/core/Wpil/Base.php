@@ -49,6 +49,8 @@ class Wpil_Base
         add_action('wp_ajax_wpil_get_dashboard_scan_loading_data', array('Wpil_Wizard', 'ajax_pull_loading_progress_for_dashboard'));
         add_action('wp_ajax_wpil_wizard_set_completion_flag', array(__CLASS__, 'ajax_set_processing_complete_flag'));
         add_action('wp_ajax_wpil_run_autolink_insert_search', array(__CLASS__, 'ajax_get_wizard_insert_count'));
+        add_action('wp_ajax_wpil_load_tours', array('Wpil_Tour', 'ajax_load_tours'));
+        add_action('wp_ajax_wpil_save_tour_progress', array('Wpil_Tour', 'ajax_save_tour_progress'));
         /*add_filter('the_content', array(__CLASS__, 'remove_link_whisper_attrs'));
         add_filter('the_content', array(__CLASS__, 'add_link_attrs'));
         add_filter('the_content', array(__CLASS__, 'add_link_icons'), 100, 1);*/
@@ -582,12 +584,17 @@ class Wpil_Base
 
         $script_params = array();
         $script_params['ajax_url'] = $ajax_url;
-        $script_params['wpil_js_path'] = (trailingslashit(WP_INTERNAL_LINKING_PLUGIN_URL) . '/js/');
+        $script_params['wpil_js_path'] = (trailingslashit(WP_INTERNAL_LINKING_PLUGIN_URL) . 'js/');
         $script_params['completed'] = __('completed', 'wpil');
         $script_params['dismissed_popups'] = $dismissedPopups;
         $script_params['dismiss_popup_nonce'] = wp_create_nonce(get_current_user_id() . 'dismiss-popup-nonce');
         $script_params['current_page'] = $current_page;
-        $script_params['dismiss_explain_page'] = false; $dismiss_explain_page;
+        $script_params['plugin_version'] = WPIL_PLUGIN_VERSION_NUMBER;
+        $script_params['dismiss_explain_page'] = $dismiss_explain_page;
+        
+        $script_params['debug'] = defined('WPIL_DEBUG') && WPIL_DEBUG;
+        $script_params['tour_nonce'] = wp_create_nonce('wpil_load_tours');
+        $script_params['save_tour_progress_nonce'] = wp_create_nonce('wpil_save_tour_progress');
 
         $script_params['wpil_timepicker_format'] = Wpil_Toolbox::convert_date_format_for_js();
 /*
@@ -738,6 +745,21 @@ class Wpil_Base
 
         wp_register_script('wpil_help_overlay', WP_INTERNAL_LINKING_PLUGIN_URL.'js/wpil_help_overlay.js', array('jquery', 'wpil_base64', 'wpil_tippy', 'wpil_popper', 'wpil_helper'), $ver, true);
         wp_enqueue_script('wpil_help_overlay');
+        
+        // Tour system assets
+        /*$tours_css_path = 'css/wpil_tours.css';
+        $tours_css_file = WP_INTERNAL_LINKING_PLUGIN_DIR . $tours_css_path;
+        $tours_js_path = 'js/wpil_tours.js';
+        $tours_js_file = WP_INTERNAL_LINKING_PLUGIN_DIR . $tours_js_path;
+        if (file_exists($tours_css_file)) {
+            wp_register_style('wpil_tours_style', WP_INTERNAL_LINKING_PLUGIN_URL . $tours_css_path, array(), filemtime($tours_css_file));
+            wp_enqueue_style('wpil_tours_style');
+        }
+        
+        if (file_exists($tours_js_file)) {
+            wp_register_script('wpil_tours', WP_INTERNAL_LINKING_PLUGIN_URL . $tours_js_path, array('jquery', 'wpil_admin_script'), filemtime($tours_js_file), true);
+            wp_enqueue_script('wpil_tours');
+        }*/
     }
 
     /**
@@ -762,6 +784,8 @@ class Wpil_Base
             $page = 'post-edit';
         }elseif(!empty($current_page) && $current_page->base === 'term'){
             $page = 'term-edit';
+        }elseif(isset($_GET['page']) && $_GET['page'] === 'link_whisper_ai_subscription'){
+            $page = 'ai-subscription';
         }
 
         return $page;

@@ -10,17 +10,20 @@ final class Wpil_Init
     {
         return [
             Wpil_Base::class,
+            Wpil_Error::class,
             Wpil_Link::class,
             Wpil_Post::class,
             Wpil_Report::class,
             Wpil_StemmerLoader::class,
             Wpil_Term::class,
-            Wpil_Toolbox::class,
             Wpil_TargetKeyword::class,
-//            Wpil_Widgets::class,
+            Wpil_ClickTracker::class,
+            Wpil_Rest::class,
+            Wpil_Toolbox::class,
             Wpil_AI::class,
             Wpil_Sitemap::class,
             Wpil_Email::class,
+            Wpil_Notification::class,
         ];
     }
 

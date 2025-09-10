@@ -155,7 +155,7 @@ class Wpil_Table_Domain extends WP_List_Table
                 </div>': '';
 
                 $external_focus = '';
-                if(isset($_REQUEST['domain_focus'])){
+                if(isset($_REQUEST['domain_focus']) && !Wpil_Link::isInternal('https://' . $item['host'])){
                     $percent_limit = 60;
                     $external_link_emphasis = Wpil_Dashboard::get_external_link_distribution(0, $item['host']);
                     $external_link_emphasis_percent = 0;

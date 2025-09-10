@@ -1076,9 +1076,14 @@
                                                 Current Status: <div class="ai-current-process-text"><?php echo esc_html_e('Starting Data Processing...', 'wpil')?></div>
                                             </div>
                                             <div class="ai-estimated-cost-section">
+                                                <?php
+                                                if(!$is_connected_to_linkwhisper_ai){ ?>
                                                 <div>
                                                     Estimated Processing Cost: <div class="ai-estimated-cost">$0.00</div>
                                                 </div>
+                                                <?php }else{?>
+                                                    AI Tokens Used: <div class="ai-estimated-cost">0</div>
+                                                <?php } ?>
                                             </div>
                                             <?php } ?>
                                         <!--<div style="font-size: 18px; font-weight: 600; margin-bottom: 30px;">Please leave this browser tab open, if you close it, the process will stop and need to be restarted later</div>-->

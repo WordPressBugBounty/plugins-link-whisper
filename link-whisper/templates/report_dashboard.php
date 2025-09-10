@@ -445,10 +445,10 @@
                             </div>
                         </a>
                     </div>
-                    <h2 class="dashheadings">Link Health</h2>
                     <div class="actioncontainer reportcontainer">
                         <div class="actioncolumn" style="height: 100%;">
-                          <div class="actioncontent">
+                            <h2 class="dashheadings">Link Health</h2>
+                            <div class="actioncontent">
                             <div class="actioncard">
                               <div class="actionheader">
                                 <?php
@@ -621,15 +621,13 @@
                               </div>
                             </div>
                           </div>
-                        </div>
-                        <div class="actioncolumn"  style="height: 100%;">
-                          <div class="actioncontent">
-                            <!-- Content for the second column -->
-                            <div <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-domains-widget'); ?>>
-                                <h3 class="title">Most Linked To <a href="<?=admin_url('admin.php?page=link_whisper&type=domains')?>">Domains</a></h3>
-                                <div id="wpil_links_domain_chart" style="width: 320px;height: 320px;margin: 0 auto;"></div>
-                                <div class="body" id="report_dashboard_domains">
-                                    <?php
+                            <div class="actioncontent" style="margin-top: 20px;">
+                                <!-- Content for the second column -->
+                                <div <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-domains-widget'); ?>>
+                                    <h3 class="title">Most Linked To <a href="<?=admin_url('admin.php?page=link_whisper&type=domains')?>">Domains</a></h3>
+                                    <div id="wpil_links_domain_chart" style="width: 320px;height: 320px;margin: 0 auto;"></div>
+                                    <div class="body" id="report_dashboard_domains">
+                                        <?php
                                         $i = 0;
                                         $prev = isset($domains[0]->host) ? $domains[0]->host : 0;
                                         $count = 0; // Initialize counter
@@ -642,21 +640,21 @@
                                                 $prev = $domain->host; 
                                             } 
                                             $count++; // Increment counter
-                                        ?>
-                                        
-                                        <div class="domainrelatedcontent">
-                                            <div class="count <?php echo 'mltdcount-'.$i; ?>"><?= $domain->cnt ?></div>
-                                            <div class="host <?php echo 'mltdval-'.$i; ?>"><?= $domain->host ?></div>
-                                        
-                                        <div class="line line<?= $i ?>">
-                                            <span style="width: <?= (($domain->cnt / $top_domain) * 100) ?>%"></span>
-                                        </div>
-                                        </div>
-                                    <?php endforeach; ?>
+                                            ?>
+                                            <div class="domainrelatedcontent">
+                                                <div class="count <?php echo 'mltdcount-'.$i; ?>"><?= $domain->cnt ?></div>
+                                                <div class="host <?php echo 'mltdval-'.$i; ?>"><?= $domain->host ?></div>
+
+                                                <div class="line line<?= $i ?>">
+                                                    <span style="width: <?= (($domain->cnt / $top_domain) * 100) ?>%"></span>
+                                                </div>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
                                 </div>
                             </div>
-                          </div>
                         </div>
+                        <?php include 'notification_hub.php'; ?>
                     </div>
                 </div>
             </div>

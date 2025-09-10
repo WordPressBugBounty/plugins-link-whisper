@@ -196,6 +196,7 @@ class Wpil_Settings
             <?php
             return;
         }
+        self::create_ai_credit_popup();
 ?>
         <div class="wrap wpil-report-page wpil_styles">
             <h1 class="wp-heading-inline"><?php esc_html_e('AI Subscription','wpil'); ?></h1>
@@ -298,6 +299,9 @@ class Wpil_Settings
         }
         ?>
     <style>
+        .credit-popup-actions{
+            display:none;
+        }
         .wpil-credit-purchase-table-wrapper *{
             font-family: 'Funnel Sans'
         }
@@ -636,10 +640,10 @@ class Wpil_Settings
                         <label for="credit-slider">Select credit amount:</label>
                     </div>
                     <div class="wpil-plan-spacer">.</div>
-                    <button class="plan-button" data-type="custom" data-download="ondemand">Buy Credits</button>
+                    <button class="plan-button" data-type="custom" data-price-id="price_ondemand_free" data-download="ondemand_free">Buy Credits</button>
                 </div>
                 <!---->
-                <?php $active = (!empty($sub)) && (int)$sub->product_id === 5244463; ?>
+                <?php $active = (!empty($sub)) && (int)$sub->product_id === 5246590; ?>
                 <?php $recc = $recommended > 0 && $recommended < 1050; ?>
                 <div class="plan-card plan-1k <?php echo $active ? 'active': ''; ?> <?php echo ($recc) ? 'featured': '';?>">
                     <div class="tag active" style="<?php echo $active ? '': 'display:none'; ?>">Active</div>
@@ -662,10 +666,10 @@ class Wpil_Settings
                         <li><div class="wpil-plan-spacer">.</div></li>
                         <li><div class="wpil-plan-spacer">.</div></li>
                     </ul>
-                    <button class="plan-button <?php echo $active ? 'current': '';?>" data-type="recurring" data-price-id="price_1k" data-download="1k"><?php echo $active ? 'Cancel Plan': 'Choose Plan';?></button>
+                    <button class="plan-button <?php echo $active ? 'current': '';?>" data-type="recurring" data-price-id="price_1k_free" data-download="1k_free"><?php echo $active ? 'Cancel Plan': 'Choose Plan';?></button>
                 </div>
                 <!---->
-                <?php $active = (!empty($sub)) && (int)$sub->product_id === 5244464; ?>
+                <?php $active = (!empty($sub)) && (int)$sub->product_id === 5246591; ?>
                 <?php $recc = $recommended > 1050 && $recommended < 2050; ?>
                 <div class="plan-card plan-2k <?php echo $active ? 'active': ''; ?> <?php echo ($recc) ? 'featured': '';?>">
                     <div class="tag active" style="<?php echo $active ? '': 'display:none'; ?>">Active</div>
@@ -688,7 +692,7 @@ class Wpil_Settings
                         <li><div class="wpil-plan-spacer">.</div></li>
                         <li><div class="wpil-plan-spacer">.</div></li>
                     </ul>
-                    <button class="plan-button <?php echo $active ? 'current': '';?>" data-type="recurring" data-price-id="price_2k" data-download="2k"><?php echo $active ? 'Cancel Plan': 'Choose Plan';?></button>
+                    <button class="plan-button <?php echo $active ? 'current': '';?>" data-type="recurring" data-price-id="price_2k_free" data-download="2k_free"><?php echo $active ? 'Cancel Plan': 'Choose Plan';?></button>
                 </div>
                 <!---->
                 <div class="plan-card plan-info-card">
@@ -722,7 +726,7 @@ class Wpil_Settings
                         <li>Keyword Detection</li>
                         <li>Product Detection</li>
                     </ul>
-                    <button class="plan-button <?php echo $active ? 'current': '';?>" data-type="recurring" data-price-id="price_5k" data-download="5k"><?php echo $active ? 'Cancel Plan': 'Choose Plan';?></button>
+                    <button class="plan-button <?php echo $active ? 'current': '';?>" data-type="recurring" data-price-id="price_5k_free" data-download="5k_free"><?php echo $active ? 'Cancel Plan': 'Choose Plan';?></button>
                 </div>
                 */ ?>
                 <div id="wpil-payment-form-wrapper">
@@ -862,7 +866,7 @@ document.addEventListener("DOMContentLoaded", () => {
 document.querySelectorAll(".plan-button").forEach((button) => {
   button.addEventListener("click", async (e) => {
     const type = button.dataset.type;
-    const plan = button.dataset.download; // '1k', '2k', etc.
+    const plan = button.dataset.download; // '1k_free', '2k_free', etc.
 
     if (type === "recurring" && button.classList.contains("current")) {
       // Cancel subscription
@@ -872,13 +876,17 @@ document.querySelectorAll(".plan-button").forEach((button) => {
           const res = await fetch(STRIPE.apiUrl + "/cancel-subscription", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ai_id: "<?php echo $ai_user_id;?>", subscription_id: "<?php echo $sub->subscription_id?>" })
+            body: JSON.stringify({ ai_id: "<?php echo $ai_user_id;?>", subscription_id: "<?php echo (isset($sub->subscription_id)) ? $sub->subscription_id: 0?>" })
           });
           const data = await res.json();
           if (data.success) {
             clearUserSubscription();
           } else {
-            alert("Cancellation failed: " + (data.message || "Unknown error"));
+            if(data.message){
+                clearUserSubscription();
+            }else{
+                alert("Cancellation failed: " + (data.message || "Unknown error"));
+            }
           }
         } catch (err) {
           alert("Error contacting server: " + err.message);
@@ -891,7 +899,7 @@ document.querySelectorAll(".plan-button").forEach((button) => {
     const activePlan = document.querySelector(".plan-card.active")?.querySelector(".plan-button")?.dataset?.download;
 
     // If user chooses a lower-tier than current
-    if (activePlan === "2k" && plan === "1k") {
+    if (activePlan === "2k_free" && plan === "1k_free") {
       showSubscriptionConfirmModal("Downgrading affects all sites using this subscription. Proceed?", () => {
         currentPlanButton = button;
         showCheckoutForm(button);
@@ -939,9 +947,9 @@ async function triggerStripeIntent(email, type, priceId = null) {
   const payload = { email, type };
   if (type === "custom") {
     payload.quantity = parseInt(creditSlider.value, 10);
-  } else {
-    payload.price_id = priceId;
   }
+
+  payload.price_id = priceId;
 
   try {
     const res = await fetch(STRIPE.apiUrl + "/create-intent", {
@@ -975,16 +983,24 @@ async function triggerStripeIntent(email, type, priceId = null) {
   // Handle form submission
   document.getElementById("wpil-payment-form").addEventListener("submit", async (e) => {
     e.preventDefault();
+
     const email = emailInput.value;
     const stripe = activeStripe;
     const elements = activeElements;
     const type = activeType;
     const errorDiv = document.getElementById("card-errors");
+    const form = jQuery(e.target);
     errorDiv.textContent = "";
 
     if (!stripe || !elements || !type) {
       alert("Please select a plan and enter your email.");
       return;
+    }
+
+    if(form.hasClass('wpil-form-disabled')){
+        return;
+    }else{
+        form.addClass('wpil-form-disabled');
     }
 
     const method = type === "recurring" ? "confirmSetup" : "confirmPayment";
@@ -1305,7 +1321,7 @@ function triggerConfettiExplosion() {
         $authed = Wpil_Settings::get_linkwhisper_ai_user_id();
         $credits = Wpil_AI::get_available_ai_credits();
         $auth_url = admin_url('admin.php?page=link_whisper_ai_subscription');
-        if (empty($authed)){
+        if (empty($authed) && 'ai-subscription' !== Wpil_Base::get_current_page()){
             // if the user has dismissed this popup
             if(!empty(get_user_meta(get_current_user_id(), 'wpil_dismissed_ai_notice_banner', true))){
                 // stop here
@@ -1654,7 +1670,7 @@ function triggerConfettiExplosion() {
 
             <?php 
             return;
-            }
+        }
 
         $renew = '';
         if(!empty($sub)){
@@ -3624,8 +3640,12 @@ function triggerConfettiExplosion() {
         $limits = get_option('wpil_ai_batch_processing_limits', array());
 
         if(isset($limits['live'])){
-            if($ai_service_active && $limits['live']['create-post-embeddings'] > 50){
-                $limits['live']['create-post-embeddings'] = 50;
+            if($ai_service_active){
+                if($limits['live']['create-post-embeddings'] > 50){
+                    $limits['live']['create-post-embeddings'] = 50;
+                }elseif(empty($limits['live'])){
+                    $limits['live'] = array('create-post-embeddings' => 50);
+                }
             }
             $defaults['live'] = array_merge($defaults['live'], $limits['live']);
         }

@@ -2,7 +2,7 @@
 
 (function ($) {
     $(document).on('change', '#wpil_links_table_filter select', wpil_report_filter);
-    $(document).on('click', '#wpil_links_table_filter .button-primary', wpil_report_filter_submit);
+    $(document).on('click', '#wpil_links_table_filter .wpil_links_table_filter_submit', wpil_report_filter_submit);
     $(document).on('click', 'td .wpil-collapsible-wrapper', maybeAjaxDownloadData);
 
     function wpil_report_filter() {

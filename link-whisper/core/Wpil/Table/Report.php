@@ -742,7 +742,7 @@ class Wpil_Table_Report extends WP_List_Table
                         <label for="wpil_link_max_count" class="filter-by-count">Max</label>
                         <input id="wpil_link_max_count" type="number" name="link_max_count" class="filter-by-count" min="0" <?php if(null !== $max){ echo 'value="' . $max . '"';} ?> style="max-width: 70px;">
                         <!--/filter by link counts-->
-                        <span class="wpil-filter-submit-button" style="text-align:center;">🔎 Filter</span>
+                        <span class="wpil-filter-submit-button wpil_links_table_filter_submit" style="text-align:center;">🔎 Filter</span>
                         <input type="hidden" class="post-filter-nonce" value="<?php echo wp_create_nonce(get_current_user_id() . 'wpil_filter_nonce'); ?>">
                     </div>
                 </div>

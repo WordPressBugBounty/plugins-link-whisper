@@ -697,7 +697,7 @@ button.wpil_licensing_activation_button:nth-child(n):hover,
 
 }
 
-.wpil-link-relation-indicator:not(.wpil-links-diffuse)::before {
+.wpil-link-relation-indicator:not(.wpil-links-diffuse):not(.wpil-links-diffuse + .wpil-link-relation-indicator)::before {
   content: '✔';
   color: green;
   font-weight: bold;
@@ -1752,6 +1752,13 @@ ul.report_links {
 	overflow: hidden;
 	margin: 0 auto;
 }
+.wpil-form-disabled{
+    opacity: 0.6;
+    cursor: wait !important;
+}
+.wpil-form-disabled *{
+    cursor: wait !important;
+}
 .run-first-scan-container{
 	width: 600px;
 	margin: auto;
@@ -2113,11 +2120,14 @@ ul.report_links {
 .wpil_styles .column-posts,
 .wpil_styles .column-links {
 	width: 300px !important;
-	/*text-align: left !important;*/
 }
 
 .wpil-activity-panel .best_keywords .column-posts{
     width: 600px !important;
+    text-align: left !important;
+}
+
+.wpil_styles .wpil-inbound-suggestion-posts{
     text-align: left !important;
 }
 
@@ -2857,20 +2867,6 @@ background-color: #d1d5db;
     margin: 0;
 }
 
-/* Close Button *//*
-.wpil-panel-close {
-    background: none;
-    border: none;
-    padding: 6px;
-    cursor: pointer;
-    filter: grayscale(100%);
-    transition: filter 0.2s ease;
-}
-
-.wpil-panel-close:hover {
-    filter: grayscale(0%);
-}*/
-
 /* Action Links */
 .wpil-panel-actions ul.wpil-panel-subactions{
     width: 90%;
@@ -3119,12 +3115,14 @@ td.column-wpil-report-actions .dashicons-plus{
 /****/
 /* ===== Overlay ===== */
 .wpil-overlay{
-  position: fixed; inset: 0;
-  background: rgba(17,24,39,.48);       /* dark, soft */
+  position: fixed;
+  inset: 0;
+  background: rgba(17,24,39,.48);
   backdrop-filter: blur(2px);
-  opacity: 0; pointer-events: none;
+  opacity: 0;
+  pointer-events: none;
   transition: opacity .25s ease;
-  z-index: 99998;                        /* just under panel */
+  z-index: 99998;
 }
 .wpil-overlay.is-open{
   opacity: 1; pointer-events: auto;
@@ -3135,16 +3133,15 @@ td.column-wpil-report-actions .dashicons-plus{
     min-height: 600px;
     position: fixed;
     top: 35px;
-    right: -5000px;                        /* off-screen start */
+    right: -5000px;
     z-index: 99999;
-    /*position: ;width: min(720px, calc(100vw - 240px));/* cap width for large screens */
-    width: calc(100% - 180px);/* cap width for large screens *//* todo setup for mobile */
+    width: calc(100% - 165px);
     background: #fff;
     border-left: 1px solid #e5e7eb;
     box-shadow: -16px 0 40px rgba(0,0,0,.12);
     border-radius: 12px 0 0 12px;
-    display: none;                         /* shown by .active-1 */
-    overflow: hidden;                      /* clip header radius */
+    display: none;
+    overflow: hidden;
     will-change: right;
 }
 
@@ -3221,9 +3218,11 @@ td.column-wpil-report-actions .dashicons-plus{
     padding: 0 3px 0 0;
     text-overflow: ellipsis;
 }
+
 .wpil-activity-table .wpil-activity-panel-limited-text-cell > div:hover{
     white-space: inherit;
 }
+
 .wpil-activity-table .wpil-status-icon-cell{
     text-align: center;
 }
@@ -3400,10 +3399,13 @@ table .wpil-collapsible:hover .wpil-right-arrow-box:before{
 
 /* Close button */
 .wpil-panel-close{
-  display:inline-grid; place-items:center;
-  width:32px; height:32px; border-radius: 999px;
-  border: 1px solid #e5e7eb;
-  background:#f9fafb; color:#374151; cursor:pointer;
+  display:inline-grid;
+  place-items:center;
+  width:32px; 
+  height:32px; 
+  border-radius: 999px;
+  color:#374151 ; 
+  cursor:pointer;
   transition: background-color .2s, border-color .2s, box-shadow .2s, transform .05s;
 }
 .wpil-panel-close:hover{ background:#f3f4f6; border-color:#d1d5db; }
@@ -3464,6 +3466,10 @@ table .wpil-collapsible:hover .wpil-right-arrow-box:before{
     border-radius: 18px;
 }
 
+.wpil-activity-panel-suggestions:not(:first-of-type){
+    margin-top: 40px;
+}
+
 .wpil-activity-panel-edit.processing{
     opacity: 0.4;
 }
@@ -3512,6 +3518,13 @@ table .wpil-collapsible:hover .wpil-right-arrow-box:before{
 
 .wpil-edit-selected-activity-items.inactive .wpil-edit-active{
     display:none;
+}
+
+.wpil-activity-panel-wrapper .wpil-update-selected-activity-items {
+  display: none;
+}
+.wpil-activity-panel-wrapper .wpil-edit-selected-activity-items.active ~ .wpil-update-selected-activity-items {
+  display: block;
 }
 
 /*activity*/
@@ -4140,6 +4153,9 @@ table .wpil-collapsible:hover .wpil-right-arrow-box:before{
 }
 .wpil_inbound_links_button {
 	float: right;
+}
+.wpil-activity-panel-wrapper .wpil_inbound_links_button{
+    display: none;
 }
 .swal-icon--info {
 	border-color: #b63ef8;

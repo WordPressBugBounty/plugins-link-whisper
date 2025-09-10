@@ -77,7 +77,7 @@ class Wpil_Sitemap
             Wpil_Sitemap::save_sitemap(Wpil_Sitemap::create_link_sitemap($sitemap_type), $sitemap_type, $sitemap_name);
         }
 
-        if(!empty(Wpil_Settings::getOpenAIKey())){
+        if(!empty(Wpil_Settings::has_ai_enabled())){
             // if we have relation data
             if(!empty(Wpil_AI::has_calculated_embedding_data())){
                 $relatedness = Wpil_AI::calculate_relatedness_sitemap();

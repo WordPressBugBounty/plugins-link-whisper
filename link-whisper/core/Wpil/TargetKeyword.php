@@ -4176,7 +4176,7 @@ class Wpil_TargetKeyword{
         }
 
         // if there's an open AI key
-        if(Wpil_Settings::getOpenAIKey()){
+        if(Wpil_Settings::has_ai_enabled()){
             $sources[] = 'ai-generated';
         }
 

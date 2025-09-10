@@ -364,138 +364,148 @@
     });
 */
 
+    var suggestionInsertTracker = 0; // tracks suggestion insert processses
     $(document).on('click', '.sync_linking_keywords_list', function (e) {
         e.preventDefault();
 
-        var page = $(this).data('page');
-        var links = [];
-        var data = [];
-        var button = $(this);
-        var rows = [];
+        $('.wpil-top-insert-button').each(function(){
+            var page = $(this).data('page');
+            var links = [];
+            var data = [];
+            var button = $(this);
+            var rows = [];
 
-        if(page == 'inbound'){
-            $(this).parents('.tbl-link-reports').find('.wpil-inbound-links').find('[wpil-link-new][type=checkbox]:checked').each(function() {
-                rows.push($(this).closest('tr'));
-                var item = {};
-                item.id = $(this).closest('tr').find('.sentence').data('id');
-                item.type = $(this).closest('tr').find('.sentence').data('type');
-                item.links = [{
-                    'sentence': $(this).closest('tr').find('.sentence').find('[name="sentence"]').val(),
-                    'sentence_with_anchor': $(this).closest('tr').find('.wpil_sentence_with_anchor').html(),
-                    'custom_sentence': $(this).closest('tr').find('input[name="custom_sentence"]').val()
-                }];
-                data.push(item);
-            });
-
-        }else{
-            $(this).closest('div:not(#wpil-inbound-suggestions-head-controls)').find('[wpil-link-new][type=checkbox]:checked').each(function() {
-                rows.push($(this).closest('tr'));
-                if ($(this).closest('tr').find('input[type="radio"]:checked').length) {
-                    var id =  $(this).closest('tr').find('input[type="radio"]:checked').data('id');
-                    var type = $(this).closest('tr').find('input[type="radio"]:checked').data('type');
-                    var custom_link = $(this).closest('tr').find('input[type="radio"]:checked').data('custom');
-                    var post_origin = $(this).closest('tr').find('input[type="radio"]:checked').data('post-origin');
-                    var site_url = $(this).closest('tr').find('input[type="radio"]:checked').data('site-url');
-                } else {
-                    var id =  $(this).closest('tr').find('.suggestion').data('id');
-                    var type =  $(this).closest('tr').find('.suggestion').data('type');
-                    var custom_link =  $(this).closest('tr').find('.suggestion').data('custom');
-                    var post_origin = $(this).closest('tr').find('.suggestion').data('post-origin');
-                    var site_url = $(this).closest('tr').find('.suggestion').data('site-url');
-                }
-
-                links.push({
-                    id: id,
-                    type: type,
-                    custom_link: custom_link,
-                    post_origin: post_origin,
-                    site_url: site_url,
-                    sentence: $(this).closest('div').find('[name="sentence"]').val(),
-                    sentence_with_anchor: $(this).closest('div').find('.wpil_sentence_with_anchor').html(),
-                    custom_sentence: $(this).closest('.sentence').find('input[name="custom_sentence"]').val()
+            if(page == 'inbound'){
+                $(this).closest('form').find('.wpil-inbound-links').find('[wpil-link-new][type=checkbox]:checked').each(function() {
+                    rows.push($(this).closest('tr'));
+                    var item = {};
+                    item.id = $(this).closest('tr').find('.sentence').data('id');
+                    item.type = $(this).closest('tr').find('.sentence').data('type');
+                    item.links = [{
+                        'sentence': $(this).closest('tr').find('.sentence').find('[name="sentence"]').val(),
+                        'sentence_with_anchor': $(this).closest('tr').find('.wpil_sentence_with_anchor').html(),
+                        'custom_sentence': $(this).closest('tr').find('input[name="custom_sentence"]').val()
+                    }];
+                    data.push(item);
                 });
-            });
-        }
 
-        if (page == 'outbound') {
-            data.push({'links': links});
-        }else{
-            button.addClass('wpil_button_is_active');
-        }
+            }else{
+                $(this).closest('div:not(#wpil-inbound-suggestions-head-controls)').find('[wpil-link-new][type=checkbox]:checked').each(function() {
+                    rows.push($(this).closest('tr'));
+                    if ($(this).closest('tr').find('input[type="radio"]:checked').length) {
+                        var id =  $(this).closest('tr').find('input[type="radio"]:checked').data('id');
+                        var type = $(this).closest('tr').find('input[type="radio"]:checked').data('type');
+                        var custom_link = $(this).closest('tr').find('input[type="radio"]:checked').data('custom');
+                        var post_origin = $(this).closest('tr').find('input[type="radio"]:checked').data('post-origin');
+                        var site_url = $(this).closest('tr').find('input[type="radio"]:checked').data('site-url');
+                    } else {
+                        var id =  $(this).closest('tr').find('.suggestion').data('id');
+                        var type =  $(this).closest('tr').find('.suggestion').data('type');
+                        var custom_link =  $(this).closest('tr').find('.suggestion').data('custom');
+                        var post_origin = $(this).closest('tr').find('.suggestion').data('post-origin');
+                        var site_url = $(this).closest('tr').find('.suggestion').data('site-url');
+                    }
 
-        
+                    links.push({
+                        id: id,
+                        type: type,
+                        custom_link: custom_link,
+                        post_origin: post_origin,
+                        site_url: site_url,
+                        sentence: $(this).closest('div').find('[name="sentence"]').val(),
+                        sentence_with_anchor: $(this).closest('div').find('.wpil_sentence_with_anchor').html(),
+                        custom_sentence: $(this).closest('.sentence').find('input[name="custom_sentence"]').val()
+                    });
+                });
+            }
 
-        var data_post = {
-            "id": $(this).data('id'),
-            "type": $(this).data('type'),
-            "page": $(this).data('page'),
-            "action": 'wpil_save_linking_references',
-            'data': data,
-            'gutenberg' : $('.block-editor-page').length ? true : false
-        };
+            if(links.length < 1 && data.length < 1){
+                return;
+            }
 
-        // if we're inserting links on the Links Report
-        if($('.linkingstats').length > 0){
-            data_post['from_links_report'] = 1;
-            $('.wpil-activity-panel .wpil-activity-panel-suggestions').addClass('ajax_loader');
-        }else{
-            $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').not('.linkingstats').addClass('ajax_loader');
-        }
+            if (page == 'outbound') {
+                data.push({'links': links});
+            }else{
+                button.addClass('wpil_button_is_active');
+            }
 
-        $.ajax({
-            url: ajaxurl,
-            dataType: 'json',
-            data: data_post,
-            method: 'post',
-            error: function (jqXHR, textStatus, errorThrown) {
-                var wrapper = document.createElement('div');
-                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
-                $(wrapper).append(jqXHR.responseText);
-                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+            var data_post = {
+                "id": $(this).data('id'),
+                "type": $(this).data('type'),
+                "page": $(this).data('page'),
+                "action": 'wpil_save_linking_references',
+                'data': data,
+                'gutenberg' : $('.block-editor-page').length ? true : false
+            };
 
-                $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
-            },
-            success: function (data) {
+            // if we're inserting links on the Links Report
+            if($('.wpil-link-report').length > 0){
+                data_post['from_links_report'] = 1;
+                $('.wpil-activity-panel .wpil-activity-panel-suggestions').addClass('ajax_loader');
+            }else{
+                $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').not('.linkingstats').addClass('ajax_loader');
+            }
 
-                if(!isJSON(data)){
-                    data = extractAndValidateJSON(data, ['err_msg', 'further_processing', 'data']);
-                }
+            suggestionInsertTracker++;
 
-                if (data.err_msg) {
-                    wpil_swal('Error', data.err_msg, 'error');
-                    button.removeClass('wpil_button_is_active');
+            $.ajax({
+                url: ajaxurl,
+                dataType: 'json',
+                data: data_post,
+                method: 'post',
+                error: function (jqXHR, textStatus, errorThrown) {
+                    var wrapper = document.createElement('div');
+                    $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                    $(wrapper).append(jqXHR.responseText);
+                    wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+
                     $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
-                } else if(undefined != data.further_processing && data.further_processing){
-                    continueInsertingInboundLinks(button, data.data);
-                }else {
-                    if (page == 'outbound') {
-                        if ($('.editor-post-save-draft').length) {
-                            $('.editor-post-save-draft').click();
-                        } else if ($('#save-post').length) {
-                            $('#save-post').click();
-                        } else if ($('.editor-post-publish-button').length) {
-                            $('.editor-post-publish-button').click();
-                        } else if ($('#publish').length) {
-                            $('#publish').click();
-                        } else if ($('.edit-tag-actions').length) {
-                            $('.edit-tag-actions input[type="submit"]').click();
+                },
+                success: function (data) {
+                    suggestionInsertTracker--;
+                    if(!isJSON(data)){
+                        data = extractAndValidateJSON(data, ['err_msg', 'further_processing', 'data']);
+                    }
+
+                    if (data.err_msg) {
+                        wpil_swal('Error', data.err_msg, 'error');
+                        button.removeClass('wpil_button_is_active');
+                        $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
+                    } else if(undefined != data.further_processing && data.further_processing){
+                        continueInsertingInboundLinks(button, data.data);
+                    }else {
+                        if (page == 'outbound') {
+                            if ($('.editor-post-save-draft').length) {
+                                $('.editor-post-save-draft').click();
+                            } else if ($('#save-post').length) {
+                                $('#save-post').click();
+                            } else if ($('.editor-post-publish-button').length) {
+                                $('.editor-post-publish-button').click();
+                            } else if ($('#publish').length) {
+                                $('#publish').click();
+                            } else if ($('.edit-tag-actions').length) {
+                                $('.edit-tag-actions input[type="submit"]').click();
+                            }
+
+                            // set the flag so we know that the editor needs to be reloaded
+                            reloadGutenberg = true;
+                        } else {
+                            if($('.wpil-link-report').length < 1){
+                                location.reload();
+                            }
                         }
 
-                        // set the flag so we know that the editor needs to be reloaded
-                        reloadGutenberg = true;
-                    } else {
-                        location.reload();
-                    }
+                        for(var i in rows){
+                            $(rows[i]).fadeOut(300, function(){ $(this).remove(); });
+                        }
 
-                    for(var i in rows){
-                        $(rows[i]).fadeOut(300, function(){ $(this).remove(); });
+                        button.removeClass('wpil_button_is_active');
+                        $('.ajax_loader').removeClass('ajax_loader');
                     }
-
-                    button.removeClass('wpil_button_is_active');
-                    $('.ajax_loader').removeClass('ajax_loader');
                 }
-            }
-        })
+            });
+
+        });
     });
 
     function continueInsertingInboundLinks(button, data){
@@ -552,7 +562,9 @@
                 } else{
                     button.removeClass('wpil_button_is_active');
                     $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
-                    location.reload();
+                    if($('.linkingstats').length < 1){
+                        location.reload();
+                    }
                 }
             }
         })
@@ -2392,7 +2404,7 @@
                                 $('#wpil-help-overlay-controls .close-overlay').trigger('click');
                                 // otherwise, show the completion popup
                                 var wrapper = document.createElement('div');
-                                $(wrapper).append('Link Whisper is fully setup and is ready for you!');
+                                $(wrapper).append('Link Whisper is fully setup and ready for you!');
                                 wpil_swal({'title': 'Success', content: wrapper, 'icon': 'success'}).then(() => {
                                     var pageUrl = new URL(window.location.href);
                                     if (pageUrl.searchParams.has('loading')) {

@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Link Whisper Free
- * Version: 0.8.6
+ * Version: 0.8.7
  * Description: Quickly build smart internal links both to and from your content. Additionally, gain valuable insights with in-depth internal link reporting.
  * Author: Link Whisper
  * Author URI: https://linkwhisper.com
@@ -24,9 +24,9 @@ function wpil_autoloader( $class_name ) {
     }
 }
 define( 'WPIL_STORE_URL', 'https://linkwhisper.com');
-define( 'WPIL_VERSION_NUMBER', '0.8.6');
-define('WPIL_PLUGIN_VERSION_NUMBER', '0.8.6'); // todo remember to update with each new release
-define('WPIL_PLUGIN_OLD_VERSION_NUMBER', '0.8.5'); // and only update when the new release is ready so testing downloads don't miss updates
+define( 'WPIL_VERSION_NUMBER', '0.8.7');
+define( 'WPIL_PLUGIN_VERSION_NUMBER', '0.8.7');
+define( 'WPIL_PLUGIN_OLD_VERSION_NUMBER', '0.8.6');
 define( 'WP_INTERNAL_LINKING_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define( 'WP_INTERNAL_LINKING_PLUGIN_URL', plugin_dir_url(__FILE__));
 define( 'WPIL_PLUGIN_NAME', plugin_basename( __FILE__ ));
@@ -49,6 +49,7 @@ define( 'WPIL_PREMIUM_NOTICE_DISMISSED', 'wpil_premium_notice_dismissed');
 define( 'WPIL_LINK_TABLE_IS_CREATED', 'wpil_link_table_is_created');
 define( 'WPIL_STATUS_LINK_TABLE_EXISTS', get_option(WPIL_LINK_TABLE_IS_CREATED, false));
 define( 'WPIL_STATUS_PROCESSING_START', microtime(true));
+define('WPIL_DEBUG_CURL', false);
 define('WPIL_STATUS_PLUGIN_DB_VERSION', '1.46');  // simple version counter that gets incremented when we change the existing DB tables. That way update_tables knows when and what to update.
 define('WPIL_STATUS_SITE_DB_VERSION', get_option('wpil_site_db_version', '0'));  // existing DB version on this site
 define('WPIL_STATUS_HAS_RUN_SCAN', get_option('wpil_has_run_initial_scan', false));

@@ -1316,6 +1316,25 @@ class Wpil_Post
     }
 
     /**
+     * Get post IDs from certain category
+     *
+     * @param $category_id
+     * @return array
+     */
+    public static function getCategoryPosts($category_id)
+    {
+        global $wpdb;
+
+        $posts = [];
+        $categories = $wpdb->get_results("SELECT r.object_id as `id` FROM {$wpdb->term_relationships} r INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = r.term_taxonomy_id WHERE tt.term_id = " . $category_id);
+        foreach ($categories as $post) {
+            $posts[] = $post->id;
+        }
+
+        return $posts;
+    }
+
+    /**
      * Run function for all editors
      *
      * @param $action

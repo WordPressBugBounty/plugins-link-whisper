@@ -1738,9 +1738,8 @@ class Wpil_Suggestion
         $outbound_selected_posts = Wpil_Settings::getOutboundSuggestionPostIds();
         $inbound_link_limit = (int)get_option('wpil_max_inbound_links_per_post', 0);
         $post_embeddings = Wpil_AI::get_embedding_relatedness_data($post->id, $post->type, true);
-        $has_api_key = Wpil_Settings::getOpenAIKey();
         $relatedness_threshold = Wpil_Settings::get_suggestion_filter('ai_relatedness_threshold');
-        $use_ai_suggestions = !empty(Wpil_Settings::getOpenAIKey()) && !empty(Wpil_AI::get_calculated_embedding_data($post->id, $post->type));//Wpil_Settings::get_use_ai_suggestions();
+        $use_ai_suggestions = Wpil_Settings::has_ai_enabled() && !empty(Wpil_AI::get_calculated_embedding_data($post->id, $post->type));//Wpil_Settings::get_use_ai_suggestions();
 
         $posts = [];
         if (!is_null($target)) {
@@ -2124,7 +2123,7 @@ class Wpil_Suggestion
         $link_report_table = $wpdb->prefix . 'wpil_report_links';
         $anchor_table = $wpdb->prefix . 'wpil_ai_suggested_anchors';
 
-        $use_ai_suggestions = !empty(Wpil_Settings::getOpenAIKey()) && !empty(Wpil_AI::get_calculated_embedding_data($post->id, $post->type));//Wpil_Settings::get_use_ai_suggestions();
+        $use_ai_suggestions = Wpil_Settings::has_ai_enabled() && !empty(Wpil_AI::get_calculated_embedding_data($post->id, $post->type));//Wpil_Settings::get_use_ai_suggestions();
         if(empty($post) || !is_a($post, 'Wpil_Model_Post') || !$use_ai_suggestions){
             return array();
         }

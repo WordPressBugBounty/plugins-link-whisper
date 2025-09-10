@@ -1935,7 +1935,7 @@ class Wpil_AI
         if(Wpil_Settings::get_linkwhisper_ai_active()){
             // just pull the credits and return them
             $cost = $wpdb->get_var($wpdb->prepare("SELECT SUM(credits_used) FROM {$table} WHERE `process_time` >= %d AND `process_time` <= %d", $start_time, $end_time));
-            return $cost;
+            return intval($cost);
         }
 
         $tokens = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$table} WHERE `process_time` >= %d AND `process_time` <= %d", $start_time, $end_time));

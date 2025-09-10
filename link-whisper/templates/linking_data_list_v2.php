@@ -165,7 +165,7 @@
                 <br />
                 <textarea id="suggestion_filter_field" style="width: 100%;" rows="1"></textarea>
             </div>
-            <?php if(!empty(Wpil_Settings::getOpenAIKey()) && (!empty(Wpil_AI::get_calculated_embedding_data($post->id, $post->type)) || Wpil_Settings::get_use_ai_suggestions())){  ?>
+            <?php if(Wpil_Settings::has_ai_enabled() && (!empty(Wpil_AI::get_calculated_embedding_data($post->id, $post->type)) || Wpil_Settings::get_use_ai_suggestions())){  ?>
             <div class="wpil-is-tooltipped wpil-no-scale wpil-tooltip-no-position" style="display:inline-block" <?php echo Wpil_Toolbox::generate_tooltip_text('outbound-suggestions-filter-ai-score'); ?>>
                 <label for="field_ai_relatedness_threshold" style="font-weight: bold; font-size: 16px !important; margin: 7px 0 8px; display: block; display: inline-block;">
                     <?php _e('Filter by AI Score', 'wpil'); ?>

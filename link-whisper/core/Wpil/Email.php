@@ -410,7 +410,7 @@ class Wpil_Email
 
                         <div class="report-title" style="text-align: center; font-size: 24px; margin-bottom: 25px; color: #333;">Link Whisper Monthly Digest</div>
                             <p style="font-size: 20px; text-align: center;">We've crunched the latest numbers, just for you!</p>
-                            <p style="font-size: 20px; text-align: center;">Here's how your site is doing:</p>
+                            <p style="font-size: 20px; text-align: center;">Here's how <a href="<?php echo esc_attr(admin_url('admin.php?page=link_whisper')); ?>" target="_blank"><?php echo esc_url(home_url()); ?></a> is doing.</p>
                             <table class="responsive-table" role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 840px; margin: 0 auto;">
                                 <tr>
                                     <td style="width: 100%; padding: 10px; font-weight:bold;">
@@ -770,7 +770,7 @@ class Wpil_Email
                             <img src="<?php echo WP_INTERNAL_LINKING_PLUGIN_URL . 'images\lw-icon.png'; ?>" style="height: 100px; max-width: 200px;" alt="<?php esc_attr_e('Link Whisper Logo', 'wpil'); ?>">
                         </div>
                         <div class="report-title" style="text-align: center; font-size: 24px; margin-bottom: 25px; color: #333;">Your internal links are setup!</div>
-                            <p style="font-size: 20px; text-align: center;">Here is your site's health report:</p>
+                            <p style="font-size: 20px; text-align: center;">Here is the link health report for: <a href="<?php echo esc_attr(admin_url('admin.php?page=link_whisper')); ?>" target="_blank"><?php echo esc_url(home_url()); ?></a></p>
                             <table class="responsive-table" role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 840px; margin: 0 auto;">
                                 <tr>
                                     <td style="width: 100%; padding: 10px; font-weight:bold;">

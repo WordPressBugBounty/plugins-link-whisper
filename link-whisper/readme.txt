@@ -3,7 +3,7 @@ Contributors: linkwhspr
 Tags: links, SEO, internal linking, link building, orphan content
 Requires at least: 4.6
 Tested up to: 6.8.2
-Stable Tag: 0.8.6
+Stable Tag: 0.8.7
 Requires PHP: 5.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -158,6 +158,15 @@ We are confident that you’ll be happy with Link Whisper Premium. However, if y
 15. [Premium] The URL Changer allows you to update old links to point to new URLs.
 
 == Changelog ==
+= 0.8.7 =
+* [NEW FEATURE] Adding a new Dashboard section for notifications! (Now you'll be able to see Link Whisper news and updates right from your plugin dashboard!)
+* [UX/UI] Adding site URL to the link health report emails so it's easier to tell where they're coming from.
+* [UX] Making extra long titles and URLs hover-visible in the activity panels. (Just hover the mouse over a trimmed title or URL, and you'll be shown the full text.)
+* [BUGFIX] Fixing a bug that would sometimes make the AI status popup hang around when it wasn't needed.
+* [BUGFIX] Fixing bug that would keep the Link Report filters from activating.
+* [BUGFIX] Fixing bug that was keeping connection to Google Search Console from being authorized.
+* [BUGFIX] Fixing some minor PHP notices about unset variables.
+
 = 0.8.6 =
 * [BUGFIX] Fixing password generation error.
 

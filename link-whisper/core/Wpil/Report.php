@@ -22,6 +22,7 @@ class Wpil_Report
     {
         add_action('wp_ajax_reset_report_data', [$this, 'ajax_reset_report_data']);
         add_action('wp_ajax_process_report_data', [$this, 'ajax_process_report_data']);
+        add_action('wp_ajax_wpil_save_user_filter_settings', [$this, 'ajax_save_user_filter_settings']);
         add_filter('screen_settings', [ $this, 'showScreenOptions' ], 10, 2);
         add_filter('set_screen_option_report_options', [$this, 'saveOptions'], 12, 3);
         add_action('wp_ajax_get_link_report_dropdown_data', array(__CLASS__, 'ajax_assemble_link_report_dropdown_data'));
@@ -3804,6 +3805,76 @@ class Wpil_Report
         $unfilled_posts = array_flip(array_filter($all_post_ids, 'strlen'));
 
         return $unfilled_posts;
+    }
+
+    /**
+     * Saves a user's report filtering suggestions to the user meta so we can have persistent report filtering.
+     **/
+    function ajax_save_user_filter_settings(){
+        $user_id = get_current_user_id();
+        if(isset($_POST['nonce']) && wp_verify_nonce($_POST['nonce'], $user_id . 'wpil_filter_nonce') && !empty($user_id)){
+
+            if(isset($_POST['setting_type']) && 'target_keywords' === $_POST['setting_type']){
+                $keyword_post_type = (isset($_POST['post_type']) && !empty($_POST['post_type'])) ? sanitize_text_field($_POST['post_type']) : false;
+                self::save_target_keyword_filtering($keyword_post_type);
+
+            }else{
+                $post_type = (isset($_POST['post_type']) && !empty($_POST['post_type'])) ? sanitize_text_field($_POST['post_type']) : false;
+                $category = (isset($_POST['category']) && !empty($_POST['category'])) ? sanitize_text_field($_POST['category']) : false;
+                self::save_link_report_filtering($post_type, $category);
+
+            }
+        }
+    }
+
+    public static function save_link_report_filtering($post_type = '', $category = ''){
+        $user_id = get_current_user_id();
+        $filter_settings = get_user_meta($user_id, 'wpil_filter_settings', true);
+
+        // create the default settings for the user filters
+        if(empty($filter_settings)){
+            $filter_settings = array();
+        }
+        
+        if(!isset($filter_settings['report'])){
+            $filter_settings['report'] = array('post_type' => false, 'category' => false);
+        }
+
+        if(!empty($post_type)){
+            $filter_settings['report']['post_type'] = $post_type;
+        }else{
+            $filter_settings['report']['post_type'] = false;
+        }
+
+        if(!empty($category)){
+            $filter_settings['report']['category'] = $category;
+        }else{
+            $filter_settings['report']['category'] = false;
+        }
+        
+        update_user_meta($user_id, 'wpil_filter_settings', $filter_settings);
+    }
+
+    public static function save_target_keyword_filtering($keyword_post_type){
+        $user_id = get_current_user_id();
+        $filter_settings = get_user_meta($user_id, 'wpil_filter_settings', true);
+
+        // create the default settings for the user filters
+        if(empty($filter_settings)){
+            $filter_settings = array();
+        }
+        
+        if(!isset($filter_settings['target_keywords'])){
+            $filter_settings['target_keywords'] = array('keyword_post_type' => false);
+        }
+
+        if(!empty($keyword_post_type)){
+            $filter_settings['target_keywords']['keyword_post_type'] = $keyword_post_type;
+        }else{
+            $filter_settings['target_keywords']['keyword_post_type'] = false;
+        }
+
+        update_user_meta($user_id, 'wpil_filter_settings', $filter_settings);
     }
 
     /**

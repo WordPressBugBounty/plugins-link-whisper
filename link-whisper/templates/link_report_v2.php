@@ -20,7 +20,8 @@
         <a href="<?php echo esc_url(WPIL_STORE_URL . '/upgrade-offer/'); ?>" target="blank"><?php _e('Get $15 Off Link Whisper Premium Now!', 'wpil'); ?></a>
     </div>
     <?php } ?>
-    <h1 class="wp-heading-inline wpil-is-tooltipped wpil-no-overlay wpil-no-scale" data-wpil-tooltip-read-time="4500" <?php echo Wpil_Toolbox::generate_tooltip_text('link-report-header'); ?>><?php echo $title;?></h1>
+    <?php $user = wp_get_current_user(); ?>
+    <h1 class="wp-heading-inline wpil-is-tooltipped wpil-no-overlay wpil-no-scale wpil-link-report" data-wpil-tooltip-read-time="4500" <?php echo Wpil_Toolbox::generate_tooltip_text('link-report-header'); ?>><?php echo $title;?></h1>
     <hr class="wp-header-end">
     <div id="poststuff">
         <div id="post-body" class="metabox-holder">
