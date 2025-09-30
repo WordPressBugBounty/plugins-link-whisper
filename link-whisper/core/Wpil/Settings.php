@@ -54,6 +54,7 @@ class Wpil_Settings
         'wpil_same_tab_domains',
         'wpil_links_to_ignore',
         'wpil_broken_links_to_ignore',
+        'wpil_related_post_links_to_ignore',
         'wpil_ignore_elements_by_class',
         'wpil_ignore_shortcodes_by_name',
         'wpil_ignore_linking_roles',
@@ -203,10 +204,9 @@ class Wpil_Settings
             <hr class="wp-header-end">
         </div>
 <?php
-        $ai_id = get_user_meta(get_current_user_id(), 'wpil_ai_access_user_id', true);
-        $uemail = get_user_meta(get_current_user_id(), 'wpil_ai_access_user_email', true);
-        $ai_user_id = Wpil_Settings::get_linkwhisper_ai_user_id();
-        if(!isset($_GET['no_account']) && (empty($ai_user_id) || empty($ai_id) || $ai_id !== $ai_user_id || empty($uemail))){
+        $ai_id = self::get_linkwhisper_ai_user_id();
+        $uemail = self::get_linkwhisper_ai_user_email();
+        if(false && (empty($ai_id) || empty($uemail))){
             ?>
                 <style>
                     .wpil-ai-not-connected-container{
@@ -477,7 +477,8 @@ class Wpil_Settings
             color: #333;
         }
 
-        .custom-plan-cta {
+        .custom-plan-cta,
+        .ai-info-callout {
             grid-column: 1 / -1;
             border: 2px solid #ccc;
             background: #fff;
@@ -491,11 +492,20 @@ class Wpil_Settings
             gap: 16px;
         }
 
-        .custom-plan-text {
+        .custom-plan-text,
+        .ai-info-callout-text {
             font-size: 1.15rem;
             color: #333;
             flex: 1;
             min-width: 220px;
+        }
+
+        .ai-info-callout-text ul{
+            list-style: disc;
+        }
+
+        .ai-info-callout-text ul li{
+            margin-left: 20px;
         }
 
         .custom-plan-button {
@@ -742,6 +752,7 @@ class Wpil_Settings
                                 <?php echo (!empty($uemail)) ? 'Loading checkout… please wait' : 'Enter Your Email'; ?>
                             </label>
                             <input type="email" id="wpil-payment-email" required placeholder="Email" <?php echo (!empty($uemail)) ? 'value="'.esc_attr($uemail).'" style="display:none;"': '';?>>
+                            <a href="#" id="wpil-payment-email-submit" style="margin-top:15px; user-select: none; text-align: center; min-width: 120px;" class="button-primary"><?php esc_html_e('Submit', 'wpil'); ?></a>
                         </div>
                         <div id="wpil-payment-contents-container">
                             <div>
@@ -779,6 +790,23 @@ class Wpil_Settings
                 </div>
                 <a class="custom-plan-button" href="https://account.linkwhisper.com/support" target="_blank">Contact Sales</a>
             </div>
+            <br>
+            <br>
+            <div id="wpil-ai-service-description" class="ai-info-callout">
+                <div class="ai-info-callout-text">
+                    <strong>Wondering how AI can boost your site?</strong><br><br>
+                    <div>
+                        It can:
+                        <ul>
+                            <li>Enhance your suggestions to make them more focused and relevant than before.</li>
+                            <li>Show you when you're linking between unrelated posts.</li>
+                            <li>Generate relational sitemaps to highlight and identify content clusters.</li>
+                            <li>Create post-specific Target Keywords for better suggestions.</li>
+                            <li>Detect products mentioned in posts, and highlight them for linking.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -797,6 +825,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentPlanButton = null;
 
   const emailInput = document.getElementById("wpil-payment-email");
+  const emailSubmit = document.getElementById("wpil-payment-email-submit");
   const emailContainer = document.getElementById("wpil-payment-email-container");
   const formContainer = document.getElementById("wpil-payment-contents-container");
   const paymentFormWrapper = document.getElementById("wpil-payment-form-wrapper");
@@ -842,27 +871,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Animate and show form
-  function showCheckoutForm2(button) {
-    // Hide other plans
-    document.querySelectorAll(".plan-card").forEach(card => {
-      if (!card.contains(button)) {
-        card.style.transition = "opacity 0.3s ease";
-        card.style.opacity = "0";
-        setTimeout(() => card.style.display = "none", 300);
-      }
-    });
-
-    // Scroll and show form
-    setTimeout(() => {
-      paymentFormWrapper.scrollIntoView({ behavior: "smooth" });
-    }, 400);
-
-    // Show email form
-    emailContainer.style.display = "block";
-    formContainer.style.display = "none"; // will show after email and plan selected
-  }
-
 document.querySelectorAll(".plan-button").forEach((button) => {
   button.addEventListener("click", async (e) => {
     const type = button.dataset.type;
@@ -876,7 +884,7 @@ document.querySelectorAll(".plan-button").forEach((button) => {
           const res = await fetch(STRIPE.apiUrl + "/cancel-subscription", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ai_id: "<?php echo $ai_user_id;?>", subscription_id: "<?php echo (isset($sub->subscription_id)) ? $sub->subscription_id: 0?>" })
+            body: JSON.stringify({ ai_id: "<?php echo $ai_id;?>", subscription_id: "<?php echo ((!empty($sub)) && isset($sub->subscription_id)) ? $sub->subscription_id: null;?>" })
           });
           const data = await res.json();
           if (data.success) {
@@ -940,6 +948,14 @@ emailInput.addEventListener("blur", async () => {
     const priceId = currentPlanButton.dataset.priceId;
     triggerStripeIntent(emailInput.value, type, priceId);
 });
+
+emailSubmit.addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (!emailInput.value) return;
+    const type = currentPlanButton.dataset.type;
+    const priceId = currentPlanButton.dataset.priceId;
+    triggerStripeIntent(emailInput.value, type, priceId);
+})
 
 async function triggerStripeIntent(email, type, priceId = null) {
   document.getElementById("wpil-loader").style.display = "block";
@@ -1635,7 +1651,7 @@ function triggerConfettiExplosion() {
                             overlay.style.display = 'none';
                         }
                     });
-                
+                /*
                     const connectBtn = document.getElementById("wpil-connect-ai-button");
                     if (!connectBtn || connectBtn.dataset.aiAuthed == 1) return;
 
@@ -1664,7 +1680,7 @@ function triggerConfettiExplosion() {
                             window.location.href = "<?php echo admin_url('admin.php?page=link_whisper_ai_subscription'); ?>";
                         }
                         }, 1000);
-                    });
+                    });*/
                 });
             </script>
 
@@ -2821,6 +2837,7 @@ function triggerConfettiExplosion() {
                 'wpil_domains_marked_as_internal',
                 'wpil_links_to_ignore',
                 'wpil_broken_links_to_ignore',
+                'wpil_related_post_links_to_ignore',
                 'wpil_ignore_elements_by_class',
                 'wpil_ignore_shortcodes_by_name',
                 'wpil_ignore_linking_roles',
@@ -2880,7 +2897,7 @@ function triggerConfettiExplosion() {
      * @return int
      **/
     public static function get_max_suggestion_count(){
-        return (int) get_option('wpil_max_suggestion_count', 5);
+        return (int) get_option('wpil_max_suggestion_count', 8);
     }
 
     /**
@@ -3463,11 +3480,24 @@ function triggerConfettiExplosion() {
     }
 
     /**
+     * Gets the email associated with this ai subscription
+     **/
+    public static function get_linkwhisper_ai_user_email(){
+        $email = get_option('wpil_ai_access_user_email', '');
+        if(empty($email)){
+            $email = get_user_meta(get_current_user_id(), 'wpil_ai_access_user_email', true);
+        }
+
+        return $email;
+    }
+
+    /**
      * Delets the ai api tokens so that we can disconnect this site
      **/
     public static function disconnect_linkwhisper_ai(){
         delete_option('wpil_ai_access_token');
         delete_option('wpil_ai_access_user_id');
+        delete_option('wpil_ai_access_user_email');
         delete_option('wpil_ai_access_authorized');
     }
 
@@ -3639,18 +3669,14 @@ function triggerConfettiExplosion() {
         
         $limits = get_option('wpil_ai_batch_processing_limits', array());
 
-        if(isset($limits['live'])){
-            if($ai_service_active){
-                if($limits['live']['create-post-embeddings'] > 50){
-                    $limits['live']['create-post-embeddings'] = 50;
-                }elseif(empty($limits['live'])){
-                    $limits['live'] = array('create-post-embeddings' => 50);
-                }
+        if(isset($limits['live']) && is_array($limits['live'])){
+            if($ai_service_active && $limits['live']['create-post-embeddings'] > 50){
+                $limits['live']['create-post-embeddings'] = 50;
             }
             $defaults['live'] = array_merge($defaults['live'], $limits['live']);
         }
 
-        if(isset($limits['batch'])){
+        if(isset($limits['batch']) && is_array($limits['batch'])){
             $defaults['batch'] = array_merge($defaults['batch'], $limits['batch']);
         }
 
@@ -4223,6 +4249,78 @@ function triggerConfettiExplosion() {
         }
 
         return $links;
+    }
+
+    /**
+     * Get links that the user wants to ignore from the related posts widget
+     *
+     * @return array
+     */
+    public static function get_related_post_widget_ignore_posts()
+    {
+        $posts = get_transient('wpil_related_post_links_to_ignore');
+        if(empty($posts)){
+            $posts = [];
+            $links = get_option('wpil_related_post_links_to_ignore', array());
+            if (!empty($links)) {
+                $links = explode("\n", $links);
+                foreach ($links as $key => $link) {
+                    if(empty(trim($link)) || empty(esc_url_raw($link)) && !Wpil_Link::isRelativeLink($link)){
+                        continue;
+                    }
+
+                    $post = Wpil_Post::getPostByLink($link);
+
+                    if(!empty($post) && !empty($post->id)){
+                        $posts[] = $post->get_pid();
+                    }
+                }
+            }
+            if(empty($posts)){
+                $posts = 'no-links-ignored';
+            }
+
+            set_transient('wpil_related_post_links_to_ignore', $posts, 60 * MINUTE_IN_SECONDS);
+        }
+
+        if($posts === 'no-links-ignored'){
+            return array();
+        }
+
+        return $posts;
+    }
+
+    /**
+     * Gets an array of any classes that the user wants to be ignored from both the Link Report and the Suggestions
+     **/
+    public static function get_ignored_element_classes(){
+        $classes = get_transient('wpil_ignore_elements_by_class');
+        if(empty($classes)){
+
+            $classes = get_option('wpil_ignore_elements_by_class', array());
+            if(!empty($classes)){
+                $classes = explode("\n", $classes);
+                foreach($classes as $key => $class){
+                    $class = trim(trim($class, '.'));
+                    if(empty($class)){
+                        unset($classes[$key]);
+                    }else{
+                        $classes[$key] = $class;
+                    }
+                }
+            }
+            if(empty($classes)){
+                $classes = 'no-elements-ignored';
+            }
+
+            set_transient('wpil_ignore_elements_by_class', $classes, 60 * MINUTE_IN_SECONDS);
+        }
+
+        if($classes === 'no-elements-ignored'){
+            return array();
+        }
+
+        return $classes;
     }
 
     /**
@@ -5020,6 +5118,16 @@ function triggerConfettiExplosion() {
         return !empty(get_option('wpil_email_notifications_enabled', 1));
     }
 
+    public static function get_if_telemetry_active(){
+        return false;
+        return !empty(get_option('wpil_enable_telemetry', '1'));
+    }
+
+    public static function get_if_remote_dashboard_active(){
+        return false;
+        return !empty(get_option('wpil_remote_dashboard', '1'));
+    }
+
     public static function get_service_pages_to_ignore(){
         global $wpdb;
 
@@ -5029,7 +5137,10 @@ function triggerConfettiExplosion() {
             'account',
             'sitemap',
             'changelog',
-            'profile'
+            'profile',
+            'about-us',
+            'terms-of-service',
+            'privacy'
         );
 
         $ignore_page_query = "AND (`post_name` LIKE '%" . implode("%' OR `post_name` LIKE '%", $ignore_page_names) . "%')";
@@ -5065,7 +5176,7 @@ function triggerConfettiExplosion() {
 
 
         return (!empty($pages)) ? $pages: [];
-        // TODO: get pages from ecommerce and profile management plugins and include them in the list
+        // TODO: get more pages from ecommerce and profile management plugins and include them in the list
     }
 
     public static function get_money_pages(){

@@ -1634,7 +1634,7 @@ class Wpil_Error
 
         $table = '';
         $header = [
-            '<th class="wpil-activity-panel-checkbox panel-checkall wpil-activity-panel-fixed-th"><input class="wpil-activity-panel-checkall" type="checkbox"/></th>', // checkbox header
+            '<th class="wpil-activity-panel-checkbox panel-checkall wpil-activity-panel-fixed-th"><input class="wpil-activity-panel-checkall" type="checkbox" checked/></th>', // checkbox header
             '<th class="wpil-activity-panel-post">Post</th>',
             '<th>Anchor Text</th>',
             '<th>Broken URL</th>',
@@ -1654,8 +1654,8 @@ class Wpil_Error
                 $esc_url = ($link->url === '{{wpil-empty-url}}') ? '{{wpil-empty-url}}': esc_url($link->url);
                 $scroll_link = base64_encode(json_encode(array('scrollLink' => array('monitorId' => null, 'url' => $link->url, 'anchor' => $link->anchor))));
 
-                $body .= '<tr class="wpil-activity-panel-edit inactive">
-                            <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_activity_select" data-link_id="' . esc_attr($link->id) . '" data-post_id="'.esc_attr($link->post_id).'" data-post_type="'.esc_attr($link->post_type).'" data-anchor="' . $anchor . '" data-url="'.base64_encode($link->url).'" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post_id . '_nonce_' . esc_attr($link->id)) . '"></td>
+                $body .= '<tr class="wpil-activity-panel-edit active">
+                            <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_activity_select" data-link_id="' . esc_attr($link->id) . '" data-post_id="'.esc_attr($link->post_id).'" data-post_type="'.esc_attr($link->post_type).'" data-anchor="' . $anchor . '" data-url="'.base64_encode($link->url).'" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post_id . '_nonce_' . esc_attr($link->id)) . '" checked></td>
                             <td class="wpil-activity-panel-post"><div style="margin: 3px 0;"><a href="'.$post->getViewLink().'" target="_blank">' . $post->getTitle() . '</a></div></td>
                             <td class="wpil-activity-panel-limited-text-cell">
                                 <div style="margin: 3px 0;">

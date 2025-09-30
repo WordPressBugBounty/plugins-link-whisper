@@ -24,6 +24,7 @@ final class Wpil_Init
             Wpil_Sitemap::class,
             Wpil_Email::class,
             Wpil_Notification::class,
+            Wpil_Telemetry::class,
         ];
     }
 

@@ -684,7 +684,6 @@ class Wpil_SearchConsole
         self::clear_custom_auth_config();
         update_option('wpil_gsc_app_authorized', false);
         update_option('wpil_gsc_remote_credentials', array());
-        Wpil_Telemetry::log_event('gsc_disconnected', array('token_revoked' => $revoke));
 
         self::set_data();
     }

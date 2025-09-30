@@ -304,9 +304,6 @@ class Wpil_Email
         $links_scanned = Wpil_Dashboard::getLinksCount();
         $links_scanned_status = (empty($links_scanned)) ? 'tag-negative': 'tag-positive';
 
-        $links_inserted = Wpil_Dashboard::get_tracked_link_insert_count();
-        $links_inserted_status = ($links_inserted > 0) ? 'tag-positive': 'tag-neutral';
-
         $orphaned_posts = Wpil_Dashboard::getOrphanedPostsCount();
         if(!empty($orphaned_posts)){
             $orphaned_posts_percentage = round($orphaned_posts/$posts_crawled, 2) * 100;
@@ -424,13 +421,6 @@ class Wpil_Email
                                     <td style="width: 100%; padding: 10px; font-weight:bold;">
                                         <table role="presentation" width="100%" style="position:relative; background-color: #ffffff; border: 1px solid #c3c4c7; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); padding: 15px;">
                                             <tr><td style="font-size: 16px; color: #555;display: flex;width: 100%; font-weight:300;"><div style="margin-right: auto;">Links Detected: <?php echo $links_scanned; ?></div><div><?php self::get_status_notice($links_scanned_status); ?></div></td></tr>
-                                        </table>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="width: 100%; padding: 10px; font-weight:bold;">
-                                        <table role="presentation" width="100%" style="position:relative; background-color: #ffffff; border: 1px solid #c3c4c7; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); padding: 15px;">
-                                            <tr><td style="font-size: 16px; color: #555;display: flex;width: 100%; font-weight:300;"><div style="margin-right: auto;">Links Inserted: <?php echo $links_inserted; ?></div><div><?php self::get_status_notice($links_inserted_status); ?></div></td></tr>
                                         </table>
                                     </td>
                                 </tr>
@@ -666,9 +656,6 @@ class Wpil_Email
         $links_scanned = Wpil_Dashboard::getLinksCount();
         $links_scanned_status = (empty($links_scanned)) ? 'tag-negative': 'tag-positive';
 
-        $links_inserted = Wpil_Dashboard::get_tracked_link_insert_count();
-        $links_inserted_status = ($links_inserted > 0) ? 'tag-positive': 'tag-neutral';
-
         $orphaned_posts = Wpil_Dashboard::getOrphanedPostsCount();
         if(!empty($orphaned_posts)){
             $orphaned_posts_percentage = round($orphaned_posts/$posts_crawled, 2) * 100;
@@ -784,13 +771,6 @@ class Wpil_Email
                                     <td style="width: 100%; padding: 10px; font-weight:bold;">
                                         <table role="presentation" width="100%" style="position:relative; background-color: #ffffff; border: 1px solid #c3c4c7; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); padding: 15px;">
                                             <tr><td style="font-size: 16px; color: #555;display: flex;width: 100%; font-weight:300;"><div style="margin-right: auto;">Links Detected: <?php echo $links_scanned; ?></div><div><?php self::get_status_notice($links_scanned_status); ?></div></td></tr>
-                                        </table>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="width: 100%; padding: 10px; font-weight:bold;">
-                                        <table role="presentation" width="100%" style="position:relative; background-color: #ffffff; border: 1px solid #c3c4c7; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); padding: 15px;">
-                                            <tr><td style="font-size: 16px; color: #555;display: flex;width: 100%; font-weight:300;"><div style="margin-right: auto;">Links Inserted: <?php echo $links_inserted; ?></div><div><?php self::get_status_notice($links_inserted_status); ?></div></td></tr>
                                         </table>
                                     </td>
                                 </tr>

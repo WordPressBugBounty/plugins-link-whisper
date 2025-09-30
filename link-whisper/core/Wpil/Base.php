@@ -51,6 +51,10 @@ class Wpil_Base
         add_action('wp_ajax_wpil_run_autolink_insert_search', array(__CLASS__, 'ajax_get_wizard_insert_count'));
         add_action('wp_ajax_wpil_load_tours', array('Wpil_Tour', 'ajax_load_tours'));
         add_action('wp_ajax_wpil_save_tour_progress', array('Wpil_Tour', 'ajax_save_tour_progress'));
+        add_action('wp_ajax_wpil_mark_tour_shown', array('Wpil_Tour', 'ajax_mark_tour_shown'));
+        add_action('wp_ajax_wpil_dismiss_tour_widget', array('Wpil_Tour', 'ajax_dismiss_tour_widget'));
+        add_action('wp_ajax_wpil_load_popups', array('Wpil_Popup', 'ajax_load_popups'));
+        add_action('wp_ajax_wpil_dismiss_popup', array('Wpil_Popup', 'ajax_dismiss_popup'));
         /*add_filter('the_content', array(__CLASS__, 'remove_link_whisper_attrs'));
         add_filter('the_content', array(__CLASS__, 'add_link_attrs'));
         add_filter('the_content', array(__CLASS__, 'add_link_icons'), 100, 1);*/
@@ -74,14 +78,11 @@ class Wpil_Base
             return;
         }
 
-        // TODO: if we ever begin offering report exporting, uncomment this to remove security notices.
-        /*
         $clear_exports = get_transient('wpil_clear_exports_folder');
         if(!empty($clear_exports) && time() > (int)$clear_exports){
             Wpil_Export::clear_exports();
             delete_transient('wpil_clear_exports_folder');
-        }*/
-
+        }
 
         $clear_exports = get_transient('wpil_clear_exports_folder');
         if(!empty($clear_exports) && time() > (int)$clear_exports){
@@ -122,7 +123,7 @@ class Wpil_Base
         }
 
         // if we're on a link whisper page
-        if(isset($_GET['page']) && ('link_whisper' === $_GET['page'] || 'link_whisper_settings' === $_GET['page'])){
+        if(isset($_GET['page']) && (false !== strpos($_GET['page'], 'link_whisper'))){
             // do a version check
             $version = get_option('wpil_version_check_update', WPIL_PLUGIN_OLD_VERSION_NUMBER);
             // if the plugin update check hasn't run yet
@@ -595,6 +596,12 @@ class Wpil_Base
         $script_params['debug'] = defined('WPIL_DEBUG') && WPIL_DEBUG;
         $script_params['tour_nonce'] = wp_create_nonce('wpil_load_tours');
         $script_params['save_tour_progress_nonce'] = wp_create_nonce('wpil_save_tour_progress');
+        $script_params['mark_tour_shown_nonce'] = wp_create_nonce('wpil_mark_tour_shown');
+        $script_params['dismiss_tour_widget_nonce'] = wp_create_nonce('wpil_dismiss_tour_widget');
+        $script_params['popup_nonce'] = wp_create_nonce('wpil_load_popups');
+        $script_params['dismiss_popup_nonce'] = wp_create_nonce('wpil_dismiss_popup');
+        $script_params['telemetry_active'] = 1; //Wpil_Settings::get_if_telemetry_active();
+        $script_params['telemetry_nonce'] = wp_create_nonce(get_current_user_id() . 'wpil-telemetry-nonce');
 
         $script_params['wpil_timepicker_format'] = Wpil_Toolbox::convert_date_format_for_js();
 /*
@@ -747,7 +754,7 @@ class Wpil_Base
         wp_enqueue_script('wpil_help_overlay');
         
         // Tour system assets
-        /*$tours_css_path = 'css/wpil_tours.css';
+        $tours_css_path = 'css/wpil_tours.css';
         $tours_css_file = WP_INTERNAL_LINKING_PLUGIN_DIR . $tours_css_path;
         $tours_js_path = 'js/wpil_tours.js';
         $tours_js_file = WP_INTERNAL_LINKING_PLUGIN_DIR . $tours_js_path;
@@ -759,7 +766,31 @@ class Wpil_Base
         if (file_exists($tours_js_file)) {
             wp_register_script('wpil_tours', WP_INTERNAL_LINKING_PLUGIN_URL . $tours_js_path, array('jquery', 'wpil_admin_script'), filemtime($tours_js_file), true);
             wp_enqueue_script('wpil_tours');
-        }*/
+        }
+
+        // Telemetry logging system
+        $telemetry_js_path = 'js/wpil_telemetry.js';
+        $telemetry_js_file = WP_INTERNAL_LINKING_PLUGIN_DIR . $telemetry_js_path;
+        if (file_exists($telemetry_js_file)) {
+            wp_register_script('wpil_telemetry', WP_INTERNAL_LINKING_PLUGIN_URL . $telemetry_js_path, array('jquery', 'wpil_admin_script'), filemtime($telemetry_js_file), true);
+            wp_enqueue_script('wpil_telemetry');
+        }
+
+        // Enqueue popup assets
+        $popups_css_path = 'css/wpil_popups.css';
+        $popups_css_file = WP_INTERNAL_LINKING_PLUGIN_DIR . $popups_css_path;
+        $popups_js_path = 'js/wpil_popups.js';
+        $popups_js_file = WP_INTERNAL_LINKING_PLUGIN_DIR . $popups_js_path;
+
+        if (file_exists($popups_css_file)) {
+            wp_register_style('wpil_popups_style', WP_INTERNAL_LINKING_PLUGIN_URL . $popups_css_path, array(), filemtime($popups_css_file));
+            wp_enqueue_style('wpil_popups_style');
+        }
+        
+        if (file_exists($popups_js_file)) {
+            wp_register_script('wpil_popups', WP_INTERNAL_LINKING_PLUGIN_URL . $popups_js_path, array('jquery', 'wpil_admin_script'), filemtime($popups_js_file), true);
+            wp_enqueue_script('wpil_popups');
+        }
     }
 
     /**
@@ -1960,9 +1991,9 @@ class Wpil_Base
 
             $post = new Wpil_Model_Post($post_id);
             $post_scanned = !empty(get_post_meta($post_id, 'wpil_sync_report3', true));
-            $inbound_internal = (int)get_post_meta($post_id, 'wpil_links_inbound_internal_count', true);
-            $outbound_internal = (int)get_post_meta($post_id, 'wpil_links_outbound_internal_count', true);
-            $outbound_external = (int)get_post_meta($post_id, 'wpil_links_outbound_external_count', true);
+            $inbound_internal = (int) $post->getInboundInternalLinks(true);
+            $outbound_internal = (int) $post->getOutboundInternalLinks(true);
+            $outbound_external = (int) $post->getOutboundExternalLinks(true);
 
             ?>
             <span class="wpil-link-stats-column-display wpil-link-stats-content">
@@ -2418,6 +2449,8 @@ class Wpil_Base
         Wpil_TargetKeyword::prepareTable();
         Wpil_AI::prepare_table();
         Wpil_Sitemap::prepare_table();
+        Wpil_Report::prepare_link_tracking_table();
+        Wpil_Telemetry::prepare_table();
 
         // search console table not included because it's explicitly activated by the user
         // linked site data table also not included because it's explicitly activated by the user
@@ -2476,6 +2509,18 @@ class Wpil_Base
                 define('WP_REDIS_DISABLED', true);
             }
             wp_using_ext_object_cache(false);
+        }
+
+        if(defined('DOING_AJAX') && DOING_AJAX || $ignore_ajax){
+            if(function_exists('nocache_headers')){
+                nocache_headers();
+            }
+            if(!defined('DONOTCACHEOBJECT')){
+                define('DONOTCACHEOBJECT', true);
+            }
+            if(!defined('DONOTCACHEDB')){
+                define('DONOTCACHEDB', true);
+            }
         }
     }
 

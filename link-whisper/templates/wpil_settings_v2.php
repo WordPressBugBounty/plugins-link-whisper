@@ -236,12 +236,17 @@
                 <?php } ?>
                 <?php if(get_option('wpil_oai_insufficient_quota_error', '0') === '1'){ ?>
                     <div class="notice wpil-notice update is-dismissible notice-error wpil-ai-insufficient-quota-notice" id="wpil_message" >
+                        <?php
+                            $ai_linky = (Wpil_Settings::get_linkwhisper_ai_active()) 
+                            ? '<a href="'.admin_url('admin.php?page=link_whisper_ai_subscription').'" target="_blank">' . __('add more credit to your account', 'wpil') . '</a>'
+                            : '<a href="https://platform.openai.com/settings/organization/billing/overview" target="_blank">' . __('add more credit to the OpenAI account', 'wpil') . '</a>';
+                        ?>
                         <div style="display:flex;">
                             <img src="<?php echo WP_INTERNAL_LINKING_PLUGIN_URL . '/images/lw-icon.png' ?>" width="32px" height="32px" style="margin: 10px 10px 0px 0;">
-                            <p style="font-weight: 600;"><?php esc_html_e('Notice: Low OpenAI Credit Balance', 'wpil'); ?></p>
+                            <p style="font-weight: 600;"><?php esc_html_e('Notice: Low Credit Balance', 'wpil'); ?></p>
                         </div>
-                        <p><?php esc_html_e('During the last processing run, the OpenAI account ran out of credit and the processing stopped.', 'wpil'); ?></p>
-                        <p><?php echo sprintf(esc_html__('To continue processing, please %s. If you have already added more credit to the account, please feel free to dismiss this notice.', 'wpil'), '<a href="https://platform.openai.com/settings/organization/billing/overview" target="_blank">' . __('add more credit to the OpenAI account', 'wpil') . '</a>'); ?></p>
+                        <p><?php esc_html_e('During the last AI processing run, your account ran out of credit and the processing stopped.', 'wpil'); ?></p>
+                        <p><?php echo sprintf(esc_html__('To continue processing, please %s. If you have already added more credit to the account, please feel free to dismiss this notice.', 'wpil'), $ai_linky); ?></p>
                     </div>
                 <?php } ?>
                 <?php if(get_option('wpil_open_ai_key_decoding_error', '0') === '1'){ ?>
@@ -740,8 +745,12 @@
                             <td scope='row' style="min-width:400px;"><?php _e('Link Whisper AI', 'wpil'); ?></td>
                             <td>
                                 <div style="display: inline-block; position: relative;">
-                                    <a href="<?php echo esc_url(Wpil_AI::get_linkwhisper_ai_auth_url())?>" style="margin-top:5px; user-select: none; text-align: center;" class="button-primary <?php echo ($is_connected_to_linkwhisper_ai) ? 'hide-setting': '';?>"><?php esc_html_e('Connect', 'wpil'); ?></a>
-                                    <a style="margin-top:5px; user-select: none; text-align: center;" id="wpil-disconnect-ai-subscription" data-nonce="<?php echo wp_create_nonce('disconnect-ai-subscription'); ?>" class="button-primary <?php echo (!$is_connected_to_linkwhisper_ai) ? 'hide-setting': '';?>"><?php esc_html_e('Disconnect', 'wpil'); ?></a>
+                                    <?php if(empty(Wpil_Settings::get_linkwhisper_ai_token()) && empty(Wpil_Settings::getOpenAIKey())){ // if they aren't authenticated and don't have an openai key?>
+                                        <a href="<?php echo esc_url(admin_url('admin.php?page=link_whisper_ai_subscription'))?>" style="margin-top:5px; user-select: none; text-align: center;" class="button-primary"><?php esc_html_e('Get Started!', 'wpil'); ?></a>
+                                    <?php } else { ?>
+                                        <a href="<?php echo esc_url(Wpil_AI::get_linkwhisper_ai_auth_url())?>" style="margin-top:5px; user-select: none; text-align: center;" class="button-primary <?php echo ($is_connected_to_linkwhisper_ai) ? 'hide-setting': '';?>"><?php esc_html_e('Connect', 'wpil'); ?></a>
+                                        <a style="margin-top:5px; user-select: none; text-align: center;" id="wpil-disconnect-ai-subscription" data-nonce="<?php echo wp_create_nonce('disconnect-ai-subscription'); ?>" class="button-primary <?php echo (!$is_connected_to_linkwhisper_ai) ? 'hide-setting': '';?>"><?php esc_html_e('Disconnect', 'wpil'); ?></a>
+                                    <?php } ?>
                                     <div class="wpil_help" style="float:right">
                                         <i class="dashicons dashicons-editor-help"></i>
                                         <?php if(!$is_connected_to_linkwhisper_ai){ ?>
@@ -880,7 +889,7 @@
                             <td scope='row' class="wpil-setting-text"><?php _e('AI Relation Analysis Batch Size', 'wpil'); ?></td>
                             <td>
                                 <div style="max-width: 210px;">
-                                <input type="number" class="" style="min-width: 170px;" name="wpil_ai_batch_processing_limits[live][create-post-embeddings]" value="<?php echo (int) $ai_processing_batch_limits['live']['create-post-embeddings'];?>" min="1" max="<?php echo !($is_connected_to_linkwhisper_ai) ? 1000: 50;?>">
+                                <input type="number" class="" style="min-width: 170px;" name="wpil_ai_batch_processing_limits[live][create-post-embeddings]" value="<?php echo max([1, (int) $ai_processing_batch_limits['live']['create-post-embeddings']]);?>" min="1" max="<?php echo !($is_connected_to_linkwhisper_ai) ? 1000: 50;?>">
                                 <div class="wpil_help" style="float:right">
                                     <i class="dashicons dashicons-editor-help"></i>
                                     <div style="background: rgba(0, 0, 0, 0.8); width: 400px">
@@ -1518,6 +1527,46 @@
                                         <br />
                                         <br />
                                         <?php esc_html_e('One of the main indicators that this needs to be activated is if after the Link Scan completes, many posts are reporting that they have the same links. Especially if they\'re from "related post" sections.', 'wpil'); ?>
+                                    </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-advanced-settings wpil-setting-row">
+                            <td scope='row'><?php esc_html_e('Optimize Link Scan For Speed', 'wpil'); ?></td>
+                            <td>
+                                <input type="hidden" name="wpil_optimize_link_scan_for_speed" value="0" />
+                                <input type="checkbox" name="wpil_optimize_link_scan_for_speed" <?=!empty(get_option('wpil_optimize_link_scan_for_speed', false))?'checked':''?> value="1" />
+                                <div class="wpil_help" style="display: inline-block; float: none; margin: 0px 0 0 5px;">
+                                    <i class="dashicons dashicons-editor-help"></i>
+                                    <div style="width: 340px;">
+                                        <?php esc_html_e('This setting tells Link Whisper to try to make the Link Scan run as fast as it can.', 'wpil'); ?>
+                                        <br />
+                                        <br />
+                                        <?php esc_html_e('Doing this requires it to go from being obsessively careful in detecting all links to just being really careful. (Most sites shouldn\'t see a difference.)', 'wpil'); ?>
+                                        <br />
+                                        <br />
+                                        <?php esc_html_e('If you find that the Dashboard widget says zero posts have been scanned, or you find that the scan hasn\'t made progress in longer than 30 mins, please turn off the setting.', 'wpil'); ?>
+                                    </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-advanced-settings wpil-setting-row">
+                            <td scope='row'><?php esc_html_e('Run Link Stats From Link Table', 'wpil'); ?></td>
+                            <td>
+                                <input type="hidden" name="wpil_use_link_data_table" value="0" />
+                                <input type="checkbox" name="wpil_use_link_data_table" <?=!empty(get_option('wpil_use_link_data_table', false))?'checked':''?> value="1" />
+                                <div class="wpil_help" style="display: inline-block; float: none; margin: 0px 0 0 5px;">
+                                    <i class="dashicons dashicons-editor-help"></i>
+                                    <div style="width: 340px;">
+                                        <?php esc_html_e('This setting tells Link Whisper to not store link data in the site\'s "post meta" database table, and instead use a custom database table for link data.', 'wpil'); ?>
+                                        <br />
+                                        <br />
+                                        <?php esc_html_e('Doing this will shorten the amount of time that it takes to complete a Link Scan, and should speed up ALL link related activities. Especially those in the Report pages.', 'wpil'); ?>
+                                        <br />
+                                        <br />
+                                        <?php esc_html_e('After activating this setting, please test the Reports to make sure they are working correctly and then run a new Link Scan to clear out any stored data in the "post meta" database table.', 'wpil'); ?>
                                     </div>
                                     </div>
                                 </div>

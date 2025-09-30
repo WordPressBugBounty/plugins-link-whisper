@@ -159,7 +159,7 @@ class Wpil_Table_Report extends WP_List_Table
                             }*/
 
                             $ai_suggestions = '';
-                            if(Wpil_Settings::get_use_ai_suggestions() && !Wpil_Settings::get_disable_ai_anchor_building()){
+                            if(false && Wpil_Settings::get_use_ai_suggestions() && !Wpil_Settings::get_disable_ai_anchor_building()){ // TODO: Disabling pending rework
                                 $suggestions = Wpil_Report::get_ai_detected_suggestions($item['post'], true, true);
                                 $ai_suggestions = (!empty($suggestions)) ? '<span class="wpil-no-action" style="display: inline-block; margin-left: 10px; text-decoration: underline;" title="'. esc_attr__('AI Detected Linking Opportunities', 'wpil') .'"><span class="wpil-no-action">' . $suggestions . '</span><span class="wpil-no-action"><span class="dashicons dashicons-superhero wpil-no-action"></span></span></span>': '';
                             }
@@ -453,7 +453,7 @@ class Wpil_Table_Report extends WP_List_Table
             }
 
             if(isset($_GET['orphaned'])){
-                $actions['ignore-orphaned'] = '<a href="#" class="wpil-ignore-orphaned-post" data-post-id="' . $post->id . '" data-type="' . $post->type . '" data-nonce="'. wp_create_nonce('ignore-orphaned-post-' . $post->id) .'">' . sprintf(__('Ignore Orphaned %s', 'wpil'), $object_name) . '</a>';
+                $actions['ignore-orphaned'] = '<a href="#" class="wpil-ignore-orphaned-post" data-post-id="' . $post->get_pid() . '" data-nonce="'. wp_create_nonce($user->ID . 'ignore-orphaned-post-nonce') .'">' . sprintf(__('Ignore Orphaned %s', 'wpil'), $object_name) . '</a>';
             }
 
             if(!isset($_GET['orphaned']) && !isset($_GET['link_density']) && !isset($_GET['link_relation'])){
@@ -591,7 +591,7 @@ class Wpil_Table_Report extends WP_List_Table
      */
     public function search_box( $text, $input_id ) {
         if ( empty( $_REQUEST['s'] ) && ! $this->has_items() ) {
-            return;
+            //return;
         }
 
         $input_id = $input_id . '-search-input';
@@ -766,9 +766,14 @@ class Wpil_Table_Report extends WP_List_Table
             </button>
 
             <ul class="wpil-bulk-menu" id="wpil-bulk-menu" role="listbox" tabindex="-1" hidden>
-                <li role="option" data-value="trash_posts" style="margin:0px;">Move to Trash</li>
+                <?php if(isset($_GET['orphaned'])){ ?>
+                <li role="option" data-value="ignore_orphaned">Ignore Orphaned Posts</li>
+                <?php } ?>
+                <li role="option" data-value="trash_posts">Move to Trash</li>
+                <!--<li role="option" data-value="export_csv">Export Selected to CSV</li>-->
             </ul>
             <input type="hidden" id="wpil_links_trash_selected" />
+            <input type="hidden" id="wpil_links_ignore_orphaned_selected" data-nonce="<?php echo wp_create_nonce(get_current_user_id() . 'ignore-orphaned-post-nonce');?>" />
         </div>
 <script>
 jQuery(function($) {
@@ -780,6 +785,9 @@ jQuery(function($) {
     switch (detail.value) {
         case 'trash_posts':
             $('#wpil_links_trash_selected').trigger('click');
+            break;
+        case 'ignore_orphaned':
+            $('#wpil_links_ignore_orphaned_selected').trigger('click');
             break;
         default:
             break;
@@ -813,7 +821,12 @@ jQuery(function($) {
     }
 
     $(document).on('click', '.wpil-panel-subaction, .wpil-collapsible-wrapper.wpil-activity-activate', function(e){
-        if($(e.target).hasClass('add-outbound-internal-links') || $(e.target).hasClass('add-inbound-internal-links') || $(e.target).parents('.add-density-highlight').length > 0){
+        if( $(e.target).hasClass('add-outbound-internal-links') || 
+            $(e.target).hasClass('add-inbound-internal-links') ||
+            $(e.target).parents('a').hasClass('add-outbound-internal-links') ||
+            $(e.target).parents('a').hasClass('add-inbound-internal-links')  || 
+            $(e.target).parents('.add-density-highlight').length > 0
+        ){
             return;
         }
 

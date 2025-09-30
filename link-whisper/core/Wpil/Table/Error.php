@@ -445,7 +445,7 @@ class Wpil_Table_Error extends WP_List_Table
                                         <?php endforeach; */ ?>
                                     </select>
                                     <!--/filter by post type-->
-                                    <span class="wpil-filter-submit-button" style="display: inline-block; width: 90%;margin: 10px 0 0 0;">🔎 Filter</span>
+                                    <span class="wpil-filter-submit-button wpil_error_table_filter_submit" style="display: inline-block; width: 90%;margin: 10px 0 0 0;">🔎 Filter</span>
                                     <input type="hidden" class="post-filter-nonce" value="<?php echo wp_create_nonce(get_current_user_id() . 'wpil_filter_nonce'); ?>">
                                 </div>
                             </div>

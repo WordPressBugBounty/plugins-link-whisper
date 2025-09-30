@@ -5,7 +5,7 @@
     $(document).on('click', '#wpil_error_filter', wpil_error_codes_update);
     $(document).on('click', '#check_all_codes', wpil_toggle_available_codes);
     $(document).on('click', '#error_table_code_filter .item:first-of-type', wpil_error_codes_toggle);
-    $(document).on('click', '.wpil-error-report-url-edit-confirm', wpil_error_link_update);
+//    $(document).on('click', '.wpil-error-report-url-edit-confirm', wpil_error_link_update);
     $(document).on('submit', '#wpil_error_reset_data_form', wpil_error_reset_data);
 
     $(document).click(function(e){
@@ -45,6 +45,8 @@
                     wpil_swal(response.error.title, response.error.text, 'error');
                 } else if (response.success) {
                     $('.wpil-activity-panel').empty().append(response.success.table);
+                    $('.wpil-update-activity-items').addClass('active');
+                    $('.wpil-edit-selected-activity-items').removeClass('inactive').addClass('active');
                 }
             }
         });
@@ -203,7 +205,7 @@
     }
 
     $(document).on('change', '#wpil_error_table_post_filter select', wpil_report_filter);
-    $(document).on('click', '#wpil_error_table_post_filter .button-primary', wpil_report_filter_submit);
+    $(document).on('click', '#wpil_error_table_post_filter .wpil_error_table_filter_submit', wpil_report_filter_submit);
 
     function wpil_report_filter() {
         var block = $('#wpil_error_table_post_filter');

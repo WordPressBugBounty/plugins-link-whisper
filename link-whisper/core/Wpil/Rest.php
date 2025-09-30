@@ -121,6 +121,8 @@ class Wpil_Rest
                 update_option('wpil_ai_access_token', Wpil_Toolbox::encrypt($token));
                 // and the user id
                 update_option('wpil_ai_access_user_id', $user_id);
+                // and the user email
+                update_option('wpil_ai_access_user_email', $uemail);
                 // tag the user with the id
                 update_user_meta($uid, 'wpil_ai_access_user_id', $user_id);
                 update_user_meta($uid, 'wpil_ai_access_user_email', $uemail);

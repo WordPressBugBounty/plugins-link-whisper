@@ -164,6 +164,14 @@
         async initializePage(pageSlug, pluginVersion) {
             const response = await this.tourService.fetchTours(pageSlug, pluginVersion);
             
+            // Log debug information for target_events debugging
+            if (response.debug_info) {
+                console.log('LinkWhisper Tours Debug Info:', response.debug_info);
+            }
+            if (response.user_events_debug) {
+                console.log('LinkWhisper User Events Debug:', response.user_events_debug);
+            }
+            
             if (response.tours && response.tours.length > 0) {
                 // Update progress manager with user progress from server
                 this.progress = new LinkWhisperTourProgress(response.user_progress);
@@ -171,6 +179,72 @@
                 // Sort by priority and show the first tour (always persist)
                 response.tours.sort((a, b) => a.priority - b.priority);
                 this.showTour(response.tours[0]);
+                
+                // Check for auto_start tours and show first pending step automatically
+                const autoStartTour = response.tours.find(tour => tour.auto_start === 1 || tour.auto_start === '1');
+                if (autoStartTour) {
+                    console.log('LinkWhisper Tours: Found auto_start tour:', autoStartTour.title);
+                    this.checkAndAutoStartTour(autoStartTour);
+                }
+            }
+        }
+
+        checkAndAutoStartTour(tour) {
+            // Find the first pending step
+            for (let i = 0; i < tour.steps.length; i++) {
+                const step = tour.steps[i];
+                if (!this.progress.isStepComplete(step.id)) {
+                    console.log('LinkWhisper Tours: Auto-starting tour at step:', step.title);
+                    // Set current tour and step
+                    this.currentTour = tour;
+                    this.currentStep = i;
+                    
+                    // Log tour auto-start event
+                    if (window.wpilTelemetry) {
+                        window.wpilTelemetry.logTourAutoStarted(tour.id);
+                    }
+                    
+                    // Mark tour as shown for frequency tracking
+                    this.markTourAsShown(tour.id);
+                    
+                    // Show the step after a short delay to ensure page is fully loaded
+                    setTimeout(() => {
+                        // Ensure widget is expanded when auto-starting (skip auto-step to avoid conflicts)
+                        this.expandWidget(true);
+                        // Show the step popup
+                        this.showStepByIndex(i);
+                    }, 500);
+                    return;
+                }
+            }
+            console.log('LinkWhisper Tours: Auto_start tour has no pending steps');
+        }
+
+        async markTourAsShown(tourId) {
+            try {
+                const response = await new Promise((resolve, reject) => {
+                    $.ajax({
+                        type: 'POST',
+                        url: window.wpil_ajax.ajax_url,
+                        data: {
+                            action: 'wpil_mark_tour_shown',
+                            nonce: window.wpil_ajax.mark_tour_shown_nonce,
+                            tour_id: tourId
+                        },
+                        success: function(response) {
+                            resolve(response);
+                        },
+                        error: function(xhr, status, error) {
+                            reject(new Error(`AJAX error: ${status} - ${error}`));
+                        }
+                    });
+                });
+
+                if (!response.success) {
+                    console.warn('LinkWhisper Tours: Failed to mark tour as shown:', response.data);
+                }
+            } catch (error) {
+                console.error('LinkWhisper Tours: Error marking tour as shown:', error);
             }
         }
 
@@ -205,7 +279,10 @@
                     <div class="tour-header">
                         <div class="tour-title-section">
                             <h3>${this.escapeHtml(tour.title)}</h3>
-                            <button class="tour-minimize" data-action="minimize" aria-label="Minimize">−</button>
+                            <div class="tour-header-actions">
+                                <button class="tour-dismiss" data-action="dismiss" aria-label="Dismiss tour">×</button>
+                                <button class="tour-minimize" data-action="minimize" aria-label="Minimize">−</button>
+                            </div>
                         </div>
                     </div>
                     <div class="tour-progress-bar">
@@ -253,6 +330,10 @@
                     e.stopPropagation();
                     this.minimizeWidget();
                     return;
+                } else if (action === 'dismiss') {
+                    e.stopPropagation();
+                    this.dismissTourWidget();
+                    return;
                 } else if (action === 'reset') {
                     e.stopPropagation();
                     this.resetTour();
@@ -270,11 +351,19 @@
                     this.lastClickTime = now;
                     
                     console.log('LinkWhisper Tours: Step clicked, index:', stepIndex);
-                    this.showStepByIndex(parseInt(stepIndex));
+                    
+                    // Log manual tour start if this is the first step and no steps completed yet
+                    const stepIndexInt = parseInt(stepIndex);
+                    const completedCount = this.getCompletedStepsCount(this.currentTour);
+                    if (stepIndexInt === 0 && completedCount === 0 && window.wpilTelemetry) {
+                        window.wpilTelemetry.logTourStarted(this.currentTour.id, false);
+                    }
+                    
+                    this.showStepByIndex(stepIndexInt);
                     return;
                 }
                 
-                // If clicked on minimized widget, expand
+                // If clicked on minimized widget, expand and show pending step
                 if (widget.classList.contains('minimized') && 
                     e.target.closest('.tour-widget-minimized')) {
                     e.stopPropagation();
@@ -325,13 +414,47 @@
             return Math.round((completed / tour.steps.length) * 100);
         }
 
-        expandWidget() {
+        expandWidget(skipAutoStep = false) {
             const widget = document.getElementById('linkwhisper-tour-widget');
             if (widget) {
                 widget.classList.remove('minimized');
                 widget.querySelector('.tour-widget-minimized').style.display = 'none';
                 widget.querySelector('.tour-widget-expanded').style.display = 'block';
+                
+                // Log widget expansion event
+                if (window.wpilTelemetry && this.currentTour) {
+                    window.wpilTelemetry.logTourWidgetExpanded(this.currentTour.id);
+                }
+                
+                // Show current pending step popup if there is one (unless we're skipping auto-step)
+                if (!skipAutoStep) {
+                    const pendingStep = this.getCurrentPendingStep();
+                    if (pendingStep) {
+                        console.log('LinkWhisper Tours: Showing pending step after expand:', pendingStep);
+                        this.showStepByIndex(pendingStep.index);
+                    }
+                }
             }
+        }
+
+        getCurrentPendingStep() {
+            if (!this.currentTour || !this.currentTour.steps) {
+                return null;
+            }
+
+            // Find the first incomplete step
+            for (let i = 0; i < this.currentTour.steps.length; i++) {
+                const step = this.currentTour.steps[i];
+                if (!this.progress.isStepComplete(step.id)) {
+                    return {
+                        step: step,
+                        index: i
+                    };
+                }
+            }
+
+            // All steps completed
+            return null;
         }
 
         minimizeWidget() {
@@ -340,8 +463,80 @@
                 widget.classList.add('minimized');
                 widget.querySelector('.tour-widget-minimized').style.display = 'flex';
                 widget.querySelector('.tour-widget-expanded').style.display = 'none';
+                
+                // Log widget minimization event
+                if (window.wpilTelemetry && this.currentTour) {
+                    window.wpilTelemetry.logTourWidgetMinimized(this.currentTour.id);
+                }
+                
                 // Clear any active highlights when minimizing
                 this.clearHighlights();
+            }
+        }
+
+        async dismissTourWidget() {
+            if (!this.currentTour) {
+                console.warn('LinkWhisper Tours: No current tour to dismiss');
+                return;
+            }
+
+            console.log('LinkWhisper Tours: Dismissing tour widget:', this.currentTour.title);
+            
+            try {
+                // Log tour dismissal event
+                if (window.wpilTelemetry) {
+                    window.wpilTelemetry.logTourDismissed(
+                        this.currentTour.id, 
+                        this.currentStep >= 0 ? this.currentTour.steps[this.currentStep]?.id : null,
+                        'user_action'
+                    );
+                }
+                
+                // Mark tour as dismissed with timestamp
+                await this.markTourDismissed(this.currentTour.id, this.currentTour.display_frequency);
+                
+                // Hide the widget
+                const widget = document.getElementById('linkwhisper-tour-widget');
+                if (widget) {
+                    widget.style.display = 'none';
+                }
+                
+                // Clear any active highlights
+                this.clearHighlights();
+                
+                console.log('LinkWhisper Tours: Tour widget dismissed successfully');
+            } catch (error) {
+                console.error('LinkWhisper Tours: Error dismissing tour widget:', error);
+            }
+        }
+
+        async markTourDismissed(tourId, displayFrequency) {
+            try {
+                const response = await new Promise((resolve, reject) => {
+                    $.ajax({
+                        type: 'POST',
+                        url: window.wpil_ajax.ajax_url,
+                        data: {
+                            action: 'wpil_dismiss_tour_widget',
+                            nonce: window.wpil_ajax.dismiss_tour_widget_nonce,
+                            tour_id: tourId,
+                            display_frequency: displayFrequency
+                        },
+                        success: function(response) {
+                            resolve(response);
+                        },
+                        error: function(xhr, status, error) {
+                            reject(new Error(`AJAX error: ${status} - ${error}`));
+                        }
+                    });
+                });
+
+                if (!response.success) {
+                    throw new Error(response.data || 'Failed to dismiss tour widget');
+                }
+            } catch (error) {
+                console.error('LinkWhisper Tours: Error marking tour as dismissed:', error);
+                throw error;
             }
         }
 
@@ -349,6 +544,11 @@
             if (!this.currentTour) return;
             
             console.log('LinkWhisper Tours: Resetting tour progress');
+            
+            // Log tour reset event
+            if (window.wpilTelemetry) {
+                window.wpilTelemetry.logTourReset(this.currentTour.id);
+            }
             
             // Reset progress for this tour
             await this.progress.resetTour(this.currentTour.id);
@@ -381,8 +581,94 @@
             this.currentStep = stepIndex;
             const step = this.currentTour.steps[stepIndex];
             
+            // Log step viewed event
+            if (window.wpilTelemetry && step) {
+                window.wpilTelemetry.logTourStepViewed(
+                    this.currentTour.id, 
+                    step.id, 
+                    stepIndex + 1, 
+                    this.currentTour.steps.length
+                );
+            }
+            
             console.log('LinkWhisper Tours: Attempting to show step:', step);
             this.showStep(step);
+        }
+
+        nextStep() {
+            console.log('LinkWhisper Tours: Moving to next step');
+            if (!this.currentTour) {
+                console.warn('LinkWhisper Tours: No current tour available');
+                return;
+            }
+            
+            const currentIndex = this.currentStep || 0;
+            const currentStep = this.currentTour.steps[currentIndex];
+            
+            // Log navigation click event
+            if (window.wpilTelemetry && currentStep) {
+                window.wpilTelemetry.logTourNavigationClicked(
+                    this.currentTour.id, 
+                    currentStep.id, 
+                    'next'
+                );
+            }
+            
+            // Mark current step as completed before moving to next
+            if (currentStep) {
+                console.log('LinkWhisper Tours: Marking current step as completed:', currentStep.id);
+                this.progress.markStepComplete(currentStep.id);
+                this.progress.saveProgress();
+                
+                // Log step completion
+                if (window.wpilTelemetry) {
+                    window.wpilTelemetry.logTourStepCompleted(
+                        this.currentTour.id, 
+                        currentStep.id, 
+                        currentIndex + 1
+                    );
+                }
+            }
+            
+            const nextIndex = currentIndex + 1;
+            
+            if (nextIndex < this.currentTour.steps.length) {
+                // Clear current tooltip before showing next step
+                this.clearHighlights();
+                this.showStepByIndex(nextIndex);
+                // Update widget to reflect completed step
+                this.updateWidget();
+            } else {
+                console.log('LinkWhisper Tours: Already at last step');
+                this.markStepComplete();
+            }
+        }
+
+        previousStep() {
+            console.log('LinkWhisper Tours: Moving to previous step');
+            if (!this.currentTour) {
+                console.warn('LinkWhisper Tours: No current tour available');
+                return;
+            }
+            
+            const currentIndex = this.currentStep || 0;
+            const currentStep = this.currentTour.steps[currentIndex];
+            const previousIndex = currentIndex - 1;
+            
+            // Log navigation click event
+            if (window.wpilTelemetry && currentStep) {
+                window.wpilTelemetry.logTourNavigationClicked(
+                    this.currentTour.id, 
+                    currentStep.id, 
+                    'previous'
+                );
+            }
+            
+            if (previousIndex >= 0) {
+                this.showStepByIndex(previousIndex);
+            } else {
+                console.log('LinkWhisper Tours: Already at first step');
+            }
         }
 
         showStep(step) {
@@ -499,13 +785,22 @@
             tooltip.setAttribute('aria-modal', 'true');
             
             try {
+                const currentStep = this.currentStep || 0;
+                const totalSteps = this.currentTour?.steps?.length || 1;
+                const isFirstStep = currentStep === 0;
+                const isLastStep = currentStep === totalSteps - 1;
+                
                 tooltip.innerHTML = `
                     <div class="tooltip-content">
                         ${step.image ? `<img src="${step.image}" alt="${this.escapeHtml(step.title)}" class="tooltip-image">` : ''}
                         <h4>${this.escapeHtml(step.title)}</h4>
                         <p>${this.escapeHtml(step.description)}</p>
+                        <div class="tooltip-progress">
+                            <span class="step-counter">${currentStep + 1} of ${totalSteps}</span>
+                        </div>
                         <div class="tooltip-actions">
-                            <button class="btn-primary" data-action="got-it">Got it!</button>
+                            ${!isFirstStep ? `<button class="btn-secondary" data-action="previous">Previous</button>` : ''}
+                            ${!isLastStep ? `<button class="btn-primary" data-action="next">Next</button>` : `<button class="btn-primary" data-action="done">Done</button>`}
                         </div>
                     </div>
                     <div class="tooltip-arrow"></div>
@@ -533,9 +828,15 @@
             // Add event listeners
             tooltip.addEventListener('click', (e) => {
                 const action = e.target.dataset.action;
-                if (action === 'got-it') {
-                    console.log('LinkWhisper Tours: Got it button clicked');
+                if (action === 'got-it' || action === 'done') {
+                    console.log('LinkWhisper Tours: Done/Got it button clicked');
                     this.markStepComplete();
+                } else if (action === 'next') {
+                    console.log('LinkWhisper Tours: Next button clicked');
+                    this.nextStep();
+                } else if (action === 'previous') {
+                    console.log('LinkWhisper Tours: Previous button clicked');
+                    this.previousStep();
                 }
             });
 
@@ -543,10 +844,21 @@
             tooltip.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
                     this.clearHighlights(); // Just close tooltip, don't dismiss tour
+                } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    this.nextStep();
+                } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    this.previousStep();
                 } else if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    if (e.target.dataset.action === 'got-it') {
+                    const action = e.target.dataset.action;
+                    if (action === 'got-it' || action === 'done') {
                         this.markStepComplete();
+                    } else if (action === 'next') {
+                        this.nextStep();
+                    } else if (action === 'previous') {
+                        this.previousStep();
                     }
                 }
             });
@@ -656,6 +968,23 @@
 
             const currentStep = this.currentTour.steps[this.currentStep];
             await this.progress.markStepComplete(currentStep.id);
+            
+            // Log step completion
+            if (window.wpilTelemetry && currentStep) {
+                window.wpilTelemetry.logTourStepCompleted(
+                    this.currentTour.id, 
+                    currentStep.id, 
+                    this.currentStep + 1
+                );
+                
+                // Check if this was the last step and log tour completion
+                if (this.currentStep === this.currentTour.steps.length - 1) {
+                    window.wpilTelemetry.logTourCompleted(
+                        this.currentTour.id,
+                        this.currentTour.steps.length
+                    );
+                }
+            }
 
             // Clear highlights and tooltip
             this.clearHighlights();

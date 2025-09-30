@@ -116,6 +116,12 @@ body:has([class*="tawk"]) .linkwhisper-tour-widget {
     flex: 1;
 }
 
+.tour-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
 .tour-progress-text {
     background: #2271b1;
     color: white;
@@ -125,7 +131,7 @@ body:has([class*="tawk"]) .linkwhisper-tour-widget {
     font-weight: 500;
 }
 
-.tour-minimize, .tour-reset {
+.tour-dismiss, .tour-minimize, .tour-reset {
     background: none;
     border: none;
     font-size: 18px;
@@ -141,12 +147,17 @@ body:has([class*="tawk"]) .linkwhisper-tour-widget {
     margin-left: 8px;
 }
 
-.tour-minimize:hover, .tour-reset:hover {
+.tour-dismiss:hover, .tour-minimize:hover, .tour-reset:hover {
     color: #000;
     background-color: #f0f0f0;
 }
 
-.tour-minimize:focus, .tour-reset:focus {
+.tour-dismiss:hover {
+    color: #dc3232;
+    background-color: #fee;
+}
+
+.tour-dismiss:focus, .tour-minimize:focus, .tour-reset:focus {
     outline: 2px solid #007cba;
     outline-offset: 2px;
 }
@@ -331,10 +342,46 @@ body:has([class*="tawk"]) .linkwhisper-tour-widget {
     margin-top: 0;
 }
 
+/* Tooltip Progress */
+.tooltip-progress {
+    text-align: center;
+    margin: 12px 0;
+    padding: 8px 0;
+    border-top: 1px solid #e0e0e0;
+}
+
+.step-counter {
+    font-size: 12px;
+    color: #666;
+    font-weight: 500;
+}
+
 .tooltip-actions {
     display: flex;
-    gap: 10px;
-    justify-content: flex-end;
+    gap: 8px;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 12px;
+}
+
+.tooltip-actions .btn-secondary {
+    background: #f6f7f7;
+    color: #2271b1;
+    border: 1px solid #ddd;
+    padding: 6px 12px;
+    border-radius: 3px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.tooltip-actions .btn-secondary:hover {
+    background: #eeeeee;
+    border-color: #2271b1;
+}
+
+.tooltip-actions .btn-primary {
+    margin-left: auto;
 }
 
 /* Tooltip Arrow */

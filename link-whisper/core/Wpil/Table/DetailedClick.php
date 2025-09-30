@@ -59,10 +59,6 @@ class Wpil_Table_DetailedClick extends WP_List_Table
         $orderby = isset($_REQUEST['orderby']) ? $_REQUEST['orderby'] : '';
         $order = isset($_REQUEST['order']) ? $_REQUEST['order'] : '';
 
-        if(empty($per_page) && empty($page) && empty($search) && empty($orderby) && empty($order)){
-            Wpil_Telemetry::log_event('report_open_detailed_clicks');
-        }
-
         if(empty($per_page)){
             $options2 = get_user_meta(get_current_user_id(), 'report_options', true);
             $per_page = !empty($options2['per_page']) ? $options2['per_page'] : 20;

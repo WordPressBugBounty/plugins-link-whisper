@@ -3102,6 +3102,24 @@ class Wpil_Report
     }
 
     /**
+     * Creates the link tracking table that we use to tag and monitor links.
+     **/
+    public static function prepare_link_tracking_table(){
+        global $wpdb;
+        $wpil_link_tracking_table = $wpdb->prefix . 'wpil_tracked_link_ids';
+        $wpil_link_table_query = "CREATE TABLE {$wpil_link_tracking_table} (
+                                    link_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                                    creation_time bigint(20) unsigned NOT NULL,
+                                    author_id bigint(20) unsigned NOT NULL,
+                                    PRIMARY KEY  (link_id),
+                                    KEY idx_author_id (author_id)
+                                ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;";
+        // create DB table if it doesn't exist
+        require_once (ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($wpil_link_table_query);
+    }
+
+    /**
      * Does a full search of the DB to check for post ids that don't show up in the link table,
      * and then it processes each of those posts to extract the urls from the content to insert in the link table.
      **/

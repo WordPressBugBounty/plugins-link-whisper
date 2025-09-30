@@ -1,0 +1,203 @@
+/* LinkWhisper Popup Styles */
+
+.linkwhisper-popup-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.linkwhisper-popup-overlay.show {
+    opacity: 1;
+    visibility: visible;
+}
+
+.linkwhisper-popup-overlay.hide {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.linkwhisper-popup-container {
+    background: white;
+    border-radius: 12px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 80vh;
+    overflow: hidden;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+    transform: translateY(20px) scale(0.95);
+    transition: transform 0.3s ease;
+    position: relative;
+}
+
+.linkwhisper-popup-overlay.show .linkwhisper-popup-container {
+    transform: translateY(0) scale(1);
+}
+
+.popup-image {
+    width: 100%;
+    height: 200px;
+    overflow: hidden;
+    border-radius: 12px 12px 0 0;
+}
+
+.popup-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+}
+
+.popup-body {
+    padding: 24px;
+    padding-bottom: 20px;
+}
+
+.popup-title {
+    margin: 0 0 12px 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: #1e1e1e;
+    line-height: 1.3;
+}
+
+.popup-description {
+    margin: 0 0 20px 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #555;
+}
+
+.popup-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.popup-action-button {
+    background: #2271b1;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+}
+
+.popup-action-button:hover {
+    background: #135e96;
+    color: white;
+    text-decoration: none;
+}
+
+.popup-dismiss-button {
+    background: transparent;
+    color: #666;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 10px 20px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-height: 36px;
+}
+
+.popup-dismiss-button:hover {
+    background: #f6f7f7;
+    border-color: #999;
+    color: #333;
+}
+
+.popup-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: rgba(255, 255, 255, 0.9);
+    border: none;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    font-size: 18px;
+    font-weight: bold;
+    color: #666;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    z-index: 1;
+}
+
+.popup-close:hover {
+    background: rgba(255, 255, 255, 1);
+    color: #333;
+    transform: scale(1.05);
+}
+
+/* Mobile responsive */
+@media (max-width: 600px) {
+    .linkwhisper-popup-container {
+        width: 95%;
+        max-width: none;
+        margin: 20px;
+    }
+    
+    .popup-body {
+        padding: 20px;
+    }
+    
+    .popup-title {
+        font-size: 18px;
+    }
+    
+    .popup-actions {
+        flex-direction: column;
+    }
+    
+    .popup-action-button,
+    .popup-dismiss-button {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .popup-image {
+        height: 150px;
+    }
+}
+
+/* Ensure popup appears above other elements */
+.linkwhisper-popup-overlay {
+    z-index: 100000;
+}
+
+/* Animation for auto-dismiss countdown (if needed) */
+.popup-auto-dismiss-indicator {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    background: #2271b1;
+    animation: countdown linear;
+    animation-fill-mode: forwards;
+}
+
+@keyframes countdown {
+    from { width: 100%; }
+    to { width: 0%; }
+}

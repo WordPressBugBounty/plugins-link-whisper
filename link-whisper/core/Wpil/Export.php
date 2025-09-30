@@ -132,7 +132,6 @@ class Wpil_Export
             'ACF_active' => class_exists('ACF'),
             'table_statuses' => self::get_table_data(),
             'active_plugins' => ($is_admin) ? get_option('active_plugins', array()): 'User not an admin',
-            'has_oai_api_key' => $has_open_ai_key,
             'oai_processing_status' => json_encode(Wpil_AI::get_ai_batch_processing_status()),
             'settings' => $settings
         ];
@@ -211,10 +210,9 @@ class Wpil_Export
 
     /**
      * Export table data to CSV
-     * //TODO: uncomment the code if we ever start offering report exporting.
      */
     public static function ajax_csv()
-    {/*
+    {
         // be sure to ignore any external object caches
         Wpil_Base::ignore_external_object_cache();
 
@@ -362,8 +360,6 @@ class Wpil_Export
             'count' => $count,
             'id' => $id
         ]);
-
-       */
     }
 
     /**
@@ -477,6 +473,322 @@ class Wpil_Export
         }
 
         return $data;
+    }
+
+    /**
+     * Prepare clicks data for export
+     *
+     * @return string
+     */
+    public static function csv_clicks($count)
+    {
+        $clicks = Wpil_ClickTracker::get_data(500, $count, '', '', 'ASC');
+        $data = '';
+        foreach ($clicks['data'] as $click) {
+            if (!empty($click->ID)) {
+                $post = $click->post;
+                $title = '"' . mb_convert_encoding(addslashes($click->post_title), 'UTF-8') . '"';
+                $url = wp_make_link_relative($post->getLinks()->view);
+                $type = $post->getType();
+
+                $data .= $title . "," . $url . "," . $type . "\n";
+
+                // Fetch detailed click data
+                $click_detailed = Wpil_ClickTracker::get_detailed_click_table_data($post->id, $post->type, 1, 'total_clicks', 'desc', array('start' => '2000-01-01 01:00:00'));
+
+                if (!empty($click_detailed)) {
+                    foreach ($click_detailed['data'] as $detail) {
+                        // Extract details from each click entry
+                        if (isset($detail->link_anchor) && !empty($detail->link_anchor)) {
+                            $link_anchor = '"' . mb_convert_encoding(addslashes($detail->link_anchor), 'UTF-8') . '"';
+                        } else {
+                            $link_anchor = '""';
+                        }
+
+                        if (isset($detail->link_url) && !empty($detail->link_url)) {
+                            $link_url = '"' . $detail->link_url . '"';
+                        } else {
+                            $link_url = '""';
+                        }
+
+                        if (isset($detail->link_created) && !empty($detail->link_created)) {
+                            // Convert timestamp to human-readable date format
+                            $link_created = '"' . date('Y-m-d H:i:s', $detail->link_created) . '"';
+                        } else {
+                            $link_created = '"Unknown"';
+                        }
+
+                        if (isset($detail->total_clicks) && !empty($detail->total_clicks)) {
+                            $total_clicks = '"' . $detail->total_clicks . '"';
+                        } else {
+                            $total_clicks = '""';
+                        }
+
+                        // Check if IP tracking is enabled // TODO: Revisit and possibly enable if we ever dont do an aggregate report
+                        if (false && empty(get_option('wpil_disable_click_tracking_info_gathering', false))) {
+                            // Include IP column only if tracking is enabled
+                            if (isset($detail->user_ip) && !empty($detail->user_ip)) {
+                                $user_ip = '"' . $detail->user_ip . '"';
+                            } else {
+                                $user_ip = '""';
+                            }
+
+                            // Append detailed data, including IP
+                            $data .= ",,," . $link_anchor . "," . $link_url . "," . $link_created . "," . $user_ip . "," . $total_clicks . "\n";
+                        } else {
+                            // Append detailed data without IP
+                            $data .= ",,," . $link_anchor . "," . $link_url . "," . $link_created . "," . $total_clicks . "\n";
+                        }
+                    }
+                }
+            }
+        }
+
+        return $data;
+    }
+
+    public static function csv_clicks_summary($count)
+    {
+        $clicks = Wpil_ClickTracker::get_data(500, $count, '', '', 'ASC');
+
+        $data = '';
+        foreach ($clicks['data'] as $click) {
+            if (!empty($click->post_title)) {
+                //prepare data
+                $post = $click->post;
+                $title = '"' . mb_convert_encoding(addslashes($click->post_title), 'UTF-8') . '"';
+                $url = wp_make_link_relative($post->getLinks()->view);
+                $type = $post->getType();
+                $total_clicks = $click->clicks ?? 0;
+                $data .= $title . "," . $url . "," . $type . "," . $total_clicks . "\n";
+
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Prepare domains data for export
+     *
+     * @return string
+     */
+    public static function csv_domains($count)
+    {
+        $domains = Wpil_Dashboard::getDomainsData(500, $count, '', 'domain', true, true);
+        $data = '';
+        foreach ($domains['domains'] as $domain) {
+            $max = max(count($domain['posts']), count($domain['links']), 1);
+            for ($i=0; $i < $max; $i++) {
+                $post = $domain['links'][$i]->post;
+                $item = [
+                    $domain['host'],
+                    !empty($post) ? str_replace('&amp;', '&', $post->getLinks()->view) : '',
+                    !empty($domain['links'][$i]->url) ? $domain['links'][$i]->anchor : '',
+                    !empty($domain['links'][$i]->url) ? $domain['links'][$i]->url : '',
+                    !empty($post) ? str_replace('&amp;', '&', $post->getLinks()->edit) : '',
+                ];
+
+                $data .= $item[0] . "," . $item[1] . "," . $item[2] . "," . $item[3] . "," . $item[4] . "\n";
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Prepare domains summary data for export
+     *
+     * @param $count
+     * @return string
+     */
+    public static function csv_domains_summary($count)
+    {
+        $domains = Wpil_Dashboard::getDomainsData(500, $count, '', 'domain', true, true);
+        $data = '';
+        foreach ($domains['domains'] as $domain) {
+            $data .= $domain['host'] . "," . count($domain['posts']) . "," . count($domain['links']) . "\n";
+        }
+
+        return $data;
+    }
+
+    /**
+     * Prepare errors data for export
+     *
+     * @return string
+     */
+    public static function csv_error($count)
+    {
+        $links = Wpil_Error::getData(500, $count);
+        $data = '';
+        foreach ($links['links'] as $link) {
+            $item = [
+                '"' . addslashes($link->post_title) . '"',
+                '"' . addslashes($link->url) . '"',
+                $link->internal ? 'internal' : 'external',
+                $link->code . ' ' . Wpil_Error::getCodeMessage($link->code),
+                '"' . date(addslashes(get_option('date_format', 'd M Y') . ' ' . get_option('time_format', '(H:i)')), strtotime($link->created)) . '"'
+            ];
+            $data .= $item[0] . "," . $item[1] . "," . $item[2] . "," . $item[3] . "," . $item[4] . "\n";
+        }
+
+        return $data;
+    }
+
+    /**
+     * Exports suggestion data in CSV or Excel formats.
+     * Using a separate method from the ajax_csv since this handles data from the frontend,
+     * and I want to keep things less complicated on that front.
+     **/
+    public static function ajax_export_suggestion_data(){
+        Wpil_Base::verify_nonce('export-suggestions-' . $_POST['export_data']['id']);
+
+        if(empty($_POST['export_data']) || empty($_POST['export_data']['id'])){
+            wp_send_json(array('error' => array('title' => __('No Suggestion Data', 'wpil'), 'text' => __('The suggestion data wasn\'t able to be downloaded. Please reload the page and try again', 'wpil'))));
+        }
+
+        // decode the data
+        $_POST['export_data']['data'] = json_decode(stripslashes($_POST['export_data']['data']), true);
+
+        if(!empty(json_last_error())){
+            wp_send_json(array('error' => array('title' => __('Data Error', 'wpil'), 'text' => __('There was a problem in processing the suggestion data. Please reload the page and try again', 'wpil'))));
+        }
+
+        if($_POST['export_data']['export_type'] === 'csv'){
+            self::create_csv_suggestion_export($_POST['export_data']);
+        }elseif($_POST['export_data']['export_type'] === 'excel'){
+            self::create_excel_suggestion_export();
+        }
+    }
+
+    public static function create_csv_suggestion_export($data){
+        $gsc_authed = Wpil_Settings::HasGSCCredentials();
+        $options = get_user_meta(get_current_user_id(), 'report_options', true); 
+        $show_traffic = (isset($options['show_traffic'])) ? ( ($options['show_traffic'] == 'off') ? false : true) : false;
+
+
+        if($data['suggestion_type'] === 'outbound'){
+            $source_post = new Wpil_Model_Post((int)$data['id'], sanitize_text_field($data['type']));
+            $filename = $source_post->id . '-' . $source_post->getSlug(false) . '_outbound-suggestions.csv';
+        }elseif($data['suggestion_type'] === 'inbound'){
+            $destination_post = new Wpil_Model_Post((int)$data['id'], sanitize_text_field($data['type']));
+            $filename = $destination_post->id . '-' . $destination_post->getSlug(false) . '_inbound-suggestions.csv';
+        }
+
+        $header = "Source Post Title, Source Post URL, Source Sentence Text, Suggested Anchor Text, Destination Post Title, Destination Post URL";
+        if($gsc_authed && $show_traffic){
+            $header .= ", Source Post GSC Clicks, Source Post GSC Impressions, Source Post GSC Average Position, Source Post GSC CTR";
+        }
+        $header .= "\n";
+
+        // get the directory that we'll be writing the export to
+        $dir = false;
+        $dir_url = false;
+        if(is_writable(WP_INTERNAL_LINKING_PLUGIN_DIR)){
+            // if it's possible, write to the plugin directory
+            $dir = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/';
+            $dir_url = WP_INTERNAL_LINKING_PLUGIN_URL . 'includes/';
+        }else{
+            // if writing to the plugin directory isn't possible, try for the uploads folder
+            $uploads = wp_upload_dir(null, false);
+            if(!empty($uploads) && isset($uploads['basedir']) && is_writable($uploads['basedir'])){
+                if(wp_mkdir_p(trailingslashit($uploads['basedir']). 'link-whisper-premium/exports')){
+                    $dir = trailingslashit($uploads['basedir']). 'link-whisper-premium/exports/';
+                    $dir_url = trailingslashit($uploads['baseurl']). 'link-whisper-premium/exports/';
+                }
+            }
+        }
+
+        // if we aren't able to write to any directories
+        if(empty($dir)){
+            // tell the user about it
+            wp_send_json([
+                'error' => [
+                    'title' => __('File Permission Error', 'wpil'),
+                    'text'  => __('The uploads folder isn\'t writable by Link Whisper. Please contact your host or webmaster about making the "/uploads/link-whisper-premium/" folder writable.', 'wpil') // we're defaulting to the uploads folder here since it's the easiest one to support
+                ]
+            ]);
+        }
+
+        $fp = fopen($dir . 'suggestion_export.csv', 'w');
+
+        fwrite($fp, $header);
+
+        //get data
+        $export_data = '';
+        $post_cache = array();
+        foreach($data['data'] as $link_data){
+            foreach ($link_data['links'] as $dat) {
+                $cache_id = $dat['id'] . '_' . $dat['type'];
+                if($data['suggestion_type'] === 'outbound'){
+                    if(isset($post_cache[$cache_id])){
+                        $destination_post = $post_cache[$cache_id];
+                    }else{
+                        $destination_post = new Wpil_Model_Post($dat['id'], $dat['type']);
+                    }
+                }else{
+                    if(isset($post_cache[$cache_id])){
+                        $source_post = $post_cache[$cache_id];
+                    }else{
+                        $source_post = new Wpil_Model_Post($dat['id'], $dat['type']);
+                    }
+                }
+
+                $dat['sentence'] = trim(strip_tags($dat['sentence_with_anchor'])); // for some reason, the custom sentence doesn't always get picked up. So we'll run with the sentence with anchor
+                $dat['sentence_with_anchor'] = trim(stripslashes($dat['sentence_with_anchor']));
+
+                $link = Wpil_Post::getSentenceWithAnchor($dat);
+                $source_sentence_text = strip_tags($link);
+                preg_match('|<a[^>]*>(.*?)<\/a>|i', $link, $anchor_text);
+                $anchor_text = (isset($anchor_text[1]) && !empty($anchor_text[1])) ? strip_tags($anchor_text[1]) : '';
+
+                // Source Post Title, Source Post URL, Source Sentence Text, Suggested Anchor Text, Destination Post Title, Destination Post URL
+                $item = array(
+                    '"' . $source_post->getTitle() . '"',
+                    '"' . str_replace('&amp;', '&', $source_post->getLinks()->view) . '"',
+                    '"' . $source_sentence_text . '"',
+                    '"' . $anchor_text . '"',
+                    '"' . $destination_post->getTitle() . '"',
+                    '"' . str_replace('&amp;', '&', $destination_post->getLinks()->view) . '"'
+                );
+
+                // if GSC is authed and the user wants to see GSC data
+                if($gsc_authed && $show_traffic){
+                    $item[] = $source_post->get_organic_traffic()->clicks;
+                    $item[] = $source_post->get_organic_traffic()->impressions;
+                    $item[] = $source_post->get_organic_traffic()->position;
+                    $item[] = $source_post->get_organic_traffic()->ctr;
+                }
+
+                $export_data .= implode(',', $item) . "\n";
+
+                // cache the post if it's not already cached
+                if(!isset($post_cache[$cache_id])){
+                    $post_cache[$cache_id] = ($data['suggestion_type'] === 'outbound') ? $destination_post: $source_post;
+                }
+            }
+        }
+
+        //write to file
+        fwrite($fp, $export_data);
+        fclose($fp);
+
+        //send finish response
+        header('Content-disposition: attachment; filename=suggestion_export.csv');
+
+        wp_send_json([
+            'filename' => $dir_url . 'suggestion_export.csv',
+            'nicename' => $filename
+        ]);
+    }
+
+
+    /** 
+     * Todo: create when someone asks for it
+     **/
+    public static function create_excel_suggestion_export(){
+        
     }
 
     public static function clear_exports(){

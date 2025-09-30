@@ -26,6 +26,7 @@ class Wpil_AI
     public static $model = null;
     public static $rate_limited = false;
     public static $insufficient_quota = false;
+    public static $user_not_exist = false;
     public static $invalid_request = false;
     public static $invalid_api_key = false;
     public static $error_message = '';
@@ -249,6 +250,15 @@ class Wpil_AI
             update_option('wpil_enable_ai_batch_processing', '1');
         }
 
+        // if this is the first go round
+        if(self::$ai_service_connected && isset($_POST['start_time']) && empty($_POST['start_time'])){
+            // do a credit check
+            $credit = self::get_available_ai_credits(true);
+            if($credit < 1){
+                self::$insufficient_quota = true;
+            }
+        }
+
         if(in_array('create-post-embeddings', $selected_processes)){
             $current_process = esc_html__('Generating AI Relation Data...', 'wpil');
 
@@ -351,11 +361,11 @@ class Wpil_AI
         $oai_completed = (count(array_filter($oai_completed)) === count($selected_processes)) ? true: false;
 
         $response = array();
-        if(self::$insufficient_quota || self::$invalid_request || self::$invalid_api_key){
+        if(self::$insufficient_quota || self::$invalid_request || self::$invalid_api_key || self::$user_not_exist){
             if(self::$insufficient_quota){
                 update_option('wpil_oai_insufficient_quota_error', '1');
             }
-            $response = array('error' => self::get_live_oai_error_message());
+            $response = (self::$ai_service_connected) ? array('error' => self::get_linkwhisper_ai_error_message()): array('error' => self::get_live_oai_error_message());
         }elseif(!$completed || !$post_saving || $processed_embeddings > 0){
             $response = array(
                 'continue' => array(
@@ -374,7 +384,7 @@ class Wpil_AI
                             'title' => __('Processing Halted', 'wpil'), 
                             'text' => __('Link Whisper is not currently able to process any more posts. The reason for this is unclear, there may have been an error, or it could be because all the posts are finished processing. Please check the System Error Log to see if there are any errors, and the Content Processing Status to see if all of the posts are processed.', 'wpil')
                         ),
-                        'error' => self::get_live_oai_error_message()
+                        'error' => (self::$ai_service_connected) ? self::get_linkwhisper_ai_error_message() : self::get_live_oai_error_message()
                         ),
                     'is_rate_limited' => self::$rate_limited
                 )
@@ -1932,7 +1942,7 @@ class Wpil_AI
         }
 
         // if we're using our AI service
-        if(Wpil_Settings::get_linkwhisper_ai_active()){
+        if(self::$ai_service_connected){
             // just pull the credits and return them
             $cost = $wpdb->get_var($wpdb->prepare("SELECT SUM(credits_used) FROM {$table} WHERE `process_time` >= %d AND `process_time` <= %d", $start_time, $end_time));
             return intval($cost);
@@ -3797,30 +3807,55 @@ class Wpil_AI
                 foreach($results as $key => $dat){
                     
                     $response = self::decode($dat);
-                    if(!empty($response) && isset($response->error) && !empty($response->error)){
-                        if(isset($response->error->message) && !empty($response->error->message)){
-                            self::$error_message = esc_html($response->error->message);
-                        }
-
-                        if(isset($response->error->type)){
-                            if($response->error->type === 'invalid_request_error'){
-                                self::$invalid_request = true;
-                                self::track_error($response->error->type);
+                    if(!empty($response) &&
+                        ((isset($response->error) && !empty($response->error)) ||
+                        (isset($response->statusCode) && ($response->statusCode > 203 || $response->statusCode < 200)))
+                    ){
+                        if(isset($response->error)){
+                            if(isset($response->error->message) && !empty($response->error->message)){
+                                self::$error_message = esc_html($response->error->message);
                             }
-                        }
 
-                        if(isset($response->error->code)){
-                            if($response->error->code === 'rate_limit_exceeded'){
-                                self::$rate_limited = true;
-                            }elseif($response->error->code === 'invalid_prompt'){
-        
-                            }elseif($response->error->code === 'insufficient_quota' || $response->error->code === 'billing_hard_limit_reached'){
-                                self::$insufficient_quota = true;
-                            }elseif($response->error->code === 'invalid_api_key'){
-                                self::$invalid_api_key = true;
+                            if(isset($response->error->type)){
+                                if($response->error->type === 'invalid_request_error'){
+                                    self::$invalid_request = true;
+                                    self::track_error($response->error->type);
+                                }
                             }
-                            
-                            self::track_error($response->error->code);
+
+                            if(isset($response->error->code)){
+                                if($response->error->code === 'rate_limit_exceeded'){
+                                    self::$rate_limited = true;
+                                }elseif($response->error->code === 'invalid_prompt'){
+            
+                                }elseif($response->error->code === 'insufficient_quota' || $response->error->code === 'billing_hard_limit_reached'){
+                                    self::$insufficient_quota = true;
+                                }elseif($response->error->code === 'invalid_api_key'){
+                                    self::$invalid_api_key = true;
+                                }
+                                
+                                self::track_error($response->error->code);
+                            }
+                        }elseif(self::$ai_service_connected){
+                            if(isset($response->body)){
+                                if(is_string($response->body)){
+                                    $response->body = json_decode($response->body);
+                                }
+
+                                if(isset($response->body->error)){
+                                    if(isset($response->body->error)){
+                                        if($response->body->error === 'User not found'){
+                                            self::$user_not_exist = true;
+                                        }elseif($response->body->error === 'Insufficient credits'){
+                                            self::$insufficient_quota = true;
+                                        }elseif($response->body->error === 'Access not valid'){
+                                            self::$invalid_api_key = true;
+                                        }
+                                        
+                                        self::track_error($response->body->error);
+                                    }
+                                }
+                            }
                         }
 
                         // format the data for saving
@@ -3839,11 +3874,11 @@ class Wpil_AI
                             $dat_object = array($dat_object);
                             self::save_error_log_data('live_download', $dat_object, self::$purpose);
                             // and mark the post as processed if there isn't a temp/quota error
-                            if(!self::$insufficient_quota && !self::$rate_limited && !self::$invalid_request && !self::$invalid_api_key){
+                            if(!self::$insufficient_quota && !self::$rate_limited && !self::$invalid_request && !self::$invalid_api_key && !self::$user_not_exist){
                                 self::save_empty_post_data(self::$query_ids[$key], self::$model, self::$purpose);
                             }
 
-                            if(self::$invalid_api_key){
+                            if(self::$invalid_api_key || self::$user_not_exist){
                                 return;
                             }else{
                                 continue;
@@ -3953,30 +3988,55 @@ class Wpil_AI
                     self::remove_chunked_post(self::$query_ids[$chat_id]);
                 }
 
-                if(!empty($response) && isset($response->error) && !empty($response->error)){
-                    if(isset($response->error->message) && !empty($response->error->message)){
-                        self::$error_message = esc_html($response->error->message);
-                    }
-
-                    if(isset($response->error->type)){
-                        if($response->error->type === 'invalid_request_error'){
-                            self::$invalid_request = true;
-                            self::track_error($response->error->type);
+                if(!empty($response) &&
+                    ((isset($response->error) && !empty($response->error)) ||
+                    (isset($response->statusCode) && ($response->statusCode > 203 || $response->statusCode < 200)))
+                ){
+                    if(isset($response->error)){
+                        if(isset($response->error->message) && !empty($response->error->message)){
+                            self::$error_message = esc_html($response->error->message);
                         }
-                    }
 
-                    if(isset($response->error->code)){
-                        if($response->error->code === 'rate_limit_exceeded'){
-                            self::$rate_limited = true;
-                        }elseif($response->error->code === 'invalid_prompt'){
-    
-                        }elseif($response->error->code === 'insufficient_quota' || $response->error->code === 'billing_hard_limit_reached'){
-                            self::$insufficient_quota = true;
-                        }elseif($response->error->code === 'invalid_api_key'){
-                            self::$invalid_api_key = true;
+                        if(isset($response->error->type)){
+                            if($response->error->type === 'invalid_request_error'){
+                                self::$invalid_request = true;
+                                self::track_error($response->error->type);
+                            }
                         }
-                        
-                        self::track_error($response->error->code);
+
+                        if(isset($response->error->code)){
+                            if($response->error->code === 'rate_limit_exceeded'){
+                                self::$rate_limited = true;
+                            }elseif($response->error->code === 'invalid_prompt'){
+        
+                            }elseif($response->error->code === 'insufficient_quota' || $response->error->code === 'billing_hard_limit_reached'){
+                                self::$insufficient_quota = true;
+                            }elseif($response->error->code === 'invalid_api_key'){
+                                self::$invalid_api_key = true;
+                            }
+                            
+                            self::track_error($response->error->code);
+                        }
+                    }elseif(self::$ai_service_connected){
+                        if(isset($response->body)){
+                            if(is_string($response->body)){
+                                $response->body = json_decode($response->body);
+                            }
+
+                            if(isset($response->body->error)){
+                                if(isset($response->body->error)){
+                                    if($response->body->error === 'User not found'){
+                                        self::$user_not_exist = true;
+                                    }elseif($response->body->error === 'Insufficient credits'){
+                                        self::$insufficient_quota = true;
+                                    }elseif($response->body->error === 'Access not valid'){
+                                        self::$invalid_api_key = true;
+                                    }
+                                    
+                                    self::track_error($response->body->error);
+                                }
+                            }
+                        }
                     }
 
                     // format the data for saving
@@ -3995,11 +4055,11 @@ class Wpil_AI
                         $dat_object = array($dat_object);
                         self::save_error_log_data('live_download', $dat_object, self::$purpose);
                         // and mark the post as processed if there isn't a temp/quota error
-                        if(!self::$insufficient_quota && !self::$rate_limited && !self::$invalid_request && !self::$invalid_api_key){
+                        if(!self::$insufficient_quota && !self::$rate_limited && !self::$invalid_request && !self::$invalid_api_key && !self::$user_not_exist){
                             self::save_empty_post_data(self::$query_ids[$chat_id], self::$model, self::$purpose);
                         }
 
-                        if(self::$invalid_api_key){
+                        if(self::$invalid_api_key || self::$user_not_exist){
                             return;
                         }else{
                             continue;
@@ -4045,7 +4105,7 @@ class Wpil_AI
      * @param Wpil_Post $post
      **/
     public static function live_query_single_post_embedding_data($post = null){
-        if(empty($post) || !is_a($post, 'Wpil_Model_Post') || (empty(self::$ai) && !Wpil_Settings::get_linkwhisper_ai_active())){
+        if(empty($post) || !is_a($post, 'Wpil_Model_Post') || (empty(self::$ai) && !self::$ai_service_connected)){
             return false;
         }
 
@@ -4070,7 +4130,7 @@ class Wpil_AI
             return array();
         }
 
-        if(Wpil_Settings::get_linkwhisper_ai_active()){
+        if(self::$ai_service_connected){
             foreach($phrase_list as $text => $dat){
                 $message_list[] = $text;
                 self::$query_ids[] = $post->get_pid(); // get the pid for this post because any errors will be indexed for it
@@ -4100,30 +4160,55 @@ class Wpil_AI
             $inds = array_keys($phrase_list);
             foreach($results as $key => $dat){
                 $response = self::decode($dat);
-                if(!empty($response) && isset($response->error) && !empty($response->error)){
-                    if(isset($response->error->message) && !empty($response->error->message)){
-                        self::$error_message = esc_html($response->error->message);
-                    }
-
-                    if(isset($response->error->type)){
-                        if($response->error->type === 'invalid_request_error'){
-                            self::$invalid_request = true;
-                            self::track_error($response->error->type);
+                if( !empty($response) &&
+                    ((isset($response->error) && !empty($response->error)) ||
+                    (isset($response->statusCode) && ($response->statusCode > 203 || $response->statusCode < 200)))
+                ){
+                    if(isset($response->error)){
+                        if(isset($response->error->message) && !empty($response->error->message)){
+                            self::$error_message = esc_html($response->error->message);
                         }
-                    }
 
-                    if(isset($response->error->code)){
-                        if($response->error->code === 'rate_limit_exceeded'){
-                            self::$rate_limited = true;
-                        }elseif($response->error->code === 'invalid_prompt'){
-
-                        }elseif($response->error->code === 'insufficient_quota' || $response->error->code === 'billing_hard_limit_reached'){
-                            self::$insufficient_quota = true;
-                        }elseif($response->error->code === 'invalid_api_key'){
-                            self::$invalid_api_key = true;
+                        if(isset($response->error->type)){
+                            if($response->error->type === 'invalid_request_error'){
+                                self::$invalid_request = true;
+                                self::track_error($response->error->type);
+                            }
                         }
-                        
-                        self::track_error($response->error->code);
+
+                        if(isset($response->error->code)){
+                            if($response->error->code === 'rate_limit_exceeded'){
+                                self::$rate_limited = true;
+                            }elseif($response->error->code === 'invalid_prompt'){
+
+                            }elseif($response->error->code === 'insufficient_quota' || $response->error->code === 'billing_hard_limit_reached'){
+                                self::$insufficient_quota = true;
+                            }elseif($response->error->code === 'invalid_api_key'){
+                                self::$invalid_api_key = true;
+                            }
+                            
+                            self::track_error($response->error->code);
+                        }
+                    }elseif(self::$ai_service_connected){
+                        if(isset($response->body)){
+                            if(is_string($response->body)){
+                                $response->body = json_decode($response->body);
+                            }
+
+                            if(isset($response->body->error)){
+                                if(isset($response->body->error)){
+                                    if($response->body->error === 'User not found'){
+                                        self::$user_not_exist = true;
+                                    }elseif($response->body->error === 'Insufficient credits'){
+                                        self::$insufficient_quota = true;
+                                    }elseif($response->body->error === 'Access not valid'){
+                                        self::$invalid_api_key = true;
+                                    }
+                                    
+                                    self::track_error($response->body->error);
+                                }
+                            }
+                        }
                     }
 
                     // format the data for saving
@@ -4142,11 +4227,11 @@ class Wpil_AI
                         $dat_object = array($dat_object);
                         self::save_error_log_data('live_download', $dat_object, self::$purpose);
                         // and mark the post as processed if there isn't a temp/quota error
-                        if(!self::$insufficient_quota && !self::$rate_limited && !self::$invalid_request && !self::$invalid_api_key){
+                        if(!self::$insufficient_quota && !self::$rate_limited && !self::$invalid_request && !self::$invalid_api_key || self::$user_not_exist){
                             //self::save_empty_post_data(self::$query_ids[$key], self::$model, self::$purpose);
                         }
 
-                        if(self::$invalid_api_key){
+                        if(self::$invalid_api_key || self::$user_not_exist){
                             return;
                         }else{
                             continue;
@@ -4195,29 +4280,54 @@ class Wpil_AI
 
         if(false !== strpos($info['url'], 'embeddings') || (false !== strpos($info['url'], 'api.linkwhisper.com') && self::$purpose === 'create-post-embeddings')){
             $response = self::decode($content);
-            if(!empty($response) && isset($response->error) && !empty($response->error)){
-                if(isset($response->error->message) && !empty($response->error->message)){
-                    self::$error_message = esc_html($response->error->message);
-                }
-                if(isset($response->error->type)){
-                    if($response->error->type === 'invalid_request_error'){
-                        self::$invalid_request = true;
-                        self::track_error($response->error->type);
+            if( !empty($response) && 
+                ((isset($response->error) && !empty($response->error)) ||
+                (isset($response->statusCode) && ($response->statusCode > 203 || $response->statusCode < 200)))
+            ){
+                if(isset($response->error)){
+                    if(isset($response->error->message) && !empty($response->error->message)){
+                        self::$error_message = esc_html($response->error->message);
                     }
-                }
-
-                if(isset($response->error->code)){
-                    if($response->error->code === 'rate_limit_exceeded'){
-                        self::$rate_limited = true;
-                    }elseif($response->error->code === 'invalid_prompt'){
-
-                    }elseif($response->error->code === 'insufficient_quota' || $response->error->code === 'billing_hard_limit_reached'){
-                        self::$insufficient_quota = true;
-                    }elseif($response->error->code === 'invalid_api_key'){
-                        self::$invalid_api_key = true;
+                    if(isset($response->error->type)){
+                        if($response->error->type === 'invalid_request_error'){
+                            self::$invalid_request = true;
+                            self::track_error($response->error->type);
+                        }
                     }
-                    
-                    self::track_error($response->error->code);
+
+                    if(isset($response->error->code)){
+                        if($response->error->code === 'rate_limit_exceeded'){
+                            self::$rate_limited = true;
+                        }elseif($response->error->code === 'invalid_prompt'){
+
+                        }elseif($response->error->code === 'insufficient_quota' || $response->error->code === 'billing_hard_limit_reached'){
+                            self::$insufficient_quota = true;
+                        }elseif($response->error->code === 'invalid_api_key'){
+                            self::$invalid_api_key = true;
+                        }
+                        
+                        self::track_error($response->error->code);
+                    }
+                }elseif(self::$ai_service_connected){
+                    if(isset($response->body)){
+                        if(is_string($response->body)){
+                            $response->body = json_decode($response->body);
+                        }
+
+                        if(isset($response->body->error)){
+                            if(isset($response->body->error)){
+                                if($response->body->error === 'User not found'){
+                                    self::$user_not_exist = true;
+                                }elseif($response->body->error === 'Insufficient credits'){
+                                    self::$insufficient_quota = true;
+                                }elseif($response->body->error === 'Access not valid'){
+                                    self::$invalid_api_key = true;
+                                }
+                                
+                                self::track_error($response->body->error);
+                            }
+                        }
+                    }
                 }
 
                 // format the data for saving
@@ -4236,7 +4346,7 @@ class Wpil_AI
                     $dat_object = array($dat_object);
                     self::save_error_log_data('live_download', $dat_object, self::$purpose);
                     // and mark the post as processed if there isn't a temp/quota error
-                    if(!self::$insufficient_quota && !self::$rate_limited && !self::$invalid_request && !self::$invalid_api_key){
+                    if(!self::$insufficient_quota && !self::$rate_limited && !self::$invalid_request && !self::$invalid_api_key && !self::$user_not_exist){
                         self::save_empty_post_data(self::$query_ids[$handle_id], self::$model, self::$purpose);
                     }
                     return true;
@@ -4267,30 +4377,55 @@ class Wpil_AI
             }
 
             $response = self::decode($content);
-            if(!empty($response) && isset($response->error) && !empty($response->error)){
-                if(isset($response->error->message) && !empty($response->error->message)){
-                    self::$error_message = esc_html($response->error->message);
-                }
-
-                if(isset($response->error->type)){
-                    if($response->error->type === 'invalid_request_error'){
-                        self::$invalid_request = true;
-                        self::track_error($response->error->type);
+            if(!empty($response) && 
+                ((isset($response->error) && !empty($response->error)) ||
+                (isset($response->statusCode) && ($response->statusCode > 203 || $response->statusCode < 200)))
+            ){
+                if(isset($response->error)){
+                    if(isset($response->error->message) && !empty($response->error->message)){
+                        self::$error_message = esc_html($response->error->message);
                     }
-                }
 
-                if(isset($response->error->code)){
-                    if($response->error->code === 'rate_limit_exceeded'){
-                        self::$rate_limited = true;
-                    }elseif($response->error->code === 'invalid_prompt'){
-
-                    }elseif($response->error->code === 'insufficient_quota' || $response->error->code === 'billing_hard_limit_reached'){
-                        self::$insufficient_quota = true;
-                    }elseif($response->error->code === 'invalid_api_key'){
-                        self::$invalid_api_key = true;
+                    if(isset($response->error->type)){
+                        if($response->error->type === 'invalid_request_error'){
+                            self::$invalid_request = true;
+                            self::track_error($response->error->type);
+                        }
                     }
-                    
-                    self::track_error($response->error->code);
+
+                    if(isset($response->error->code)){
+                        if($response->error->code === 'rate_limit_exceeded'){
+                            self::$rate_limited = true;
+                        }elseif($response->error->code === 'invalid_prompt'){
+
+                        }elseif($response->error->code === 'insufficient_quota' || $response->error->code === 'billing_hard_limit_reached'){
+                            self::$insufficient_quota = true;
+                        }elseif($response->error->code === 'invalid_api_key'){
+                            self::$invalid_api_key = true;
+                        }
+                        
+                        self::track_error($response->error->code);
+                    }
+                }elseif(self::$ai_service_connected){
+                    if(isset($response->body)){
+                        if(is_string($response->body)){
+                            $response->body = json_decode($response->body);
+                        }
+
+                        if(isset($response->body->error)){
+                            if(isset($response->body->error)){
+                                if($response->body->error === 'User not found'){
+                                    self::$user_not_exist = true;
+                                }elseif($response->body->error === 'Insufficient credits'){
+                                    self::$insufficient_quota = true;
+                                }elseif($response->body->error === 'Access not valid'){
+                                    self::$invalid_api_key = true;
+                                }
+                                
+                                self::track_error($response->body->error);
+                            }
+                        }
+                    }
                 }
 
                 // format the data for saving
@@ -4309,7 +4444,7 @@ class Wpil_AI
                     $dat_object = array($dat_object);
                     self::save_error_log_data('live_download', $dat_object, self::$purpose);
                     // and mark the post as processed if there isn't a temp/quota error
-                    if(!self::$insufficient_quota && !self::$rate_limited && !self::$invalid_request && !self::$invalid_api_key){
+                    if(!self::$insufficient_quota && !self::$rate_limited && !self::$invalid_request && !self::$invalid_api_key && !self::$user_not_exist){
                         self::save_empty_post_data(self::$query_ids[$handle_id], self::$model, self::$purpose);
                     }
                     return true;
@@ -5759,6 +5894,37 @@ class Wpil_AI
     }
 
     /**
+     * 
+     **/
+    public static function get_linkwhisper_ai_error_message(){
+        $message = array(
+            'title' => __('Processing Halted.', 'wpil'),
+            'text'  => __("Link Whisper has processed all of the posts that it's able to, and has stopped.", 'wpil'),
+        );
+
+        if(self::$rate_limited){
+//            $message['title']   = __("Unable to Complete: Rate Limiting Active", 'wpil');
+//            $message['text']    = sprintf(__("It seems that the API key's %s per hour has been reached, and you may need to wait for the processing limits to reset. If you haven't already, please wait an hour and then try again.", "wpil") . '<br><br>' . __("If you see this message again after waiting an hour, please wait 24 hours before restarting the process.", 'wpil'), '<a href="https://platform.openai.com/docs/guides/rate-limits/usage-tiers?context=tier-one">' . __('limit on how much data can be processed', 'wpil') .'</a>' );
+        }elseif(self::$invalid_api_key){
+            $message['title']   = __("Unable to Complete: API Not Accessible", 'wpil');
+            $message['text']    = __("Link Whisper isn't able to make contact with the AI server. This could be caused by network traffic, or a configuration issue.", 'wpil') . '<br><br>' .__("If this is the first time this has happened, please wait 30 minutes and try again.", 'wpil') . '<br><br>' .  sprintf(__('If its happed before, please reach out to Link Whisper support %s so we can help you with this issue.', 'wpil'), '<a href="'.esc_url(WPIL_STORE_URL . '/support').'">right here</a>');
+        }elseif(self::$user_not_exist){
+            $message['title']   = __("Unable to Complete: AI User Not Logged", 'wpil');
+            $message['text']    = __("Unfortunately, it looks like there was an error when setting up the AI connection, and Link Whisper can't access our AI server.", 'wpil') . '<br><br>' . sprintf(__('To resolve this, please reach out to Link Whisper support %s', 'wpil'), '<a href="'.esc_url(WPIL_STORE_URL . '/support').'">right here</a>');
+        }elseif(self::$insufficient_quota){
+            $message['title']   = __("Unable to Complete: Insufficient Credits", 'wpil');
+            $message['text']    = __("Unfortunately, there aren't enough AI credits available to process the posts.", 'wpil') . '<br><br>' . __('To add more to your account, please go here: ', 'wpil') . '<br><br>' . '<a href="' .admin_url('admin.php?page=link_whisper_ai_subscription'). '" target="_blank">AI Subscription Management</a>';
+        }else{
+            $message['title']   = __("Unable to Complete: Unknown Error", 'wpil');
+            $message['text']    = __('It seems that there was an error and some posts may not have been processed by OpenAI. If you see any indications that posts haven\'t been processed, please try waiting an hour and then try restarting the process.', 'wpil');
+        }
+
+        //$message .= (!empty(self::$error_message)) ? "\n\n" . __('During processing, OpenAI sent along this error message: ', 'wpil') . self::$error_message . "\n\n" . __('If you need to contact support about the issue, please be sure to include this message in your ticket.', 'wpil'): '';
+    
+        return $message;
+    }
+
+    /**
      * Removes the AI process streaming
      **/
     public static function disable_ai_streaming($handle_id, $content, $info){
@@ -5853,7 +6019,7 @@ class Wpil_AI
      * Gets the current number of credits that the user has available
      **/
     public static function get_available_ai_credits($refresh = false, $precision = false){
-        if(!Wpil_Settings::get_linkwhisper_ai_active()){
+        if(!self::$ai_service_connected){
             return 0;
         }
 
@@ -5899,7 +6065,7 @@ class Wpil_AI
      * 
      **/
     public static function get_user_ai_subscription($reset = false){
-        if(!Wpil_Settings::get_linkwhisper_ai_active()){
+        if(!self::$ai_service_connected){
             return null;
         }
 
@@ -5940,7 +6106,7 @@ class Wpil_AI
      * 
      **/
     public static function setup_user_ai_subscription($recurring = false){
-        if(!Wpil_Settings::get_linkwhisper_ai_active()){
+        if(!self::$ai_service_connected){
             return null;
         }
 

@@ -6,7 +6,7 @@
         // get any filter settings from the user's report selection and apply the settings to the Link Report tab url
         $filter_settings = get_user_meta(get_current_user_id(), 'wpil_filter_settings', true);
         $filter_vars = '';
-        if(isset($filter_settings['report'])){
+        if(isset($filter_settings['report']) && false){ //TODO: Disabling pending review of persistent filtering. Check back around in version 3.0.0
             $filtering = array();
             if(isset($filter_settings['report']['post_type']) && !empty($filter_settings['report']['post_type'])){
                 $filtering['post_type'] = $filter_settings['report']['post_type'];

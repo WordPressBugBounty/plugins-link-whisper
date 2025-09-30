@@ -510,6 +510,10 @@
     }
 
     function updateFilterSettings(postType = '', category = '', filterNonce, url){
+        // TODO: reevaluate in version 3.0.0. Keep an eye out for users that want persistent filtering back
+        location.href = url;
+        return;
+
         var data = {
             action: 'wpil_save_user_filter_settings',
             post_type: postType,

@@ -32,6 +32,45 @@ $has_cached_notifications = Wpil_Notification::has_cached_data();
     </div>
 </div>
 
+<script type="text/javascript">
+// Global function to set up notification click tracking
+function setupNotificationClickTracking() {
+    jQuery(document).ready(function($) {
+        // Set up click tracking for notification links
+        $('#wpil-notification-container .notification-item').each(function(index) {
+            var $notification = $(this);
+            var notificationId = 'notification_' + index; // Generate ID based on position
+            
+            // Log impression when notification is visible
+            if (window.wpilTelemetry) {
+                window.wpilTelemetry.logNotificationHubNotificationImpression(notificationId, index);
+            }
+            
+            // Track clicks on notification items
+            $notification.on('click', function() {
+                if (window.wpilTelemetry) {
+                    window.wpilTelemetry.logNotificationHubNotificationClicked(notificationId);
+                }
+            });
+        });
+    });
+}
+
+// Set up telemetry for cached notifications (immediately available)
+<?php if ($has_cached_notifications): ?>
+jQuery(document).ready(function($) {
+    // Log notification hub loaded event for cached notifications
+    if (window.wpilTelemetry) {
+        var notificationCount = $('#wpil-notification-container .notification-item-wrapper').length;
+        window.wpilTelemetry.logNotificationHubLoaded(notificationCount, 0); // Assuming no unread count for cached
+    }
+    
+    // Set up click tracking for cached notifications
+    setupNotificationClickTracking();
+});
+<?php endif; ?>
+</script>
+
 <?php if (!$has_cached_notifications): ?>
 <script type="text/javascript">
 jQuery(document).ready(function($) {
@@ -46,6 +85,17 @@ jQuery(document).ready(function($) {
         success: function(response) {
             if (response.success) {
                 $('#wpil-notification-container').html(response.data.html);
+                
+                // Log notification hub loaded event
+                if (window.wpilTelemetry && response.data.telemetry) {
+                    window.wpilTelemetry.logNotificationHubLoaded(
+                        response.data.telemetry.notification_count || 0,
+                        response.data.telemetry.unread_count || 0
+                    );
+                }
+                
+                // Set up click tracking for notification items
+                setupNotificationClickTracking();
             } else {
                 $('#wpil-notification-loading').html('<p>Unable to load notifications.</p>');
             }
@@ -117,8 +167,8 @@ jQuery(document).ready(function($) {
     flex: 1;
 }
 .notification-cover-wrapper {
-    width: 80px;
-    height: 60px;
+    width: 120px;
+    height: 90px;
     border-radius: 6px;
     overflow: hidden;
     flex-shrink: 0;

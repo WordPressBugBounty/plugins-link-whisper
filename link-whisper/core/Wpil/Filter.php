@@ -46,7 +46,7 @@ class Wpil_Filter
             return sanitize_text_field($_GET['keyword_post_type']);
         }
 
-        if(isset($_GET['page']) && 'link_whisper_target_keywords' === $_GET['page']){
+        if(isset($_GET['page']) && 'link_whisper_target_keywords' === $_GET['page'] && false){ //TODO: Disabling pending review of persistent filtering. Check back around in version 3.0.0
             $selected_filters = get_user_meta(get_current_user_id(), 'wpil_filter_settings', true);
 
             if( !empty($selected_filters) && 

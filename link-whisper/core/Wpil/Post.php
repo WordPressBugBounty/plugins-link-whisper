@@ -24,6 +24,46 @@ class Wpil_Post
     }
 
     /**
+     * Ignores the selected orphaned post on the orphaned post view.
+     **/
+    function ajaxIgnoreOrphanedPost(){
+        Wpil_Base::verify_nonce('ignore-orphaned-post-nonce');
+
+        if(!isset($_POST['post_ids']) || empty($_POST['post_ids']) || !is_array($_POST['post_ids'])){
+            wp_send_json(array('error' => array('title' => __('Post id empty', 'wpil'),'text' => __('The post id was missing from the ignore orphaned post request.', 'wpil'))));
+        }
+
+        // get all the ignored orphaned posts (including ignored by category)
+        $ignored = Wpil_Settings::getIgnoreOrphanedPosts();
+
+        // get any specifically ignored posts
+        $ignored_posts = get_option('wpil_ignore_orphaned_posts', '');
+
+        foreach($_POST['post_ids'] as $pid){
+            // if the post is ignored, move on to the next one
+            if(in_array($pid, $ignored, true)){
+                continue;
+            }
+
+            $bits = explode('_', $pid);
+
+            // get the post
+            $post = new Wpil_Model_Post((int)$bits[1], sanitize_text_field($bits[0]));
+
+            $post_link = $post->getViewLink();
+            if(!empty(self::getPostByLink($post_link))){
+                $ignored_posts .= "\n" . $post_link;
+            }else{
+                $ignored_posts .= "\n" . $post->getViewLink(false, true); // if we can't turn the url into a viable post, go with the "Ugly" url instead.
+            }
+        }
+
+        update_option('wpil_ignore_orphaned_posts', $ignored_posts);
+
+        wp_send_json(array('success' => true));
+    }
+
+    /**
      * Filters the post types that the custom link search box will look for so the user is only shown selected post types
      **/
     public static function filter_custom_link_post_types($query_args){

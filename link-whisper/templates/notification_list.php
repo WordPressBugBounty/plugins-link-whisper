@@ -22,7 +22,7 @@ if (empty($notifications) || !isset($notifications['data']) || empty($notificati
         $description = !empty($notification['description']) ? $notification['description'] : '';
         ?>
         
-        <div class="notification-item-wrapper" style="padding: 10px 20px;">
+        <div class="notification-item-wrapper">
             <?php if ($has_url): ?>
                 <a href="<?php echo esc_url($notification['action_url']); ?>" class="notification-item" target="_blank">
             <?php else: ?>

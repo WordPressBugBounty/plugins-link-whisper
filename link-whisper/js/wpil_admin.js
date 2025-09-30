@@ -2040,6 +2040,64 @@
         }
     });
 
+    $(document).on('click', '#wpil_links_ignore_orphaned_selected', function () {
+        if($('.tbl-link-reports #the-list .checkall input.wpil-report-post-checkbox:checked').length < 1){
+            return;
+        }
+
+        var data = {
+            action: 'wpil_ignore_orphaned_post',
+            post_ids: [],
+            nonce: $(this).data('nonce')
+        };
+
+        $('.tbl-link-reports #the-list .checkall input.wpil-report-post-checkbox:checked').each(function () {
+            var check = $(this);
+            data.post_ids.push(check.data('post-id'));
+        });
+
+        jQuery.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            dataType: 'json',
+            data: data,
+            error: function (jqXHR, textStatus, errorThrown) {
+                var wrapper = document.createElement('div');
+                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                $(wrapper).append(jqXHR.responseText);
+                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+            },
+            success: function(response){
+                $('.tbl-link-reports #the-list .checkall input.wpil-report-post-checkbox:checked').parents('tr').fadeOut(300);
+            }
+        });
+    });
+
+    //ignore link in error reports // old table version
+    /*$(document).on('click', '.column-url .row-actions .wpil_ignore_link', function () {
+        var el = $(this);
+        var parent = el.parents('.column-url');
+        var data = {
+            url: el.data('url'),
+            anchor: el.data('anchor'),
+            post_id: el.data('post_id'),
+            post_type: el.data('post_type'),
+            link_id: typeof el.data('link_id') !== 'undefined' ? el.data('link_id') : ''
+        };
+
+        if (el.hasClass('wpil_ignore_link')) {
+            var rowParent = el.closest('tr');
+        } else {
+            var rowParent = el.closest('li');
+        }
+
+        parent.html('<div style="margin-left: calc(50% - 16px);" class="la-ball-clip-rotate la-md"><div></div></div>');
+
+        $.post('admin.php?page=link_whisper&type=ignore_link', data, function(){
+            rowParent.fadeOut(300);
+        });
+    });*/
+
     //ignore link in error reports 
     $(document).on('click', '.wpil_ignore_link', function () {
         var el = $(this);
@@ -2096,6 +2154,7 @@
                     wpil_swal(response.error.title, response.error.text, 'error');
                 } else if (response.success) {
                     $('.wpil-activity-panel').empty().append(response.success.table);
+                    toggleActivitySelectedDeleteButton();
                 }
             }
         });
@@ -2150,8 +2209,7 @@
             var el = $(this);
             var data = {
                 action: 'wpil_ignore_orphaned_post',
-                post_id: el.data('post-id'),
-                type: el.data('type'),
+                post_ids: [el.data('post-id')],
                 nonce: el.data('nonce')
             };
             jQuery.ajax({
