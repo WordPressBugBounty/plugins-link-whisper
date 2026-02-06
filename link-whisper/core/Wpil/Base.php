@@ -15,6 +15,7 @@ class Wpil_Base
     {
         add_action('admin_init', [$this, 'init']);
         add_action('admin_menu', [$this, 'addMenu']);
+        add_action('wp_dashboard_setup', [__CLASS__, 'register_link_health_widget']);
         add_action('add_meta_boxes', [$this, 'addMetaBoxes']);
         add_action('admin_enqueue_scripts', [$this, 'addScripts']);
         add_action('wp_enqueue_scripts', array(__CLASS__, 'enqueue_frontend_scripts'));
@@ -49,12 +50,8 @@ class Wpil_Base
         add_action('wp_ajax_wpil_get_dashboard_scan_loading_data', array('Wpil_Wizard', 'ajax_pull_loading_progress_for_dashboard'));
         add_action('wp_ajax_wpil_wizard_set_completion_flag', array(__CLASS__, 'ajax_set_processing_complete_flag'));
         add_action('wp_ajax_wpil_run_autolink_insert_search', array(__CLASS__, 'ajax_get_wizard_insert_count'));
-        add_action('wp_ajax_wpil_load_tours', array('Wpil_Tour', 'ajax_load_tours'));
-        add_action('wp_ajax_wpil_save_tour_progress', array('Wpil_Tour', 'ajax_save_tour_progress'));
-        add_action('wp_ajax_wpil_mark_tour_shown', array('Wpil_Tour', 'ajax_mark_tour_shown'));
-        add_action('wp_ajax_wpil_dismiss_tour_widget', array('Wpil_Tour', 'ajax_dismiss_tour_widget'));
-        add_action('wp_ajax_wpil_load_popups', array('Wpil_Popup', 'ajax_load_popups'));
-        add_action('wp_ajax_wpil_dismiss_popup', array('Wpil_Popup', 'ajax_dismiss_popup'));
+        add_action('wp_ajax_user_dismissed_ai_popup', array(__CLASS__, 'ajax_dismiss_ai_popup_banner'), 9);
+        add_action('wp_ajax_wpil_update_expanded_details_toggle', array(__CLASS__, 'ajax_update_expanded_details_toggle'), 9);
         /*add_filter('the_content', array(__CLASS__, 'remove_link_whisper_attrs'));
         add_filter('the_content', array(__CLASS__, 'add_link_attrs'));
         add_filter('the_content', array(__CLASS__, 'add_link_icons'), 100, 1);*/
@@ -183,10 +180,25 @@ class Wpil_Base
         if(WPIL_STATUS_HAS_RUN_SCAN){
             $page_title = __('Internal Links Report', 'wpil');
             $menu_title = __('Reports', 'wpil');
-        }else{
-            $page_title = __('Internal Links Report', 'wpil');
-            $menu_title = __('Complete Install', 'wpil');
+
+            self::$report_menu = add_submenu_page(
+                'link_whisper',
+                $page_title,
+                $menu_title,
+                'edit_posts',
+                'link_whisper',
+                [Wpil_Report::class, 'init']
+            );
         }
+
+        // hide the first item because that's just hte page title
+        add_action('admin_head', function() {
+            echo '<style>
+                #toplevel_page_link_whisper .wp-first-item{
+                    display: none;
+                }
+            </style>';
+        });
 
         $menu_list = array(
 //            'link_whisper_dashboard', // we'll always have the main report page since we need to stick the reports to something
@@ -201,7 +213,7 @@ class Wpil_Base
         self::$report_menu = add_submenu_page(
             'link_whisper',
             'Internal Links Report',
-            'Report',
+            'Reports',
             'edit_posts',
             'link_whisper',
             [Wpil_Report::class, 'init']
@@ -265,6 +277,270 @@ class Wpil_Base
             'manage_categories',
             WPIL_STORE_URL
         );
+    }
+
+    public static function register_link_health_widget(){
+        if( !defined('WPIL_STATUS_HAS_RUN_SCAN') || !WPIL_STATUS_HAS_RUN_SCAN
+        ){
+            // exist
+            return;
+        }
+        wp_add_dashboard_widget(
+            'wpil_link_health_widget',
+            __('Link Whisper Site Health Report', 'wpil'),
+            [__CLASS__, 'render_link_health_widget']
+        );
+    }
+
+    public static function render_link_health_widget(){
+
+        $rows = self::get_dashboard_widget_rows();
+        $logo = plugin_dir_url(__DIR__).'../images/lw-icon.png'
+        ?>
+        <style>
+            #lw-digest-widget .lw-header { display:flex; gap:16px; align-items:flex-start; margin-bottom:14px; }
+            #lw-digest-widget .lw-logo { width:36px; height:36px; object-fit:contain; margin-top:2px; }
+            #lw-digest-widget .lw-title { margin:0 0 2px; font-size:18px; font-weight:600; }
+            #lw-digest-widget .lw-subtitle { margin:0; color:#6b7280; }
+            #lw-digest-widget .lw-site { margin:4px 0 0; color:#6b7280; }
+            #lw-digest-widget .lw-site a { text-decoration:none; }
+
+
+            #lw-digest-widget .lw-rows { list-style:none; margin:12px 0 0; padding:0; display:flex; flex-direction:column; gap:10px; }
+            #lw-digest-widget .lw-row { position:relative; border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:12px 88px 12px 14px; box-shadow:0 1px 0 rgba(16,24,40,.02); }
+            #lw-digest-widget .lw-row-main { display:flex; justify-content:space-between; gap:12px; }
+            #lw-digest-widget .lw-row-label { color:#374151; font-weight:600; }
+            #lw-digest-widget .lw-row-value { color:#111827; font-variant-numeric:tabular-nums; }
+            #lw-digest-widget .lw-row-note { font-size:12px; color:#6b7280; margin-top:6px; font-style:italic; }
+            #lw-digest-widget .lw-row-status { position:absolute; right:12px; top:50%; transform:translateY(-50%); }
+
+            #lw-digest-widget .lw-badge { display:inline-block; padding:4px 12px; border-radius:999px; font-size:12px; font-weight:700; line-height:1; }
+            #lw-digest-widget .lw-badge.is-great { background:#10b9811a; color:#047857; border:1px solid #10b98155; }
+            #lw-digest-widget .lw-badge.is-ok { background:#f59e0b1a; color:#92400e; border:1px solid #f59e0b55; }
+            #lw-digest-widget .lw-badge.is-fix { background:#ef44441a; color:#991b1b; border:1px solid #ef444455; }
+            #lw-digest-widget .lw-badge.is-info { background:#3b82f61a; color:#1e40af; border:1px solid #3b82f655; }
+
+            #lw-digest-widget .lw-delta { font-size:11px; opacity:.75; margin-left:6px; }
+
+            /* Responsive tweak for narrow admin widths */
+            @media (max-width: 782px) {
+                #lw-digest-widget .lw-row { padding-right:14px; }
+                #lw-digest-widget .lw-row-status { position:static; transform:none; margin-top:8px; }
+            }
+        </style>
+        <div id="lw-digest-widget" class="lw-digest">
+            <header class="lw-header">
+                <img class="lw-logo" src="<?php echo esc_url($logo); ?>" alt="Link Whisper" />
+            </header>
+
+
+            <ul class="lw-rows" role="list">
+                <?php foreach ($rows as $row): ?>
+                <li class="lw-row">
+                    <div class="lw-row-main">
+                        <div class="lw-row-label"><?php echo esc_html($row['label']); ?></div>
+                        <div class="lw-row-value"><?php echo wp_kses_post($row['value']); ?></div>
+                    </div>
+                    <?php if (!empty($row['note'])): ?>
+                    <div class="lw-row-note"><?php echo esc_html($row['note']); ?></div>
+                    <?php endif; ?>
+                    <div class="lw-row-status">
+                    <?php echo self::status_badge($row['status'], $row['status_text'], $row['url']); ?>
+                    </div>
+                </li>
+                <?php endforeach; ?>
+            </ul>
+        </div>
+        <?php
+    }
+
+    private static function get_dashboard_widget_rows(){
+        // get the datas!
+        // link density
+        $link_density = Wpil_Dashboard::get_percent_of_posts_hitting_link_targets();
+        $density_status = 'tag-positive';
+        $density_subtext = __('Great! The majority of your posts are linked enough.');
+        if(!empty($link_density['percent'])){
+            if($link_density['percent'] > 80){
+                $density_status = 'tag-positive';
+                $density_subtext = __('Great! The majority of your posts are linked enough.');
+            }elseif($link_density['percent'] > 60){
+                $density_status = 'tag-neutral';
+                $density_subtext = __('Most of the site\'s posts are linked enough.');
+            }else{
+                $density_status = 'tag-negative';
+                $density_subtext = __('Uh oh, the majority of the site\'s posts aren\'t linked enough.');
+            }
+        }
+
+        // broken links
+        $broken_link_count = Wpil_Dashboard::getBrokenLinksCount();
+        $broken_link_percentage = 0;
+        $broken_link_status = 'tag-positive';
+        $broken_link_subtext = __('Perfect! There aren\'t any broken links on the site.');
+        if(!empty($broken_link_count)){
+            $total_links = Wpil_Dashboard::getLinksCount();
+            if(!empty($total_links)){
+                $broken_link_percentage = round($broken_link_count / $total_links, 2) * 100;
+            }
+        }
+
+        if($broken_link_percentage == 0){
+            $broken_link_status = 'tag-positive';
+            $broken_link_subtext = __('Perfect! There aren\'t any broken links on the site.');
+        }elseif($broken_link_percentage < 5){
+            $broken_link_status = 'tag-positive';
+            $broken_link_subtext = __('Good! There are a relatively low number of broken links on the site.');
+        }elseif($broken_link_percentage < 10){
+            $broken_link_status = 'tag-neutral';
+            $broken_link_subtext = __('There are a number of broken links on the site that need fixing.');
+        }else{
+            $broken_link_status = 'tag-negative';
+            $broken_link_subtext = __('Houston, we have a problem. There are a lot of broken links on the site');
+        }
+
+        $posts_crawled = Wpil_Dashboard::getPostCount();
+        $posts_crawled_status = (empty($posts_crawled)) ? 'tag-negative': 'tag-positive';
+
+        $links_scanned = Wpil_Dashboard::getLinksCount();
+        $links_scanned_status = (empty($links_scanned)) ? 'tag-negative': 'tag-positive';
+
+        $links_inserted = Wpil_Dashboard::get_tracked_link_insert_count();
+        $links_inserted_status = ($links_inserted > 0) ? 'tag-positive': 'tag-neutral';
+
+        $orphaned_posts = Wpil_Dashboard::getOrphanedPostsCount();
+        if(!empty($orphaned_posts)){
+            $orphaned_posts_percentage = round($orphaned_posts/$posts_crawled, 2) * 100;
+            if($orphaned_posts_percentage == 0){
+                $orphaned_posts_status = 'tag-positive';
+                $orphaned_posts_subtext = esc_html__('Awesome! There are no orphaned posts on the site.', 'wpil');
+            }elseif($orphaned_posts_percentage < 5){
+                $orphaned_posts_status = 'tag-positive';
+                $orphaned_posts_subtext = esc_html__('Awesome! There are very few orphaned posts on the site.', 'wpil');
+            }elseif($orphaned_posts_percentage < 10){
+                $orphaned_posts_status = 'tag-neutral';
+                $orphaned_posts_subtext = esc_html__('There are a number of orphaned posts that need some links pointing to them.', 'wpil');
+            }else{
+                $orphaned_posts_status = 'tag-negative';
+                $orphaned_posts_subtext = esc_html__('Uh oh, looks like there are a lot of orphaned posts that need links!', 'wpil');
+            }
+        }else{
+            $orphaned_posts_status = 'tag-positive';
+            $orphaned_posts_subtext = esc_html__('Awesome! There are no orphaned posts on the site.', 'wpil');
+        }
+/*
+        $ai_active = Wpil_Settings::can_do_ai_powered_suggestions(); // if we have a API key and at least some of the embedding data processed
+        $link_relatedness = 0;
+        if($ai_active){
+            $link_relatedness = Wpil_Dashboard::get_related_link_percentage();
+            if($link_relatedness == 0){
+                $link_relatedness_status = 'tag-neutral';
+                $link_relatedness_subtext = esc_html__('Hmm, there\'s no data available. We might need to run a Link Scan.', 'wpil');
+            }elseif($link_relatedness > 79){
+                $link_relatedness_status = 'tag-positive';
+                $link_relatedness_subtext = esc_html__('Amazing! The majority of the site\'s links are going to highly related posts.', 'wpil');
+            }elseif($link_relatedness > 50){
+                $link_relatedness_status = 'tag-neutral';
+                $link_relatedness_subtext = esc_html__('Most of the site\'s links are pointing to topically related posts.', 'wpil');
+            }else{
+                $link_relatedness_status = 'tag-negative';
+                $link_relatedness_subtext = esc_html__('Uh oh, it looks like most of the site\'s links aren\'t going to related posts.', 'wpil');
+            }
+        }else{
+            $link_relatedness_status = 'tag-neutral';
+            $link_relatedness_subtext = esc_html__('Link Whisper\'s AI is not enabled, so we can\'t tell how many links are going to topically related posts.', 'wpil');
+        }
+*/
+        // link clicks
+        $click_stats = Wpil_Dashboard::get_click_traffic_stats();
+        $click_change_indicator = '(<span title="No change from previous 30 days">0%</span>)';
+        $click_change_subtext = esc_html__('The number of clicks has remained consistent over the past 30 days.', 'wpil');
+        $click_change_status = 'tag-neutral';
+        if($click_stats['percent_change'] > 0){
+            $click_change_status = 'tag-positive';
+            $click_change_indicator = '(<span class="tag-positive" title="Clicks have gone up over the past 30 days">+' . $click_stats['percent_change'] . '%</span>)';
+            $click_change_subtext = esc_html__('The number of clicks on the site has gone up over the past 30 days!', 'wpil');
+        }elseif($click_stats['percent_change'] < 0){
+            $click_change_status = 'tag-negative';
+            $click_change_indicator = '(<span class="tag-negative" title="Clicks have gone down over the past 30 days">-' . $click_stats['percent_change'] . '%</span>)';
+            $click_change_subtext = esc_html__('The number of clicks on the site have gone down over the past 30 days.', 'wpil');
+        }
+
+        return [
+            [
+                'label' => __('Posts Crawled', 'wpil'),
+                'value' => $posts_crawled,
+                'note' => '',
+                'status'=> $posts_crawled_status,
+                'status_text' => '',
+                'url' => admin_url('admin.php?page=link_whisper')
+            ],
+            [
+                'label' => __('Links Detected', 'wpil'),
+                'value' => $links_scanned,
+                'note' => '',
+                'status'=> $links_scanned_status,
+                'status_text' => '',
+                'url' => admin_url('admin.php?page=link_whisper&type=links')
+            ],
+            [
+                'label' => __('Links Inserted', 'wpil'),
+                'value' => $links_inserted,
+                'note' => '',
+                'status'=> $links_inserted_status,
+                'status_text' => '',
+                'url' => admin_url('admin.php?page=link_whisper&type=links')
+            ],
+            [
+                'label' => __('Link Coverage', 'wpil'),
+                'value' => $link_density['percent'] . '%',
+                'note' => '', //$density_subtext,
+                'status'=> $density_status,
+                'status_text' => '',
+                'url' => admin_url('admin.php?page=link_whisper&type=links&link_density=1')
+            ],
+            [
+                'label' => __('Orphaned Posts', 'wpil'),
+                'value' => $orphaned_posts,
+                'note' => '', // $orphaned_posts_subtext,
+                'status'=> $orphaned_posts_status,
+                'status_text' => '',
+                'url' => admin_url('admin.php?page=link_whisper&type=links&orphaned=1')
+            ],
+            [
+                'label' => __('Link Clicks Tracked', 'wpil'),
+                'value' => $click_stats['clicks_30'],
+                'note' => '', // $click_change_subtext,
+                'status'=> $click_change_status,
+                'status_text' => '',
+                'url' => admin_url('admin.php?page=link_whisper&type=clicks')
+            ],
+            [
+                'label' => __('Broken Links Found', 'wpil'),
+                'value' => $broken_link_count,
+                'note' => '', // $broken_link_subtext,
+                'status'=> $broken_link_status,
+                'status_text' => '',
+                'url' => admin_url('admin.php?page=link_whisper&type=error')
+            ],
+        ];
+    }
+
+    private static function status_badge($status, $text = '', $url = ''){
+        $map = [
+            'tag-positive' => ['label' => (!empty($text) ? $text: __('Great', 'wpil')), 'class' => 'is-great'],
+            'tag-neutral' => ['label' => (!empty($text) ? $text: __('OK', 'wpil')), 'class' => 'is-ok'],
+            'tag-negative' => ['label' => (!empty($text) ? $text: __('Fix', 'wpil')), 'class' => 'is-fix'],
+            'tag-info' => ['label' => (!empty($text) ? $text: __('Info', 'wpil')), 'class' => 'is-info'],
+        ];
+        $cfg = isset($map[$status]) ? $map[$status]: $map['tag-info'];
+        $label = esc_html($cfg['label']);
+        $cls   = 'lw-badge ' . $cfg['class'];
+
+        if(!empty($url)){
+            return '<a class="'.$cls.'" href="'.esc_url($url).'" target="_blank">'.$label.'<span class="dashicons dashicons-external" style="position: relative;top: 1px;right: -1px;height: 5px;width: 5px;font-size: 12px;"></span></a>';
+        }
+        return '<span class="'.$cls.'">'.$label.'</span>';
     }
 
     /**
@@ -600,8 +876,9 @@ class Wpil_Base
         $script_params['dismiss_tour_widget_nonce'] = wp_create_nonce('wpil_dismiss_tour_widget');
         $script_params['popup_nonce'] = wp_create_nonce('wpil_load_popups');
         $script_params['dismiss_popup_nonce'] = wp_create_nonce('wpil_dismiss_popup');
-        $script_params['telemetry_active'] = 1; //Wpil_Settings::get_if_telemetry_active();
-        $script_params['telemetry_nonce'] = wp_create_nonce(get_current_user_id() . 'wpil-telemetry-nonce');
+//        $script_params['telemetry_active'] = 1; //Wpil_Settings::get_if_telemetry_active();
+//        $script_params['telemetry_nonce'] = wp_create_nonce(get_current_user_id() . 'wpil-telemetry-nonce');
+//        $script_params['tours_enabled'] = Wpil_Settings::get_tours_enabled();
 
         $script_params['wpil_timepicker_format'] = Wpil_Toolbox::convert_date_format_for_js();
 /*
@@ -752,45 +1029,6 @@ class Wpil_Base
 
         wp_register_script('wpil_help_overlay', WP_INTERNAL_LINKING_PLUGIN_URL.'js/wpil_help_overlay.js', array('jquery', 'wpil_base64', 'wpil_tippy', 'wpil_popper', 'wpil_helper'), $ver, true);
         wp_enqueue_script('wpil_help_overlay');
-        
-        // Tour system assets
-        $tours_css_path = 'css/wpil_tours.css';
-        $tours_css_file = WP_INTERNAL_LINKING_PLUGIN_DIR . $tours_css_path;
-        $tours_js_path = 'js/wpil_tours.js';
-        $tours_js_file = WP_INTERNAL_LINKING_PLUGIN_DIR . $tours_js_path;
-        if (file_exists($tours_css_file)) {
-            wp_register_style('wpil_tours_style', WP_INTERNAL_LINKING_PLUGIN_URL . $tours_css_path, array(), filemtime($tours_css_file));
-            wp_enqueue_style('wpil_tours_style');
-        }
-        
-        if (file_exists($tours_js_file)) {
-            wp_register_script('wpil_tours', WP_INTERNAL_LINKING_PLUGIN_URL . $tours_js_path, array('jquery', 'wpil_admin_script'), filemtime($tours_js_file), true);
-            wp_enqueue_script('wpil_tours');
-        }
-
-        // Telemetry logging system
-        $telemetry_js_path = 'js/wpil_telemetry.js';
-        $telemetry_js_file = WP_INTERNAL_LINKING_PLUGIN_DIR . $telemetry_js_path;
-        if (file_exists($telemetry_js_file)) {
-            wp_register_script('wpil_telemetry', WP_INTERNAL_LINKING_PLUGIN_URL . $telemetry_js_path, array('jquery', 'wpil_admin_script'), filemtime($telemetry_js_file), true);
-            wp_enqueue_script('wpil_telemetry');
-        }
-
-        // Enqueue popup assets
-        $popups_css_path = 'css/wpil_popups.css';
-        $popups_css_file = WP_INTERNAL_LINKING_PLUGIN_DIR . $popups_css_path;
-        $popups_js_path = 'js/wpil_popups.js';
-        $popups_js_file = WP_INTERNAL_LINKING_PLUGIN_DIR . $popups_js_path;
-
-        if (file_exists($popups_css_file)) {
-            wp_register_style('wpil_popups_style', WP_INTERNAL_LINKING_PLUGIN_URL . $popups_css_path, array(), filemtime($popups_css_file));
-            wp_enqueue_style('wpil_popups_style');
-        }
-        
-        if (file_exists($popups_js_file)) {
-            wp_register_script('wpil_popups', WP_INTERNAL_LINKING_PLUGIN_URL . $popups_js_path, array('jquery', 'wpil_admin_script'), filemtime($popups_js_file), true);
-            wp_enqueue_script('wpil_popups');
-        }
     }
 
     /**
@@ -811,12 +1049,18 @@ class Wpil_Base
             }
         }elseif(isset($_GET['page']) && $_GET['page'] === 'link_whisper'){
             $page = 'dashboard';
+        }elseif(isset($_GET['page']) && $_GET['page'] === 'link_whisper_keywords'){
+            $page = 'autolinking';
+        }elseif(isset($_GET['page']) && $_GET['page'] === 'link_whisper_target_keywords'){
+            $page = 'target-keywords';
+        }elseif(isset($_GET['page']) && $_GET['page'] === 'link_whisper_url_changer'){
+            $page = 'url-changer';
+        }elseif(isset($_GET['page']) && $_GET['page'] === 'link_whisper_ai_subscription'){
+            $page = 'ai-subscription';
         }elseif(!empty($current_page) && $current_page->base === 'post'){
             $page = 'post-edit';
         }elseif(!empty($current_page) && $current_page->base === 'term'){
             $page = 'term-edit';
-        }elseif(isset($_GET['page']) && $_GET['page'] === 'link_whisper_ai_subscription'){
-            $page = 'ai-subscription';
         }
 
         return $page;
@@ -2749,5 +2993,18 @@ class Wpil_Base
         $start_time = get_option('wpil_wizard_start_time', time());
         $link_count = $wpdb->get_col("SELECT COUNT(*) FROM {$table} WHERE `creation_time` > {$start_time}");
         wp_send_json(array('data' => array('link_inserts' => $link_count, 'finished' => (!empty(get_transient('wpil_wizard_has_completed')) || empty(get_transient('wpil_doing_ajax_autolinks'))))));
+    }
+
+    /** 
+     * 
+     **/
+    public static function ajax_dismiss_ai_popup_banner(){
+        update_user_meta(get_current_user_id(), 'wpil_dismissed_ai_notice_banner', '1');
+    }
+
+    public static function ajax_update_expanded_details_toggle(){
+        $status = (!isset($_POST['status']) || empty($_POST['status'])) ? 0: 1;
+        update_option('wpil_show_expanded_suggestion_details', $status);
+        wp_send_json('updated details!');
     }
 }

@@ -101,6 +101,7 @@ class Wpil_Table_Report extends WP_List_Table
             $link_type = 'inbound-internal';
             $panel_title = 'Inbound Internal Links';
             $activity_tooltip = '';
+            $anchor_words = array();
 
             if ($v_num > 0 || (WPIL_LINKS_INBOUND_INTERNAL_COUNT == $column_name || WPIL_LINKS_OUTBOUND_INTERNAL_COUNT == $column_name) && (isset($_REQUEST['link_density']))) {
                 $rep = '';
@@ -185,7 +186,7 @@ class Wpil_Table_Report extends WP_List_Table
                             $activity_tooltip = esc_attr__('View Outbound Internal Links', 'wpil');
                             $count = 0;
                             $relation_counter = array('on' => 0, 'off' => 0);
-
+                            $anchor_words = array('in_guideline' => 0, 'outside' => 0);
                             foreach ($links_data as $link) {
                                 if (!Wpil_Filter::linksLocation() || $link->location == Wpil_Filter::linksLocation()) {
                                     $count++;
@@ -196,6 +197,12 @@ class Wpil_Table_Report extends WP_List_Table
                                     }else{
                                         $relation_counter['off']++;
                                         $related = 'ai-not-related';
+                                    }
+
+                                    if($link->anchor_word_count >= 3 && $link->anchor_word_count <= 7){
+                                        $anchor_words['in_guideline']++;
+                                    }else{
+                                        $anchor_words['outside']++;
                                     }
 
                                     if($count > 0){
@@ -266,6 +273,25 @@ class Wpil_Table_Report extends WP_List_Table
                                 $outbound_suggestion_data = 'data-wpil-suggestion-url="' . esc_url(admin_url('admin.php?post_id=' . $item['post']->id . '&page=link_whisper&type=outbound_suggestions_ajax'.($item['post']->type === 'term'?'&term_id='.$item['post']->id:'').(!empty(get_current_user_id()) ? '&nonce='.wp_create_nonce(get_current_user_id() .'wpil_suggestion_nonce') : '')) . Wpil_Settings::get_suggestion_filter_string()) . '"';
                             }
 
+                            if(isset($_REQUEST['anchor_length'])){
+                                $percentage = 0;
+                                if(!empty($anchor_words['outside']) && !empty($anchor_words['in_guideline'])){
+                                    $percentage = round(($anchor_words['in_guideline']/($anchor_words['in_guideline']+$anchor_words['outside'])) * 100);
+                                }else{
+                                    $percentage = (!empty($anchor_words['in_guideline'])) ? 100: 0;
+                                }
+
+                                if($percentage < 60){
+                                    $add_highlight_class = ' wpil-fix-problem wpil-purple-highlight';
+                                }else{
+                                    $add_highlight_class = '';
+                                }
+                                
+                                $tooltip = __('This is the percent of link anchors are between 3 and 7 words.', 'wpil');
+                                $increase_count = '<span class="wpil-tippy-tooltipped" data-wpil-tooltip-content="'.$tooltip.'">' . ($percentage). '%' . '</span>';
+                                $anchor_atts = 'data-post-id="'.esc_attr($post_id).'" data-post-type="'.$post_type.'" data-link-type="'.$link_type.'" data-nonce="'.wp_create_nonce(wp_get_current_user()->ID .'wpil_report_link_nonce').'" data-activity-panel-title="'.$panel_title.'" data-show-fix-anchor="1"';
+                            }
+
                             $link_relation = 0;
                             $links_diffuse = '';
                             $high_relation = '';
@@ -288,7 +314,13 @@ class Wpil_Table_Report extends WP_List_Table
                                 $high_relation = '<span class="wpil-link-relation-indicator wpil-tippy-tooltipped ' . $links_diffuse . '" data-wpil-tooltip-content="' . $link_relation . '% '. esc_attr__('of links on this post are going to related posts. In most cases, you want it to be greater than 60%', 'wpil').'" style="position: absolute; left: 15px;">' . $link_relation . '%</span>' . $fix;
                             }
 
-                            $edit_link = '<a class="add-outbound-internal-links'.$add_highlight_class.'" '.$highlight_title.' href="javascript:void(window.open(\''. esc_url($item['post']->getLinks()->edit) .'\'))" '.$outbound_suggestion_data.' style="text-decoration: underline;">' /*Add'*/ . $increase_count . $ai_suggestions . '</a>';
+                            if(isset($_REQUEST['anchor_length'])){
+                                $edit_link = '<a class="wpil-show-anchor-words wpil-link-report-stat-indicator'.$add_highlight_class.'" '.$highlight_title.' href="#" '.$anchor_atts.' style="text-decoration: underline;">' /*Add'*/ . $increase_count . $ai_suggestions . '</a>';
+                            }else{
+                                $edit_link = '<a class="add-outbound-internal-links'.$add_highlight_class.'" '.$highlight_title.' href="javascript:void(window.open(\''. esc_url($item['post']->getLinks()->edit) .'\'))" '.$outbound_suggestion_data.' style="text-decoration: underline;">' /*Add'*/ . $increase_count . $ai_suggestions . '</a>';
+                            }
+
+ 
                             $v .= $high_relation . '<span class="wpil_ul" data-wpil-link-relation="'.$link_relation.'">' . $count . '</span></div>' . $edit_link;
                             break;
                         case 'wpil_links_outbound_external_count':
@@ -296,8 +328,15 @@ class Wpil_Table_Report extends WP_List_Table
                             $panel_title = esc_attr__('Outbound External Links', 'wpil');
                             $activity_tooltip = esc_attr__('View Outbound External Links', 'wpil');
                             $count = 0;
+                            $anchor_words = array('in_guideline' => 0, 'outside' => 0);
                             foreach ($links_data as $link) {
                                     $count++;
+                                    
+                                    if($link->anchor_word_count >= 3 && $link->anchor_word_count <= 7){
+                                        $anchor_words['in_guideline']++;
+                                    }else{
+                                        $anchor_words['outside']++;
+                                    }
                                     if($count > 0){
                                         continue;
                                     }
@@ -309,7 +348,29 @@ class Wpil_Table_Report extends WP_List_Table
                                     $rep .=     '</div>
                                             </li>';
                             }
-                            $v = '<span class="wpil_ul">' . $count . '</span> ' . $v;
+
+                            if(isset($_REQUEST['anchor_length'])){
+                                $percentage = 0;
+                                if(!empty($anchor_words['outside']) && !empty($anchor_words['in_guideline'])){
+                                    $percentage = round(($anchor_words['in_guideline']/($anchor_words['in_guideline']+$anchor_words['outside'])) * 100);
+                                }else{
+                                    $percentage = (!empty($anchor_words['in_guideline'])) ? 100: 0;
+                                }
+                                
+                                $add_highlight_class = ' wpil-fix-problem wpil-purple-highlight';
+                                $tooltip = __('This is the percent of link anchors are between 3 and 7 words.', 'wpil');
+                                $increase_count = '<span class="wpil-tippy-tooltipped" data-wpil-tooltip-content="'.$tooltip.'">' . ($percentage). '%' . '</span>';
+                                $anchor_atts = 'data-post-id="'.esc_attr($post_id).'" data-post-type="'.$post_type.'" data-link-type="'.$link_type.'" data-nonce="'.wp_create_nonce(wp_get_current_user()->ID .'wpil_report_link_nonce').'" data-activity-panel-title="'.$panel_title.'" data-show-fix-anchor="1"';
+                            }
+
+                            $fix = '';
+                            $highlight_title = '';
+                            $edit_link = '';
+                            if(isset($_REQUEST['anchor_length'])){
+                                $edit_link = '<a class="wpil-show-anchor-words wpil-link-report-stat-indicator'.$add_highlight_class.'" '.$highlight_title.' href="#" '.$anchor_atts.' style="text-decoration: underline;">' /*Add'*/ . $increase_count . '</a>';
+                            }
+
+                            $v = '<span class="wpil_ul">' . $count . '</span>' . $edit_link . $v;
                             break;
                     }
 
@@ -382,7 +443,7 @@ class Wpil_Table_Report extends WP_List_Table
                         </div>
                     </div>';
 
-        if(!isset($_GET['link_relation'])){
+        if(!isset($_GET['link_relation']) && !isset($_GET['anchor_length'])){
             $columns = array_merge($columns, [
                 WPIL_LINKS_INBOUND_INTERNAL_COUNT => $inbound
             ]);
@@ -553,6 +614,7 @@ class Wpil_Table_Report extends WP_List_Table
         $orphaned = !empty($_REQUEST['orphaned']);
         $link_density_report = (isset($_REQUEST['link_density']) && !empty($_REQUEST['link_density'])) ? true: false;
         $link_relation_report = (isset($_REQUEST['link_relation']) && !empty($_REQUEST['link_relation'])) ? true: false;
+        $anchor_length_report = (isset($_REQUEST['anchor_length']) && !empty($_REQUEST['anchor_length'])) ? true: false;
 
         if (empty($orderby)) {
             $saved_order = get_transient('wpil_link_report_order');
@@ -569,7 +631,7 @@ class Wpil_Table_Report extends WP_List_Table
             set_transient('wpil_link_report_order', $orderby . ';' . $order);
         }
 
-        $data = Wpil_Report::getData($start, $orderby, $order, $search, $per_page, $orphaned, $link_density_report);
+        $data = Wpil_Report::getData($start, $orderby, $order, $search, $per_page, $orphaned, $link_density_report, $anchor_length_report);
 
         $total_items = $data['total_items'];
         $data = $data['data'];
@@ -687,8 +749,8 @@ class Wpil_Table_Report extends WP_List_Table
                         <input type="hidden" name="reset_data_nonce" value="<?php echo wp_create_nonce(get_current_user_id() . 'wpil_reset_report_data'); ?>">
                         <?php if (!empty($_GET['type'])) : ?>
                             <div class="wpil-report-export-button-container" style="display:inline-block">
-                                <a href="javascript:void(0)" class="wpil-filter-submit-button csv_button" data-type="<?=$_GET['type']?>" id="wpil_cvs_export_button" style="text-align:left;" data-file-name="<?php esc_attr_e('detailed-link-export.csv', 'wpil'); ?>">📤 Detailed Export to CSV</a>
-                                <a href="javascript:void(0)" class="wpil-filter-submit-button csv_button" data-type="<?=$_GET['type']?>_summary" id="wpil_cvs_export_button" style="text-align:left;" data-file-name="<?php esc_attr_e('summary-link-export.csv', 'wpil'); ?>">📤 Summary Export to CSV</a>
+                                <a href="javascript:void(0)" class="wpil-filter-submit-button csv_button" data-type="<?=esc_attr($_GET['type'])?>" id="wpil_cvs_export_button" style="text-align:left;" data-file-name="<?php esc_attr_e('detailed-link-export.csv', 'wpil'); ?>">📤 Detailed Export to CSV</a>
+                                <a href="javascript:void(0)" class="wpil-filter-submit-button csv_button" data-type="<?=esc_attr($_GET['type'])?>_summary" id="wpil_cvs_export_button" style="text-align:left;" data-file-name="<?php esc_attr_e('summary-link-export.csv', 'wpil'); ?>">📤 Summary Export to CSV</a>
                             </div>
                             <?php 
                                 if(!empty(get_transient('wpil_resume_scan_data'))){
@@ -830,6 +892,7 @@ jQuery(function($) {
             return;
         }
 
+        debouncePanelClick = true;
         var actionPanel = $('.wpil-report-action-panel-wrapper.open'),
             action = $(this);
         actionPanel.animate({'right': '-600px'}, 500, function(){
@@ -851,6 +914,7 @@ jQuery(function($) {
             postId = clicked.data('post-id'),
             postType = clicked.data('post-type'),
             type = clicked.data('link-type'),
+            showFixAnchor = clicked.data('show-fix-anchor'),
             nonce = clicked.data('nonce');
 
         // check to make sure we have a nonce
@@ -868,6 +932,7 @@ jQuery(function($) {
                 link_type: type,
                 post_id: postId,
                 post_type: postType,
+                show_fix_anchor: showFixAnchor,
                 nonce: nonce
             },
             success: function(response){
@@ -904,6 +969,9 @@ jQuery(function($) {
             },
             error: function(jqXHR, textStatus, errorThrown){
                 console.log({jqXHR, textStatus, errorThrown});
+            },
+            complete: function(){
+                debouncePanelClick = false;
             }
         });
     }
@@ -912,7 +980,7 @@ jQuery(function($) {
 </script>
         <div class="wpil-overlay" aria-hidden="true"></div>
         <div class="wpil-activity-panel-wrapper">
-            <input type="hidden" id="wpil-get-manual-suggestions">
+            <input type="hidden" id="wpil-get-manual-suggestions" data-wpil-links-report-activate-manual="1">
             <input type="hidden" id="wpil-tippy-tooltip-target">
             <div class="wpil-activity-panel-container">
                 <div class="wpil-activity-panel-header-container">

@@ -23,6 +23,7 @@ class Wpil_Model_Link
     public $ai_relation_score = 0; // how related is the source post to the target post?
     public $target_id = null;
     public $target_type = null;
+    public $anchor_word_count = 0;
 
     public function __construct($params = [])
     {
@@ -31,6 +32,10 @@ class Wpil_Model_Link
             if (isset($this->{$key})) {
                 $this->{$key} = $value;
             }
+        }
+
+        if(empty($this->anchor_word_count) && !empty($this->anchor)){
+            $this->anchor_word_count = Wpil_Word::getWordCount($this->anchor);
         }
     }
 

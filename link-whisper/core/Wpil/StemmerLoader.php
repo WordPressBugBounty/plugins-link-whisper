@@ -96,6 +96,18 @@ class Wpil_StemmerLoader{
                 $stemmer_file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/word_stemmers/ID_Stemmer.php';
                 define('WPIL_CURRENT_LANGUAGE', 'indonesian');
                 break;
+            case 'czech':
+                $stemmer_file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/word_stemmers/CZ_Stemmer.php';
+                define('WPIL_CURRENT_LANGUAGE', 'czech');
+                break;
+            case 'bulgarian':
+                $stemmer_file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/word_stemmers/BG_Stemmer.php';
+                define('WPIL_CURRENT_LANGUAGE', 'bulgarian');
+                break;
+//            case 'greek':
+//                $stemmer_file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/word_stemmers/GK_Stemmer.php';
+//                define('WPIL_CURRENT_LANGUAGE', 'greek');
+//                break;
             default:
                 $stemmer_file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/word_stemmers/EN_Stemmer.php';
                 define('WPIL_CURRENT_LANGUAGE', 'english');

@@ -20,7 +20,17 @@ class Wpil_Notification
 
         // Build API URL
         $api_url = self::BASE_API_URL . '/wp-json/lwnh/v1/notifications';
-        $request_url = add_query_arg(['plugin_version' => WPIL_PLUGIN_VERSION_NUMBER, 'plugin_type' => 'free'], $api_url);
+        $query_args = [
+            'plugin_version' => WPIL_PLUGIN_VERSION_NUMBER,
+            'plugin_type' => 'free'
+        ];
+
+        // Add testing mode parameter if enabled
+        if (class_exists('Wpil_Settings') && Wpil_Settings::get_if_testing_mode_active()) {
+            $query_args['testing_mode'] = '1';
+        }
+
+        $request_url = add_query_arg($query_args, $api_url);
 
         // Make the API request
         $response = wp_remote_get($request_url, [

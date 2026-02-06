@@ -26,6 +26,8 @@
     <div id="poststuff">
         <div id="post-body" class="metabox-holder">
             <div id="post-body-content" style="position: relative;">
+                <input id="wpil-object-cache-flush-nonce" type="hidden" value="<?php echo wp_create_nonce('wpil-flush-object-cache'); ?>" />
+                <?php echo $sub_report ?>
                 <?php include_once 'report_tabs.php'; ?>
                 <div class="tbl-link-reports">
                     <?php echo $report_description; ?>

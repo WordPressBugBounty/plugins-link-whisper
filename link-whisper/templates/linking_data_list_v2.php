@@ -87,15 +87,11 @@
         <br />
         <div>
             <?php 
-            $has_key = !empty(Wpil_Settings::getOpenAIKey());
+            $has_key = Wpil_Settings::get_linkwhisper_ai_active();
             $show_toggle = true;
             if(Wpil_Settings::can_do_ai_powered_suggestions()){
                 $possible = true;
                 $message = ''; //Wpil_Settings::get_linkwhisper_ai_active() ? '(This will use a small amount of credit)': '(AI Powered Suggestions will incur a very small charge from OpenAI)';
-            } else if($has_key && Wpil_AI::is_free_oai_subscription()){
-                $possible = false;
-                $settings = '<a href="https://linkwhisper.com/knowledge-base/how-do-i-get-my-open-ai-key/#setting-up-a-payment-method" target="_blank">' . esc_html__('put some money on your OpenAI API key', 'wpil') . '</a>';
-                $message = sprintf(esc_html__('To use the AI Powered Suggestions, please %s.', 'wpil'), $settings);
             } else if($has_key && !in_array('4', Wpil_Settings::get_selected_ai_batch_processes())) {
                 $possible = false;
                 $settings = '<a href="' . admin_url("admin.php?page=link_whisper_settings&tab=ai-settings") . '">' . esc_html__('go to the AI Settings', 'wpil') . '</a>';
@@ -109,11 +105,13 @@
                     esc_html__('At a minimum, Link Whisper needs 10% of the posts to be processed.', 'wpil') .
                     '<br><br>' . 
                     sprintf(esc_html__('Please %s, and run the AI Processing to scan the site.', 'wpil'), $settings);
-                
             } else {
                 $possible = false;
                 $show_toggle = false;
-                $message = esc_html__('Want to use suggestions powered by OpenAI?!', 'wpil') . '<br><br>' . sprintf(esc_html__('Please connect Link Whisper to %s, and then %s.', 'wpil'), '<a href="https://linkwhisper.com/knowledge-base/how-do-i-get-my-open-ai-key/">' . __('your OpenAI account', 'wpil') . '</a>', '<a href="https://linkwhisper.com/knowledge-base/how-do-i-have-openai-process-my-sites-data/">' . __('run an AI Scan', 'wpil') . '</a>');
+                $message = esc_html__(
+                    'Want to use suggestions powered by AI?!', 'wpil') . 
+                    '<br><br>' . 
+                    sprintf(esc_html__('Please connect Link Whisper to %s, and then %s.', 'wpil'), '<a href="https://linkwhisper.com/knowledge-base/how-do-i-get-started-with-link-whisper-ai/">' . __('our AI', 'wpil') . '</a>', '<a href="https://linkwhisper.com/knowledge-base/how-do-i-have-openai-process-my-sites-data/">' . __('run an AI Scan', 'wpil') . '</a>');
             } ?>
             <div class="ai-powered-suggestion-container">
                 <?php if($show_toggle){ ?>
@@ -199,7 +197,7 @@
                 </div>
             </div>
             <br>
-            <label style="font-weight: bold; font-size: 16px !important; display: inline-block;"><?php _e('Show Expanded Post Details', 'wpil'); ?><input type="checkbox" id="wpil_show_expanded_details" style="margin-left:10px;" class="wpil-slider-checkbox wpil-suggestion-input" value="1" /></label>
+            <label style="font-weight: bold; font-size: 16px !important; display: inline-block;"><?php _e('Show Expanded Post Details', 'wpil'); ?><input type="checkbox" id="wpil_show_expanded_details" style="margin-left:10px;" class="wpil-slider-checkbox wpil-suggestion-input" value="1" <?php checked(Wpil_Settings::get_show_expanded_suggestion_details()) ?> /></label>
         </div>
         <script>
             var rows = jQuery('tr[data-wpil-sentence-id]');

@@ -14,7 +14,7 @@ class Wpil_Wizard
 //        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/about-you.php';
 //        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/automatic-linking.php';
         include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/connect-gsc.php';
-//        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/connect-openai.php';
+        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/connect-openai.php';
         include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/run-setup.php';
     }
 
@@ -156,7 +156,7 @@ class Wpil_Wizard
             $link_density = Wpil_Dashboard::get_percent_of_posts_hitting_link_targets()['percent'] . '%';
 
             $ai_active = Wpil_Settings::can_do_ai_powered_suggestions(); // if we have a API key and at least some of the embedding data processed
-            $link_relatedness = 'OpenAI Connection Required.';
+            $link_relatedness = 'AI Connection Required.';
             if($ai_active){
                 $link_relatedness = Wpil_Dashboard::get_related_link_percentage() . '%';
             }

@@ -686,6 +686,18 @@
         });
     })
 
+
+    $(document).on('change', 'input[name="wpil_select_ai_provider"]', toggleAIProvider);
+    function toggleAIProvider(){
+        if($(this).val() === 'linkwhisper'){
+            $('.wpil-setting-linkwhisper-ai-provider').removeClass('hide-setting');
+            $('.wpil-setting-openai-ai-provider').addClass('hide-setting');
+        }else{
+            $('.wpil-setting-linkwhisper-ai-provider').addClass('hide-setting');
+            $('.wpil-setting-openai-ai-provider').removeClass('hide-setting');
+        }
+    }
+
     $(document).on('change', 'input[name="wpil_related_posts_use_ai_data"]', toggleUseAiDataRelatedPosts);
     function toggleUseAiDataRelatedPosts(){
         if($(this).is(':checked')){
@@ -1691,6 +1703,165 @@
                 $('.wpil-wprm-content-field-setting').addClass('hide-setting');
             }
         }
+    }
+
+    $(document).on('change', '[name=wpil_open_all_internal_new_tab],[name=wpil_open_all_external_new_tab]', toggleOpenSameOpening);
+
+
+    function toggleOpenNewOpening(e){
+        if(undefined === e.target || undefined === e.target.name){
+            return;
+        }
+        var name = e.target.name;
+        var checked = $(e.target).is(':checked');
+
+        if(name === 'wpil_open_all_internal_same_tab' && checked){
+            var int = $('[name=wpil_open_all_internal_new_tab]');
+
+            if(int.is(':checked')){
+                int.trigger('click');
+            }
+        }else if(name === 'wpil_open_all_external_same_tab' && checked){
+            var ext = $('[name=wpil_open_all_external_new_tab]');
+
+            if(ext.is(':checked')){
+                ext.trigger('click');
+            }
+        }
+    }
+    $(document).on('change', '[name=wpil_open_all_internal_same_tab],[name=wpil_open_all_external_same_tab]', toggleOpenNewOpening);
+
+    function toggleImageURLScanning(e){
+        if(undefined === e.target || undefined === e.target.name){
+            return;
+        }
+        var name = e.target.name;
+        var checked = $(e.target).is(':checked');
+
+        if(name === 'wpil_ignore_image_urls' && checked){
+            var opposite = $('[name=wpil_include_image_src]');
+
+            if(opposite.is(':checked')){
+                opposite.trigger('click');
+            }
+        }else if(name === 'wpil_include_image_src' && checked){
+            var opposite = $('[name=wpil_ignore_image_urls]');
+
+            if(opposite.is(':checked')){
+                opposite.trigger('click');
+            }
+        }
+    }
+    $(document).on('change', '[name=wpil_ignore_image_urls],[name=wpil_include_image_src]', toggleImageURLScanning);
+
+    $(document).on('change', 'input[name="wpil_disable_click_tracking_info_gathering"]', toggleDeleteUserDataDisplay);
+    function toggleDeleteUserDataDisplay(){
+        var input = $(this);
+        var deleteDataInput = $('input[name="wpil_delete_stored_visitor_data"]');
+
+        // if the site linking is toggled on
+        if(input.is(':checked')){
+            // show the setting input
+            deleteDataInput.parents('tr').removeClass('hide-setting');
+        }else{
+            // if it's toggled off, hide the input
+            deleteDataInput.parents('tr').addClass('hide-setting');
+            // and make sure it's toggled off
+            deleteDataInput.prop('checked', false);
+        }
+    }
+
+    $(document).on('change', 'input[name="wpil_autotag_gsc_keywords"]', toggleAutoSelectKeywordDisplay);
+    function toggleAutoSelectKeywordDisplay(){
+        var input = $(this);
+        var autoSelectBasis = $('select[name="wpil_autotag_gsc_keyword_basis"]');
+        var autoSelectCount = $('select[name="wpil_autotag_gsc_keyword_count"]');
+
+        // if the site linking is toggled on
+        if(input.is(':checked')){
+            // show the setting inputs
+            autoSelectBasis.parents('tr').removeClass('hide-setting');
+            autoSelectCount.parents('tr').removeClass('hide-setting');
+        }else{
+            // if it's toggled off, hide the inputs
+            autoSelectBasis.parents('tr').addClass('hide-setting');
+            autoSelectCount.parents('tr').addClass('hide-setting');
+        }
+    }
+
+    $(document).on('change', 'input[name="wpil_selected_target_keyword_sources[]"][value="post-content"]', togglePostContentKeywordDisplay);
+    function togglePostContentKeywordDisplay(){
+        var input = $(this);
+
+        // if the site linking is toggled on
+        if(input.is(':checked')){
+            // show the setting inputs
+            $('.wpil-post-content-keyword-container').css({'display': 'block'});
+        }else{
+            // if it's toggled off, hide the inputs
+            $('.wpil-post-content-keyword-container').css({'display': 'none'});
+        }
+    }
+
+    $(document).on('change', 'select[name="wpil_get_partial_titles"]', togglePartialTitleInputDisplay);
+    function togglePartialTitleInputDisplay(){
+        var basis = $(this).val();
+        var wordCountSetting = $('select[name="wpil_partial_title_word_count"]').parents('tr');
+        var delimiterSetting = $('input[name="wpil_partial_title_split_char"]').parents('tr');
+
+        if(basis === '1' || basis === '2'){
+            wordCountSetting.removeClass('hide-setting');
+            delimiterSetting.addClass('hide-setting');
+        }else if(basis === '3' || basis === '4'){
+            wordCountSetting.addClass('hide-setting');
+            delimiterSetting.removeClass('hide-setting');
+        }else{
+            wordCountSetting.addClass('hide-setting');
+            delimiterSetting.addClass('hide-setting');
+        }
+    }
+
+    $(document).on('change', 'input[name="wpil_filter_staging_url"]', toggleStagingSiteURLFiltering);
+    function toggleStagingSiteURLFiltering(){
+        var input = $(this);
+        var liveURL = $('input[name="wpil_live_site_url"]');
+        var stagingURL = $('input[name="wpil_staging_site_url"]');
+
+        // if the site linking is toggled on
+        if(input.is(':checked')){
+            // show the setting inputs
+            liveURL.parents('tr').removeClass('hide-setting');
+            stagingURL.parents('tr').removeClass('hide-setting');
+        }else{
+            // if it's toggled off, hide the inputs
+            liveURL.parents('tr').addClass('hide-setting');
+            stagingURL.parents('tr').addClass('hide-setting');
+        }
+    }
+
+    $(document).on('change', '.wpil-non-license-key-field', checkIfLicenseField);
+    function checkIfLicenseField(){
+        var input = $(this);
+
+        if(input && input.val().trim() !== '' && iSayOldBeanThatLooksLikeALicenseKey(input.val())){
+            alert(
+                'This looks like a license key, not an API key.\n' +
+                'This field does not use your Link Whisper license key.\n' +
+                'Please double-check you’re pasting the right thing 🙂'
+            );
+        }
+    }
+
+    /**
+     * Helper function to tell us if the user is about to enter a license key in a non-license key field
+     **/
+    function iSayOldBeanThatLooksLikeALicenseKey(str) {
+        if (typeof str !== 'string') return false;
+
+        const trimmed = str.trim();
+
+        // 32 hex chars, case-insensitive
+        return /^[a-f0-9]{32}$/i.test(trimmed);
     }
 
     /**

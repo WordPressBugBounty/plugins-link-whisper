@@ -1,4 +1,5 @@
 <?php
+$peripheral_visible = (Wpil_Settings::get_show_expanded_suggestion_details()) ? 'peripheral-visible': '';
 $link_external = false;
 $phrases = (!empty($phrase_groups) && isset($phrase_groups['internal_site'])) ? $phrase_groups['internal_site']: false; 
 $taxonomies = get_taxonomies(array('public' => true, 'show_ui' => true), 'names', 'or');
@@ -13,7 +14,7 @@ $taxonomies = (!empty($taxonomies)) ? array_keys($taxonomies): array();
             <th>
                 <div>
                     <div style="margin:5px 0 0 0;">
-                        <b><?php if('internal_site' === $phrase_group_type || true){ esc_html_e('Phrases In This Post To Link From', 'wpil'); }else{ esc_html_e('Add Outbound Links to External Sites', 'wpil'); } ?></b>
+                        <b><?php if(true){ esc_html_e('Phrases In This Post To Link From', 'wpil'); }else{ esc_html_e('Add Outbound Links to External Sites', 'wpil'); } ?></b>
                     </div>
                 </div>
             </th>
@@ -123,10 +124,10 @@ $taxonomies = (!empty($taxonomies)) ? array_keys($taxonomies): array();
                             <div class="wpil-collapsible wpil-collapsible-static wpil-links-count">
                                 <div class="<?php echo $phrase->suggestions[$index]->has_ai_scored() && !$phrase->suggestions[$index]->get_ai_related() ? 'wpil-suggestion-not-related': '';?>" style="opacity:<?=$phrase->suggestions[$index]->opacity?>" <?php echo $suggestion_datas ?>>
                                     <div class="suggested-post-data-container"><strong><?php esc_html_e('Title:', 'wpil'); ?></strong> <?=esc_html($a_post->getTitle())?></div>
-                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Type: ', 'wpil'); ?></strong> <?=esc_html($a_post->getType())?><br></div>
-                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Published:', 'wpil'); ?></strong> <?=get_the_date('', $a_post->id)?></div>
-                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><?php echo (!empty($categories)) ? '<b>' . _n(__('Category: ', 'wpil'), __('Categories: ', 'wpil'), $cats_found) . '</b>' . $categories . '<br>': ''; ?></div>
-                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><?php echo (!empty($tags)) ? '<b>' . _n(__('Tag: ', 'wpil'), __('Tags: ', 'wpil'), $tags_found) . '</b>' . $tags . '<br>': ''; ?></div>
+                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Type: ', 'wpil'); ?></strong> <?=esc_html($a_post->getType())?><br></div>
+                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Published:', 'wpil'); ?></strong> <?=get_the_date('', $a_post->id)?></div>
+                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><?php echo (!empty($categories)) ? '<b>' . _n(__('Category: ', 'wpil'), __('Categories: ', 'wpil'), $cats_found) . '</b>' . $categories . '<br>': ''; ?></div>
+                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><?php echo (!empty($tags)) ? '<b>' . _n(__('Tag: ', 'wpil'), __('Tags: ', 'wpil'), $tags_found) . '</b>' . $tags . '<br>': ''; ?></div>
 
                                     <?php if($phrase->suggestions[$index]->has_ai_scored()){ ?>
                                     <div class="suggested-post-data-container"><strong><?php _e('AI Relatedness Score:', 'wpil'); ?></strong> <?php echo $phrase->suggestions[$index]->get_ai_similarity_score() . "/10";?> 
@@ -150,9 +151,9 @@ $taxonomies = (!empty($taxonomies)) ? array_keys($taxonomies): array();
                                     <?php } ?>
 
                                     <?php if(is_a($a_post, 'Wpil_Model_Post')){ ?>
-                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Inbound Internal Links: ', 'wpil'); ?></strong> <?=(int)$a_post->getInboundInternalLinks(true) . '<br>'; ?></div>
-                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Outbound Internal Links: ', 'wpil'); ?></strong> <?=(int)$a_post->getOutboundInternalLinks(true) . '<br>'; ?></div>
-                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Outbound External Links: ', 'wpil'); ?></strong> <?=(int)$a_post->getOutboundExternalLinks(true) . '<br>'; ?></div>
+                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Inbound Internal Links: ', 'wpil'); ?></strong> <?=(int)$a_post->getInboundInternalLinks(true) . '<br>'; ?></div>
+                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Outbound Internal Links: ', 'wpil'); ?></strong> <?=(int)$a_post->getOutboundInternalLinks(true) . '<br>'; ?></div>
+                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Outbound External Links: ', 'wpil'); ?></strong> <?=(int)$a_post->getOutboundExternalLinks(true) . '<br>'; ?></div>
                                         <?php if(Wpil_Settings::translation_enabled()){ ?>
                                             <div class="suggested-post-data-container"><strong><?php esc_html_e('Post Language Code:', 'wpil'); ?></strong> <?=Wpil_Post::getPostLanguageCode($a_post)?></div>
                                         <?php } ?>
@@ -235,8 +236,8 @@ $taxonomies = (!empty($taxonomies)) ? array_keys($taxonomies): array();
                                                 <input type="radio" <?=$key_suggestion==$first?'checked':''?> <?php echo $suggestion_datas; ?>>
                                                 <span class="data">
                                                     <div class="suggested-post-data-container"><strong><?php esc_html_e('Title:', 'wpil'); ?></strong> <span class="suggested-post-title" style="opacity:<?=$suggestion->opacity?>"><?=esc_html($suggestion->post->getTitle())?></span></div>
-                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Type: ', 'wpil'); ?></strong> <?=esc_html($suggestion->post->getType())?><br></div>
-                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Published:', 'wpil'); ?></strong> <span class="suggested-post-published"><?=esc_attr($post_published_date)?></span></div>
+                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Type: ', 'wpil'); ?></strong> <?=esc_html($suggestion->post->getType())?><br></div>
+                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Published:', 'wpil'); ?></strong> <span class="suggested-post-published"><?=esc_attr($post_published_date)?></span></div>
                                                     
                                                     <?php if($suggestion->has_ai_scored()){ ?>
                                                     <div class="suggested-post-data-container"><strong><?php _e('AI Relatedness Score:', 'wpil'); ?></strong> <?php echo $suggestion->get_ai_similarity_score() . "/10";?>
@@ -251,8 +252,8 @@ $taxonomies = (!empty($taxonomies)) ? array_keys($taxonomies): array();
                                                         </div>
                                                     </div>
                                                     <?php } ?>
-                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><?php echo (!empty($categories)) ? '<b>' . _n(__('Category: ', 'wpil'), __('Categories: ', 'wpil'), $cats_found) . '</b>' . $categories . '<br>': ''; ?></div>
-                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><?php echo (!empty($tags)) ? '<b>' . _n(__('Tag: ', 'wpil'), __('Tags: ', 'wpil'), $tags_found) . '</b>' . $tags . '<br>': ''; ?></div>
+                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><?php echo (!empty($categories)) ? '<b>' . _n(__('Category: ', 'wpil'), __('Categories: ', 'wpil'), $cats_found) . '</b>' . $categories . '<br>': ''; ?></div>
+                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><?php echo (!empty($tags)) ? '<b>' . _n(__('Tag: ', 'wpil'), __('Tags: ', 'wpil'), $tags_found) . '</b>' . $tags . '<br>': ''; ?></div>
 
                                                     <?php if($post_origin === 'internal' && !empty($ai_post_relatedness_score)){ ?>
                                                         <div class="suggested-post-data-container"><?php echo '<b>' . __('AI Content Relatedness: ', 'wpil') . '</b>'; echo (!empty($ai_post_relatedness_score)) ? $ai_post_relatedness_score . '<br>': '0%'; ?></div>
@@ -262,9 +263,9 @@ $taxonomies = (!empty($taxonomies)) ? array_keys($taxonomies): array();
                                                     <?php } ?>
 
                                                     <?php if(is_a($suggestion->post, 'Wpil_Model_Post')){ ?>
-                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Inbound Internal Links: ', 'wpil'); ?></strong> <?=(int)$suggestion->post->getInboundInternalLinks(true) . '<br>'; ?></div>
-                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Outbound Internal Links: ', 'wpil'); ?></strong> <?=(int)$suggestion->post->getOutboundInternalLinks(true) . '<br>'; ?></div>
-                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Outbound External Links: ', 'wpil'); ?></strong> <?=(int)$suggestion->post->getOutboundExternalLinks(true) . '<br>'; ?></div>
+                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Inbound Internal Links: ', 'wpil'); ?></strong> <?=(int)$suggestion->post->getInboundInternalLinks(true) . '<br>'; ?></div>
+                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Outbound Internal Links: ', 'wpil'); ?></strong> <?=(int)$suggestion->post->getOutboundInternalLinks(true) . '<br>'; ?></div>
+                                                    <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Outbound External Links: ', 'wpil'); ?></strong> <?=(int)$suggestion->post->getOutboundExternalLinks(true) . '<br>'; ?></div>
                                                         <?php if(Wpil_Settings::translation_enabled()){ ?>
                                                             <div class="suggested-post-data-container"><strong><?php esc_html_e('Post Language Code:', 'wpil'); ?></strong> <?=Wpil_Post::getPostLanguageCode($suggestion->post)?></div>
 	                                                    <?php } ?>
@@ -358,8 +359,8 @@ $taxonomies = (!empty($taxonomies)) ? array_keys($taxonomies): array();
                         ?>
                         <div style="opacity:<?=$phrase->suggestions[$index]->opacity?>" class="suggestion dated-outbound-suggestion <?php echo $phrase->suggestions[$index]->has_ai_scored() && !$phrase->suggestions[$index]->get_ai_related() ? 'wpil-suggestion-not-related': '';?>" <?php echo $suggestion_datas; ?>>
                             <div class="suggested-post-data-container"><strong><?php esc_html_e('Title:', 'wpil'); ?></strong> <span class="suggested-post-title"><?=esc_html($a_post->getTitle())?></span></div>
-                            <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Type: ', 'wpil'); ?></strong> <?=esc_html($a_post->getType())?><br></div>
-                            <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Published:', 'wpil'); ?></strong> <?=get_the_date('', $a_post->id)?></div>
+                            <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Type: ', 'wpil'); ?></strong> <?=esc_html($a_post->getType())?><br></div>
+                            <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Published:', 'wpil'); ?></strong> <?=get_the_date('', $a_post->id)?></div>
                             <?php if($phrase->suggestions[$index]->has_ai_scored()){ ?>
                             <div class="suggested-post-data-container"><strong><?php _e('AI Relatedness Score:', 'wpil'); ?></strong> <?php echo $phrase->suggestions[$index]->get_ai_similarity_score() . "/10";?>
                                 <div class="wpil_help wpil-ai-help">
@@ -373,8 +374,8 @@ $taxonomies = (!empty($taxonomies)) ? array_keys($taxonomies): array();
                                 </div>
                             </div>
                             <?php } ?>
-                            <div class="suggested-post-data-container wpil-suggestion-peripheral"><?php echo (!empty($categories)) ? '<b>' . _n(__('Category: ', 'wpil'), __('Categories: ', 'wpil'), $cats_found) . '</b>' . $categories . '<br>': ''; ?></div>
-                            <div class="suggested-post-data-container wpil-suggestion-peripheral"><?php echo (!empty($tags)) ? '<b>' . _n(__('Tag: ', 'wpil'), __('Tags: ', 'wpil'), $tags_found) . '</b>' . $tags . '<br>': ''; ?></div>
+                            <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><?php echo (!empty($categories)) ? '<b>' . _n(__('Category: ', 'wpil'), __('Categories: ', 'wpil'), $cats_found) . '</b>' . $categories . '<br>': ''; ?></div>
+                            <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><?php echo (!empty($tags)) ? '<b>' . _n(__('Tag: ', 'wpil'), __('Tags: ', 'wpil'), $tags_found) . '</b>' . $tags . '<br>': ''; ?></div>
                             
                             <?php if($post_origin === 'internal' && !empty($ai_post_relatedness_score)){ ?>
                                 <div class="suggested-post-data-container"><?php echo '<b>' . __('AI Content Relatedness: ', 'wpil') . '</b>'; echo (!empty($ai_post_relatedness_score)) ? $ai_post_relatedness_score . '<br>': '0%'; ?></div>
@@ -384,9 +385,9 @@ $taxonomies = (!empty($taxonomies)) ? array_keys($taxonomies): array();
                             <?php } ?>
 
                             <?php if(is_a($a_post, 'Wpil_Model_Post')){ ?>
-                            <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Inbound Internal Links: ', 'wpil'); ?></strong> <?=(int)$a_post->getInboundInternalLinks(true) . '<br>'; ?></div>
-                            <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Outbound Internal Links: ', 'wpil'); ?></strong> <?=(int)$a_post->getOutboundInternalLinks(true) . '<br>'; ?></div>
-                            <div class="suggested-post-data-container wpil-suggestion-peripheral"><strong><?php esc_html_e('Outbound External Links: ', 'wpil'); ?></strong> <?=(int)$a_post->getOutboundExternalLinks(true) . '<br>'; ?></div>
+                            <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Inbound Internal Links: ', 'wpil'); ?></strong> <?=(int)$a_post->getInboundInternalLinks(true) . '<br>'; ?></div>
+                            <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Outbound Internal Links: ', 'wpil'); ?></strong> <?=(int)$a_post->getOutboundInternalLinks(true) . '<br>'; ?></div>
+                            <div class="suggested-post-data-container wpil-suggestion-peripheral <?php echo $peripheral_visible; ?>"><strong><?php esc_html_e('Outbound External Links: ', 'wpil'); ?></strong> <?=(int)$a_post->getOutboundExternalLinks(true) . '<br>'; ?></div>
                             <?php } ?>
 
                             <strong><?php esc_html_e('URL:', 'wpil'); ?></strong> <a class="post-slug" target="_blank" href="<?=esc_url($a_post->getLinks()->view)?>"><?php echo esc_html(urldecode($a_post->getSlug())); ?></a>

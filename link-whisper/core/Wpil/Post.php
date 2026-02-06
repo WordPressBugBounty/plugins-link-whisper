@@ -10,6 +10,7 @@ class Wpil_Post
         'web-story'
     );
     public static $post_url_cache = array();
+    public static $editor_insert_log = array();
 
     /**
      * Register services
@@ -1085,7 +1086,7 @@ class Wpil_Post
         global $wpdb;
         $post = null;
         $link = trim($link);
-        $link = Wpil_Link::get_url_redirection($link) ?: $link;
+    //    $link = Wpil_Link::get_url_redirection($link) ?: $link; //todo: make work with
         $starting_link = $link;
 
         // check to see if we've already come across this link

@@ -3,7 +3,7 @@ Contributors: linkwhspr
 Tags: links, SEO, internal linking, link building, orphan content
 Requires at least: 4.6
 Tested up to: 6.8.2
-Stable Tag: 0.8.8
+Stable Tag: 0.9.0
 Requires PHP: 5.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -158,6 +158,32 @@ We are confident that you’ll be happy with Link Whisper Premium. However, if y
 15. [Premium] The URL Changer allows you to update old links to point to new URLs.
 
 == Changelog ==
+= 0.9.0 =
+* [BUGFIX] Fixing bug that would keep the Debug Settings from saving.
+* [BUGFIX] Fixing empty variable notice when no suggestions found.
+
+= 0.8.9 =
+* [NEW FEATURE] Creating Link Health Widget for the WordPress Dashboard! (The widget shows you a condensed report of your site's link health. Widget is also movable and can be hidden if so desired)
+* [NEW LANGUAGE] Adding support for Czech!!!
+* [NEW LANGUAGE] Adding support for Bulgarian!!!
+* [IMPROVEMENT] Making the "Show Expanded Post Details" setting in the Suggestions are sticky!
+* [IMPROVEMENT] Improving the AI Credit delivery to better handle sites with non-standard WordPress layouts.
+* [IMPROVEMENT] Creating AI processing lock to keep AI Relation Analysis from needing to update if a post is published during processing.
+* [IMPROVEMENT] Improving the handling of Themify created content.
+* [IMPROVEMENT] Making the Suggestion's keyword processsing more sensitive to post title words.
+* [ADJUSTMENT] Modifying the way links are traced to their target post for better redirect handling.
+* [UX/UI] Reworking and simplifying the AI Subscriptions page.
+* [UX/UI] Updating some tooltip.
+* [UX/UI] Adding a "View Link" button for links in the Broken Link Report so that it's easier to pull up broken links.
+* [UX/UI] Adding a notice in the Settings to alert admins if there was a problem accessing the Link Whisper AI credentials.
+* [SECURITY] Fixing minor vulnerability in reports.
+* [BUGFIX] Fixing a potential "division by zero" error in the settings page.
+* [BUGFIX] Fixing bug that would keep the "View Link" from being able to find and highlight the links in some pages.
+* [BUGFIX] Fixing query bug that would keep the reports from showing items if the site had no terms selected.
+* [BUGFIX] Fixing bug that would sometimes make the X button on reports disapper.
+* [BUGFIX] Fixing bug that would cause the Suggestion area to show suggestions that have a low AI score.
+* [BUGFIX] Fixing minor PHP notice that would sometimes happen when connecting to AI for the first time.
+
 = 0.8.8 =
 * [UX/UI] Adjusting the AI processing messages so they are clearer.
 * [BUGFIX] Fixing a bug that would keep the link stats from populating in the All Posts pages.

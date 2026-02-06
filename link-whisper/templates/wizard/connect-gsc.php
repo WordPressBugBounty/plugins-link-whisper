@@ -16,6 +16,7 @@ $auth_message = (!$has_custom) ? __('Connect Link Whisper', 'wpil'): __('Authori
     <div id="wpil-setup-wizard-progress-loading"><div id="wpil-setup-wizard-progress-loading-bar" style="width:0px"></div></div>
     <div id="wpil-setup-wizard-progress">
         <div class="complete"><span class="dashicons dashicons-yes-alt"></span> <?php esc_html_e('Connect to Google Search Console', 'wpil'); ?></div>
+        <div><span class="dashicons dashicons-yes-alt"></span> <?php esc_html_e('Connect to AI', 'wpil'); ?></div>
         <div><span class="dashicons dashicons-yes-alt"></span> <?php esc_html_e('Complete Installation', 'wpil'); ?></div>
     </div>
     <div class="wpil-setup-wizard-content" style="/*height: 550px;*/">
@@ -40,17 +41,17 @@ $auth_message = (!$has_custom) ? __('Connect Link Whisper', 'wpil'): __('Authori
                         <a style="margin-top:5px; font-family:'Barlow', sans-serif; padding: 15px 40px !important; font-size: 18px !important;" class="wpil-get-gsc-access-token button-primary" href="<?php echo Wpil_Settings::getGSCAuthUrl(true); ?>"><?php echo $auth_message; ?></a>
                     </div>
                 <?php }else{ ?>
-                    <a href="<?php echo admin_url('admin.php?page=link_whisper_settings&wpil_wizard=run-setup');?>" class="wpil-wizard-link button-primary" style="margin-top:5px; padding: 15px 40px !important; font-size: 18px !important;" data-wpil-wizard-link-id="run-setup" style="font-size: 20px;"><?php esc_html_e('Awesome! Let\'s proceed', 'wpil'); ?></a>
+                    <a href="<?php echo admin_url('admin.php?page=link_whisper_settings&wpil_wizard=connect-openai');?>" class="wpil-wizard-link button-primary" style="margin-top:5px; padding: 15px 40px !important; font-size: 18px !important;" data-wpil-wizard-link-id="connect-openai" style="font-size: 20px;"><?php esc_html_e('Awesome! Let\'s proceed', 'wpil'); ?></a>
                 <?php } ?>
             </div>
         </div>
         <br><br>
         <div>
             <?php if($authorized && $authorized){ ?>
-                <!--<a href="<?php echo admin_url('admin.php?page=link_whisper_settings&wpil_wizard=run-setup');?>" class="wpil-wizard-link" data-wpil-wizard-link-id="run-setup" style="font-size: 20px;"><?php esc_html_e('Awesome! Let\'s proceed', 'wpil'); ?></a>-->
+                <!--<a href="<?php echo admin_url('admin.php?page=link_whisper_settings&wpil_wizard=connect-openai');?>" class="wpil-wizard-link" data-wpil-wizard-link-id="connect-openai" style="font-size: 20px;"><?php esc_html_e('Awesome! Let\'s proceed', 'wpil'); ?></a>-->
                 <a class="wpil-gsc-deactivate-app" style="font-size: 20px; cursor: pointer;" data-nonce="<?php echo wp_create_nonce('disconnect-gsc'); ?>"><?php esc_html_e('Deactivate', 'wpil'); ?></a>
             <?php }else{ ?>
-                <a href="<?php echo admin_url('admin.php?page=link_whisper_settings&wpil_wizard=run-setup');?>" class="wpil-wizard-link" data-wpil-wizard-link-id="run-setup" style="font-size: 20px;"><?php esc_html_e('Not right now, maybe later', 'wpil'); ?></a>
+                <a href="<?php echo admin_url('admin.php?page=link_whisper_settings&wpil_wizard=connect-openai');?>" class="wpil-wizard-link" data-wpil-wizard-link-id="connect-openai" style="font-size: 20px;"><?php esc_html_e('Not right now, maybe later', 'wpil'); ?></a>
             <?php } ?>
         </div>
     </div>

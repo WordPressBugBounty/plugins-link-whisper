@@ -66,7 +66,7 @@
 
 .wpil_styles .button-primary,
 .wpil_styles .button-secondary,
-.wpil_styles button:not([id*="mce"]):not([class*="editor"]):not([class*="notice"]):not([class*="dismiss"]),
+.wpil_styles button:not([id*="mce"]):not([class*="editor"]):not([class*="notice"]):not([class*="dismiss"]):not([class*="wpil-panel-close"]),
 .wpil_styles .button:not([class*="notice"]):not([class*="dismiss"]),
 .wpil_styles .wp-core-ui .button,
 .wpil_styles .wp-core-ui .button-primary,
@@ -674,7 +674,8 @@ button.wpil_licensing_activation_button:nth-child(n):hover,
 }
 
 .add-internal-links.add-density-highlight,
-.add-outbound-internal-links.add-density-highlight{
+.add-outbound-internal-links.add-density-highlight,
+.wpil-show-anchor-words.add-density-highlight{
     text-decoration: none !important;
     background: #7645b1;
     border-radius: 10px;
@@ -697,13 +698,37 @@ button.wpil_licensing_activation_button:nth-child(n):hover,
 
 }
 
-.wpil-link-relation-indicator:not(.wpil-links-diffuse):not(.wpil-links-diffuse + .wpil-link-relation-indicator)::before {
+.wpil-link-report-stat-indicator{
+    text-decoration: none !important;
+    margin-right: -7px;
+    position: absolute;
+    left: 5px;
+    top: 1px;
+    right: initial;
+}
+
+.wpil-link-report-stat-indicator.wpil-fix-problem.wpil-purple-highlight{
+    background: #7645b1;
+    border-radius: 10px;
+    padding: 0 6px;
+    color: #fefefe;
+    font-weight: bold;
+}
+
+.wpil-link-report-stat-indicator:not(.wpil-fix-problem),
+.wpil-link-report-stat-indicator:not(.wpil-fix-problem):hover{
+    color:black;
+    user-select: none;
+    pointer-events: none;
+}
+
+.wpil-link-relation-indicator:not(.wpil-links-diffuse):not(.wpil-links-diffuse + .wpil-link-relation-indicator)::before,
+.wpil-link-report-stat-indicator:not(.wpil-fix-problem)::before {
   content: '✔';
   color: green;
   font-weight: bold;
   margin-right: 0.5em;
 }
-
 
 .wpil-show-relation .wpil-links-diffuse{
     /*box-shadow: 0px 0px 2px 2px red;*/
@@ -1664,13 +1689,21 @@ td.wpil-setting-text{
 	width: 300px;
 	float: right;
 }
-.wpil_styles #keywords form > * {
+.wpil_styles .wpil-suggestion-keywords{
+    width: 300px;
+}
+.wpil_styles #keywords form > *,
+.wpil_styles .wpil-suggestion-keywords form > * {
 	display: inline-block;
 	margin: 5px 0;
 }
-.wpil_styles #keywords textarea {
+.wpil_styles #keywords textarea,
+.wpil_styles .wpil-suggestion-keywords textarea {
 	width: 200px;
 	height: 36px;
+}
+.wpil-suggestion-keyword-search-submit{
+    float: right;
 }
 .wpil_styles #keywords button {
 	float: right;
@@ -2198,6 +2231,10 @@ ul.report_links {
     display:none;
 }
 
+.wpil-suggestion-peripheral.peripheral-visible{
+    display:block;
+}
+
 .best_keywords.inbound .data {
 	display: inline;
 }
@@ -2207,7 +2244,9 @@ ul.report_links {
 	padding: 4px 0 0 0;
     margin: 10px 0 0 0;
 }
-
+.wpil-hidden{
+    display: none !important;
+}
 .wpil-hidden-selector{
 	display: none;
 }
@@ -3314,6 +3353,10 @@ td.column-wpil-report-actions .dashicons-plus{
     width: 135px;
 }
 
+.wpil-activity-panel .wpil-activity-panel-anchor-words.wpil-activity-last-col{
+    width: 130px;
+}
+
 .wpil-activity-panel .wpil-activity-upgrade-ai{
 
 }
@@ -3404,6 +3447,7 @@ table .wpil-collapsible:hover .wpil-right-arrow-box:before{
   width:32px; 
   height:32px; 
   border-radius: 999px;
+  border:none;
   color:#374151 ; 
   cursor:pointer;
   transition: background-color .2s, border-color .2s, box-shadow .2s, transform .05s;
@@ -3547,11 +3591,14 @@ table .wpil-collapsible:hover .wpil-right-arrow-box:before{
     text-align: center;
 }
 
-.wpil-suggestion-location-title{
+.wpil-suggestion-location-title,
+.wpil-suggestion-keywords
+{
     display:none;
 }
 
-.wpil-activity-panel .wpil-suggestion-location-title{
+.wpil-activity-panel .wpil-suggestion-location-title,
+.wpil-activity-panel .wpil-suggestion-keywords{
     display: block;
 }
 

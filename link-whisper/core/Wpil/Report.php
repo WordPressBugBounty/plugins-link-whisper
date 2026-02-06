@@ -69,6 +69,7 @@ class Wpil_Report
                 $page = isset($_REQUEST['page']) ? sanitize_text_field($_REQUEST['page']) : 'link_whisper';
                 $title = ''; // $title is title used in the link report
                 $report_description = '';
+                $sub_report = '';
                 if(isset($_GET['orphaned'])){
                     $title = __('Orphaned Posts Report', 'wpil');
                 }elseif(isset($_REQUEST['link_density'])){
@@ -78,6 +79,14 @@ class Wpil_Report
                         <div style="font-size: 18px;">'. esc_html__('SEO best practices recommend posts have at least 1 Inbound Internal link, and 3 or more Outbound Internal links.', 'wpil') .'</div>'
                         . '<br>
                         <div style="font-size: 16px;">' . esc_html__('To help you meet these goals, this report will show you all the posts that could use some links, and give our recommendation on how many links to add!', 'wpil').'</div></div>';
+                }elseif(isset($_REQUEST['anchor_length'])){
+                    $title = __('Anchor Length Report', 'wpil');
+                    $report_description = 
+                    '<div style="float: left; background: #fff; padding: 10px; border-radius: 5px; border: 1px solid #cdcdcd; width:100%">
+                        <div style="font-size: 18px;">'. esc_html__('SEO best practices recommend link anchor texts be between 3 and 7 words in length.', 'wpil') .'</div>'
+                        . '<br>
+                        <div style="font-size: 16px;">' . sprintf(esc_html__('To help you meet these goals, this report shows posts with out-of-guideline anchor text and %s where the percentage of compliant links is low.', 'wpil'), '<span style="background: #7645b1;border-radius: 10px;padding: 2px 6px;color: #fefefe;font-weight: bold;">highlights</span>').'</div></div>';
+                    $sub_report = '<input id="wpil-report-sub-type" type="hidden" value="anchor_length">';
                 }elseif(isset($_REQUEST['link_relation'])){
                     $title = __('Link Quality Report', 'wpil');
                     $report_description = 
@@ -1870,7 +1879,7 @@ class Wpil_Report
      * @param int $limit
      * @return array
      */
-    public static function getData($start = 0, $orderby = '', $order = 'DESC', $search='', $limit=20, $orphaned = false, $link_density_report = false)
+    public static function getData($start = 0, $orderby = '', $order = 'DESC', $search='', $limit=20, $orphaned = false, $link_density_report = false, $anchor_length_report = false)
     {
         global $wpdb;
         $link_table = $wpdb->prefix . "wpil_report_links";
@@ -2087,6 +2096,11 @@ class Wpil_Report
                 $report_term_ids = $wpdb->get_col("SELECT `term_id` FROM {$wpdb->terms} WHERE $report_term_ids");
                 $report_term_ids = implode(',', $report_term_ids);
             }
+        }
+
+        // if we're showing the anchor length report
+        if($anchor_length_report){
+            // TODO: think about filterign the results to only show posts and links hat are outside the anchor word guidelines
         }
 
         // hide ignored
@@ -2343,6 +2357,7 @@ class Wpil_Report
                 $show_click_traffic = !empty($options['show_click_traffic']) && $options['show_click_traffic'] != 'off';
                 $show_broken_link_type = !empty($options['show_broken_link_type']) && $options['show_broken_link_type'] != 'off';
                 $show_broken_link_discovered = !empty($options['show_broken_link_discovered']) && $options['show_broken_link_discovered'] != 'off';
+//                $enable_tours = isset($options['enable_tours']) ? ($options['enable_tours'] != 'off') : Wpil_Settings::get_tours_enabled();
             } else {
                 $show_categories = false;
                 $show_date = true;
@@ -2354,6 +2369,7 @@ class Wpil_Report
                 $show_click_traffic = false;
                 $show_broken_link_type = false;
                 $show_broken_link_discovered = false;
+//                $enable_tours = Wpil_Settings::get_tours_enabled();
             }
 
             //get apply button
@@ -2408,7 +2424,18 @@ class Wpil_Report
                 if (!isset($_POST['report_options']['hide_noindex'])) {
                     $_POST['report_options']['hide_noindex'] = 'off';
                 }
+                if (!isset($_POST['report_options']['show_link_attrs'])) {
+                    $_POST['report_options']['show_link_attrs'] = 'off';
+                }
+                if (!isset($_POST['report_options']['enable_tours'])) {
+                    $_POST['report_options']['enable_tours'] = 'off';
+                }
                 $value = $_POST['report_options'];
+
+                // Also update the global setting for tours
+                if (isset($value['enable_tours'])) {
+                    update_option('wpil_enable_tours', ($value['enable_tours'] != 'off') ? '1' : '0');
+                }
             }
 
             return $value;
@@ -2555,8 +2582,10 @@ class Wpil_Report
         $get_all_links = Wpil_Settings::showAllLinks();
         $post_id = (int)$_POST['post_id'];
         $post_type = ($_POST['post_type'] === 'post') ? 'post': 'term';
-
+        $show_fix_anchors = (isset($_POST['show_fix_anchor']) && !empty($_POST['show_fix_anchor'])) ? true: false;
         $post = new Wpil_Model_Post($post_id, $post_type);
+        $phrases = ($show_fix_anchors) ? Wpil_Suggestion::get_post_paragraphs($post->getContent(false)): '';
+        $allow_multiple_links = !empty(get_user_meta(get_current_user_id(), 'wpil_allow_multiple_editor_links', true));
 
         $activity_tooltip = __('Upgrade Link Whisper with AI and see how relevant your links really are.', 'wpil');
         $ai_not_enabled = (!Wpil_Settings::has_ai_enabled()) ? '<div class="wpil-activity-upgrade-ai"><span>93%</span> <a href="'.admin_url('admin.php?page=link_whisper_ai_subscription').'" target="_blank" class="button-primary wpil-tippy-tooltipped" data-wpil-tooltip-theme="link-whisper-report-tippy" data-wpil-tooltip-interactive="1" data-wpil-tooltip-content="'.$activity_tooltip.'">Upgrade</a></div>': '';
@@ -2612,7 +2641,7 @@ class Wpil_Report
                         }
                         $rep .=         '</div>
                                     </td>
-                                        <td class="'.$related.'"><div style="margin: 3px 0;"> ' . ((empty($ai_not_enabled)) ? esc_html($link->get_ai_relation_percent()): $ai_not_enabled) . '</div></td>';
+                                    <td class="'.$related.'"><div style="margin: 3px 0;"> ' . ((empty($ai_not_enabled)) ? esc_html($link->get_ai_relation_percent()): $ai_not_enabled) . '</div></td>';
                             $rep .= ($get_all_links) ? '<td><div style="margin: 3px 0;">' . $link->location . '</div></td>' : '';
 //                            $rep .= '<td class="wpil-status-icon-cell">' . self::get_dropdown_icons($link->post, $link, 'inbound-internal', true) . '</td>';
                             $rep .= '</tr>';
@@ -2631,9 +2660,14 @@ class Wpil_Report
                 $header = array_merge($header, [
                     '<th>Target Post Title</th>',
                     '<th>Anchor Text</th>',
-                    '<th>URL</th>',
-                    '<th class="wpil-activity-panel-content-related '.$last_col.'">AI Content Relatedness</th>'
                 ]);
+
+                if(!$show_fix_anchors){
+                    $header = array_merge($header, [
+                        '<th>URL</th>',
+                        '<th class="wpil-activity-panel-content-related '.$last_col.'">AI Content Relatedness</th>'
+                    ]);
+                }
 
                 if($get_all_links){
                     $header = array_merge($header, [
@@ -2645,8 +2679,19 @@ class Wpil_Report
                     '<th class="wpil-link-status-icon-header wpil-activity-panel-fixed-th">Status</th>'
                 ]);*/
 
+                if($show_fix_anchors){
+                    $header = array_merge($header, [
+                        //'<th>Primary Category</th>',
+                        '<th class="wpil-activity-panel-anchor-words wpil-activity-last-col">Word Count</th>'
+                    ]);
+                }
+
                 $links_data = $post->getOutboundInternalLinks();
                 foreach ($links_data as $link) {
+                    if($show_fix_anchors && ($link->anchor_word_count > 2 && $link->anchor_word_count < 8)){
+                        continue;
+                    }
+
                     if (!Wpil_Filter::linksLocation() || $link->location == Wpil_Filter::linksLocation()) {
                         $target_post = (isset($link->target_id) && !empty($link->target_id)) ? new Wpil_Model_Post($link->target_id, $link->target_type): Wpil_Post::getPostByLink($link->url);
                         $edit_link = '';
@@ -2667,30 +2712,65 @@ class Wpil_Report
                             $primary_category_note = '<td><div style="margin: 3px 0;">None</div></td>';
                         }*/
 
-                        $rep .= '<tr class="wpil-activity-panel-edit inactive">
+                        $phrase_key = false;
+                        $phrase_key_id = '';
+                        if($show_fix_anchors){
+                            $phrase_key = self::find_link_phrase_key($phrases, $link);
+                            if(false !== $phrase_key){
+                                $phrase_key_id = 'data-wpil-sentence-id="'.$phrase_key.'"';
+                            }
+                        }
+
+                        $rep .= '<tr class="wpil-activity-panel-edit sentences inactive" '.$phrase_key_id.'>
                                     <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
                                     <td class="wpil-activity-panel-post wpil-activity-panel-limited-text-cell"><div style="margin: 3px 0;"> ' . ((!empty($target_post)) ? esc_html($target_post->getTitle()): 'Unknown Post') . '</div></td>
-                                    <td class="wpil-activity-panel-limited-text-cell">
-                                        <div style="margin: 3px 0; display:flex">
+                                    <td class="'. (false !== $phrase_key ? '': 'wpil-activity-panel-limited-text-cell') .'">';
+                            if(false !== $phrase_key && isset($phrases[$phrase_key])){
+                                    $phrase = $phrases[$phrase_key];
+                                    unset($phrases[$phrase_key]);
+                                    $phr = self::assemble_suggestion_item($phrase);
+                                $rep .= '
+                                    <div style="display:none">'.$edit_link.'</div>
+                                    <div class="sentence top-level-sentence" data-id="'.esc_attr($post->id).'" data-type="'.esc_attr($post->type).'">
+                                        <div class="wpil_edit_sentence_form">
+                                            <textarea class="wpil_content">'.$phr->suggestions[0]->sentence_src_with_anchor.'</textarea>
+                                            <span class="button-primary">Save</span>
+                                            <span class="button-secondary">Cancel</span>
+                                            <span> <input type="checkbox" class="wpil-sentence-allow-multiple-links" data-nonce="'.wp_create_nonce(get_current_user_id() . 'allow_multiple_links_editor').'" '. (($allow_multiple_links) ? 'checked': '') .'>Allow multiple links in sentence</span>
+                                        </div>
+                                        <span class="wpil_sentence_with_anchor" data-li-id="0"><span class="wpil_sentence" title="'. esc_attr__('Double clicking a word will select it.', 'wpil') .'">' . $phr->suggestions[0]->sentence_with_anchor . '</span><span class="dashicons dashicons-image-rotate wpil-reload-sentence-with-anchor" title="'. esc_attr__('Click to undo changes', 'wpil') . '"></span></span>
+                                        <span class="wpil_edit_sentence link-form-button">| <a href="javascript:void(0)">Edit Sentence</a></span>
+                                        <input type="hidden" name="sentence" value="'.base64_encode($phr->sentence_src).'">
+                                        <input type="hidden" name="custom_sentence" value="">
+                                        <input type="hidden" name="original_sentence_with_anchor" value="'.base64_encode($phr->suggestions[0]->original_sentence_with_anchor).'">
+                                        <input type="hidden" class="wpil-activity-panel-url-edit wpil-report-edit-input" value="' . esc_attr($link->url) . '">
+                                    </div>';
+                            }else{
+                                $rep .= '<div style="margin: 3px 0; display:flex">
                                             '.$edit_link.'
                                             <div class="wpil-report-edit-display wpil-activity-panel-anchor-display"><div class="wpil-anchor-display-text">' . esc_html($link->anchor) . '</div> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $post->getLinks()->view)) . '" target="_blank"><span class="dashicons dashicons-external" title="'.esc_attr__('View On Page','wpil').'" style="position: relative;top: 3px;"></span></a></div>';
-                        if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
-                        $rep .=            '<input class="wpil-activity-panel-anchor-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->anchor) . '">';
-                        }
+                                if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
+                                    $rep .= '<input class="wpil-activity-panel-anchor-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->anchor) . '">';
+                                }
+                            }
                         $rep .=         '</div>
-                                    </td>
-                                    <td class="wpil-activity-panel-limited-text-cell">
-                                        <div style="margin: 3px 0; display:flex">
-                                            '.$edit_link.'
-                                            <div href="' . esc_url($link->url) . '" target="_blank" class="wpil-report-edit-display wpil-activity-panel-url-display" style="text-decoration: underline">
-                                                <div class="wpil-url-display-text">' . esc_html($link->url) . '</div>
-                                            </div>';
-                        if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
-                        $rep .=            '<input class="wpil-activity-panel-url-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->url) . '">';
+                                    </td>';
+                        if($show_fix_anchors){
+                            $rep .= '<td class="wpil-activity-panel-limited-text-cell wpil-activity-panel-word-count">' .$link->anchor_word_count. '</td>';
+                        }else{
+                            $rep .= '<td class="wpil-activity-panel-limited-text-cell">
+                                            <div style="margin: 3px 0; display:flex">
+                                                '.$edit_link.'
+                                                <div href="' . esc_url($link->url) . '" target="_blank" class="wpil-report-edit-display wpil-activity-panel-url-display" style="text-decoration: underline">
+                                                    <div class="wpil-url-display-text">' . esc_html($link->url) . '</div>
+                                                </div>';
+                            if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context) && !$show_fix_anchors){
+                            $rep .=            '<input class="wpil-activity-panel-url-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->url) . '">';
+                            }
+                            $rep .=         '</div>
+                                        </td>';
+                            $rep .= '<td><div class="'.$related.'" style="margin: 3px 0;"><div class="content-relatedness-score">' . ((empty($ai_not_enabled)) ? esc_html($link->get_ai_relation_percent()): $ai_not_enabled) . '</div></div></td>';
                         }
-                        $rep .=         '</div>
-                                    </td>
-                                    <td><div class="'.$related.'" style="margin: 3px 0;"><div class="content-relatedness-score">' . ((empty($ai_not_enabled)) ? esc_html($link->get_ai_relation_percent()): $ai_not_enabled) . '</div></div></td>';
                         $rep .= ($get_all_links) ? '<td><div style="margin: 3px 0;">' . $link->location . '</div></td>' : '';
 //                        $rep .= $primary_category_note;
 //                        $rep .= '<td class="wpil-status-icon-cell">' . self::get_dropdown_icons($post, $link, 'outbound-internal', true) . '</td>';
@@ -2702,12 +2782,24 @@ class Wpil_Report
             case 'outbound-external':
                 $header = array_merge($header, [
                     '<th>Anchor Text</th>',
-                    '<th>URL</th>',
                 ]);
+
+                if(!$show_fix_anchors){
+                    $header = array_merge($header, [
+                        '<th>URL</th>'
+                    ]);
+                }
 
                 if($get_all_links){
                     $header = array_merge($header, [
                         '<th class="wpil-activity-panel-link-location wpil-activity-last-col">Link Location</th>'
+                    ]);
+                }
+
+                if($show_fix_anchors){
+                    $header = array_merge($header, [
+                        //'<th>Primary Category</th>',
+                        '<th class="wpil-activity-panel-anchor-words wpil-activity-last-col">Word Count</th>'
                     ]);
                 }
 
@@ -2717,33 +2809,91 @@ class Wpil_Report
 
                 $links_data = $post->getOutboundExternalLinks();
                 foreach ($links_data as $link) {
-                    if (!Wpil_Filter::linksLocation() || $link->location == Wpil_Filter::linksLocation()) {
-                        $edit_link = '';
+                    if($show_fix_anchors && ($link->anchor_word_count > 2 && $link->anchor_word_count < 8)){
+                        continue;
+                    }
 
-                        $rep .= '<tr class="wpil-activity-panel-edit inactive">
-                                    <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $post->id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $post->id . '_nonce_' . $post->id) . '"></td>
-                                    <td class="wpil-activity-panel-limited-text-cell">
-                                        <div style="margin: 3px 0; display:flex">
+                    if (!Wpil_Filter::linksLocation() || $link->location == Wpil_Filter::linksLocation()) {
+                        $target_post = (isset($link->target_id) && !empty($link->target_id)) ? new Wpil_Model_Post($link->target_id, $link->target_type): Wpil_Post::getPostByLink($link->url);
+                        $edit_link = ('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)) ? '<span class="dashicons dashicons-edit wpil_activate_edit_link" title="' . esc_attr__('Edit Link', 'wpil') . '"></span>' : '';
+                        $related = (!empty($link->get_ai_relation_percent(true)) && $link->get_ai_relation_percent(true) < 50) ? 'ai-not-related': '';
+                        
+                        /*
+                        $primary_category_note = '<td><div style="margin: 3px 0;">None assigned</div></td>';
+                        if(!empty($link->post) && $link->post->type === 'post') {
+                            // Get the main term
+                            $primary_term = Wpil_Post::get_primary_term_for_main_taxonomy($link->post->id, $link->post->getRealType());
+
+                            if ($primary_term instanceof WP_Term) {
+                                $primary_category_note = '<td><div style="margin: 3px 0;">' . esc_html($primary_term->name) . '</div></td>';
+                            } else {
+                                $primary_category_note = '<td><div style="margin: 3px 0;">None assigned</div></td>';
+                            }
+                        }elseif(!empty($link->post) && $link->post->type === 'term'){
+                            $primary_category_note = '<td><div style="margin: 3px 0;">None</div></td>';
+                        }*/
+
+                        $phrase_key = false;
+                        $phrase_key_id = '';
+                        if($show_fix_anchors){
+                            $phrase_key = self::find_link_phrase_key($phrases, $link);
+                            if(false !== $phrase_key){
+                                $phrase_key_id = 'data-wpil-sentence-id="'.$phrase_key.'"';
+                            }
+                        }
+
+                        $rep .= '<tr class="wpil-activity-panel-edit sentences inactive" '.$phrase_key_id.'>
+                                    <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
+                                    <td class="'. (false !== $phrase_key ? '': 'wpil-activity-panel-limited-text-cell') .'">';
+                            if(false !== $phrase_key && isset($phrases[$phrase_key])){
+                                    $phrase = $phrases[$phrase_key];
+                                    unset($phrases[$phrase_key]);
+                                    $phr = self::assemble_suggestion_item($phrase);
+                                $rep .= '
+                                    <div style="display:none">'.$edit_link.'</div>
+                                    <div class="sentence top-level-sentence" data-id="'.esc_attr($post->id).'" data-type="'.esc_attr($post->type).'">
+                                        <div class="wpil_edit_sentence_form">
+                                            <textarea class="wpil_content">'.$phr->suggestions[0]->sentence_src_with_anchor.'</textarea>
+                                            <span class="button-primary">Save</span>
+                                            <span class="button-secondary">Cancel</span>
+                                            <span> <input type="checkbox" class="wpil-sentence-allow-multiple-links" data-nonce="'.wp_create_nonce(get_current_user_id() . 'allow_multiple_links_editor').'" '. (($allow_multiple_links) ? 'checked': '') .'>Allow multiple links in sentence</span>
+                                        </div>
+                                        <span class="wpil_sentence_with_anchor" data-li-id="0"><span class="wpil_sentence" title="'. esc_attr__('Double clicking a word will select it.', 'wpil') .'">' . $phr->suggestions[0]->sentence_with_anchor . '</span><span class="dashicons dashicons-image-rotate wpil-reload-sentence-with-anchor" title="'. esc_attr__('Click to undo changes', 'wpil') . '"></span></span>
+                                        <span class="wpil_edit_sentence link-form-button">| <a href="javascript:void(0)">Edit Sentence</a></span>
+                                        <input type="hidden" name="sentence" value="'.base64_encode($phr->sentence_src).'">
+                                        <input type="hidden" name="custom_sentence" value="">
+                                        <input type="hidden" name="original_sentence_with_anchor" value="'.base64_encode($phr->suggestions[0]->original_sentence_with_anchor).'">
+                                        <input type="hidden" class="wpil-activity-panel-url-edit wpil-report-edit-input" value="' . esc_attr($link->url) . '">
+                                    </div>';
+                            }else{
+                                $rep .= '<div style="margin: 3px 0; display:flex">
                                             '.$edit_link.'
                                             <div class="wpil-report-edit-display wpil-activity-panel-anchor-display"><div class="wpil-anchor-display-text">' . esc_html($link->anchor) . '</div> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $post->getLinks()->view)) . '" target="_blank"><span class="dashicons dashicons-external" title="'.esc_attr__('View On Page','wpil').'" style="position: relative;top: 3px;"></span></a></div>';
-                        if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
-                        $rep .=        '<input class="wpil-activity-panel-anchor-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->anchor) . '">';
-                        }
-                        $rep .=         '</div>
-                                    </td>
-                                    <td class="wpil-activity-panel-limited-text-cell">
-                                        <div style="margin: 3px 0; display:flex">
-                                            '.$edit_link.'
-                                            <div href="' . esc_url($link->url) . '" target="_blank" class="wpil-report-edit-display wpil-activity-panel-url-display" style="text-decoration: underline">
-                                                <div class="wpil-url-display-text">' . esc_html($link->url) . '</div>
-                                            </div>';
-                        if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
-                        $rep .=        '<input class="wpil-activity-panel-url-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->url) . '">';
-                        }
+                                if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
+                                    $rep .= '<input class="wpil-activity-panel-anchor-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->anchor) . '">';
+                                }
+                            }
                         $rep .=         '</div>
                                     </td>';
+                        if($show_fix_anchors){
+                            $rep .= '<td class="wpil-activity-panel-limited-text-cell wpil-activity-panel-word-count">' .$link->anchor_word_count. '</td>';
+                        }else{
+                            $rep .= '<td class="wpil-activity-panel-limited-text-cell">
+                                            <div style="margin: 3px 0; display:flex">
+                                                '.$edit_link.'
+                                                <div href="' . esc_url($link->url) . '" target="_blank" class="wpil-report-edit-display wpil-activity-panel-url-display" style="text-decoration: underline">
+                                                    <div class="wpil-url-display-text">' . esc_html($link->url) . '</div>
+                                                </div>';
+                            if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context) && !$show_fix_anchors){
+                            $rep .=            '<input class="wpil-activity-panel-url-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->url) . '">';
+                            }
+                            $rep .=         '</div>
+                                        </td>';
+                            $rep .= '<td><div class="'.$related.'" style="margin: 3px 0;"><div class="content-relatedness-score">' . ((empty($ai_not_enabled)) ? esc_html($link->get_ai_relation_percent()): $ai_not_enabled) . '</div></div></td>';
+                        }
                         $rep .= ($get_all_links) ? '<td><div style="margin: 3px 0;">' . $link->location . '</div></td>' : '';
-//                        $rep .= '<td class="wpil-status-icon-cell">' . self::get_dropdown_icons(array(), $link, 'outbound-external', true) . '</td>';
+//                        $rep .= $primary_category_note;
+//                        $rep .= '<td class="wpil-status-icon-cell">' . self::get_dropdown_icons($post, $link, 'outbound-internal', true) . '</td>';
                         $rep .= '</tr>';
                     }
                 }
@@ -2766,6 +2916,102 @@ class Wpil_Report
             </div>';
 
         wp_send_json(array('success' => array('link_table' => $table)));
+    }
+
+    /**
+     * Identifyes the phrase that a specific link is inside
+     **/
+    private static function find_link_phrase_key($phrases = array(), $link = array()){
+        if(empty($phrases) || empty($link)){
+            return false;
+        }
+
+        // first, lets go over the phrases and try to find the link's monitoring id
+        if(!empty($link->tracking_id)){
+            foreach($phrases as $key => $phrase){
+                if(preg_match('~data-wpil-monitor-id=["\']'.preg_quote($link->tracking_id, '~').'["\']~', $phrase->sentence_src, $m)){
+                    return $key;
+                }
+            }
+        }
+
+        // if that dien't work, try finding the link in the phrases
+        foreach($phrases as $key => $phrase){
+            // if we found it
+            if(preg_match('~href=["\']'.preg_quote($link->url, '~').'["\']|href=["\']'.preg_quote(wp_make_link_relative($link->url), '~').'["\']~', $phrase->sentence_src, $m)){
+                // return it
+                return $key;
+            }
+        }
+
+        // if that didn't work, we can't find the link
+        return false;
+    }
+
+    /**
+     * Assembles a suggestion object for us to use in the anchor report so that usuers can customize their links!
+     * Oh isn't it glorious!!!!
+     **/
+    private static function assemble_suggestion_item($phrase = array()){
+        if(empty($phrase)){
+            return false;
+        }
+
+        $suggestion = (object) array(
+            'sentence_with_anchor' => '',
+            'sentence_src_with_anchor' => '',
+            'original_sentence_with_anchor' => ''
+        );
+
+        //get anchors and sentence with anchor
+        $nbsp = urldecode('%C2%A0');
+
+        $sentence_with_anchor = '<span class="wpil_word">' . implode('</span> <span class="wpil_word">', preg_split('~<[^>]*>(*SKIP)(*F)|\s+~u', str_replace($nbsp, ' ', strip_tags($phrase->sentence_src, '<b><i><u><strong><em><code><a>')))) . '</span>';
+        $sentence_with_anchor = str_replace(
+            [   ',</span>', 
+                '<span class="wpil_word">(', 
+                ')</span>', 
+                ':</span>', 
+                '<span class="wpil_word">\'', 
+                '\'</span>'
+            ], 
+            [   '</span><span class="wpil_word no-space-left wpil-non-word">,</span>', 
+                '<span class="wpil_word no-space-right wpil-non-word">(</span><span class="wpil_word">', 
+                '</span><span class="wpil_word no-space-left wpil-non-word">)</span>', 
+                '</span><span class="wpil_word no-space-left wpil-non-word">:</span>', 
+                '<span class="wpil_word no-space-right wpil-non-word">\'</span><span class="wpil_word">', 
+                '</span><span class="wpil_word no-space-left wpil-non-word">\'</span>'
+            ], $sentence_with_anchor);
+        $sentence_with_anchor = Wpil_Suggestion::formatTags($sentence_with_anchor);
+
+        // make sure the anchor isn't inside a word
+        $sentence_with_anchor = str_replace(['<span class="wpil_word"><a', '</a></span>'], ['<a', '</a>'], $sentence_with_anchor);
+
+        // make sure the anchor words have correct span padding
+        $sentence_with_anchor = preg_replace_callback('~(<a\b[^>]*>)(.*?)(</a>)~is', function ($m) {
+            [$full, $open, $inner, $close] = $m;
+
+            // Inside the anchor, wrap ONLY the plain-text runs (not tags)
+            $wrapped = preg_replace_callback('~([^<]+)|(<[^>]+>)~s', function ($n) {
+                // $n[1] = a chunk of text (no "<"), $n[2] = a tag
+                if (!empty($n[1])) {
+                    // Don’t create empty spans for whitespace-only chunks
+                    return trim($n[1]) === '' ? $n[1] : '<span class="wpil_word">' . $n[1] . '</span>';
+                }
+                return $n[2]; // pass tags straight through
+            }, $inner);
+
+            return $open . $wrapped . $close;
+        }, $sentence_with_anchor);
+
+        //Wpil_Suggestion::setSentenceSrcWithAnchor($suggestion, $phrase->sentence_src, $words_real[$min], $words_real[$max]);
+
+        $suggestion->sentence_src_with_anchor = $phrase->sentence_src;
+        $suggestion->sentence_with_anchor = Wpil_Suggestion::setSuggestionTags($sentence_with_anchor);
+        $suggestion->original_sentence_with_anchor = $suggestion->sentence_with_anchor; // for 'reset' not for getting back to the original
+
+        $phrase->suggestions = array($suggestion);
+        return $phrase;
     }
 
 
@@ -2805,6 +3051,7 @@ class Wpil_Report
                 'show_click_traffic' => 'on/off',
                 'show_broken_link_type' => 'on/off',
                 'show_broken_link_discovered' => 'on/off',
+                'enable_tours' => 'on/off',
 
                 // autolinking report
                 'hide_select_links_column' => 'on/off',
@@ -2838,6 +3085,11 @@ class Wpil_Report
             }
 
             update_user_meta($user_id, $report, $options);
+
+            // If this is report_options and enable_tours was updated, also update the global setting
+            if ($report === 'report_options' && isset($options['enable_tours'])) {
+                update_option('wpil_enable_tours', ($options['enable_tours'] === 'on') ? '1' : '0');
+            }
 
             $return = array('success' => 'this is success!');
         }

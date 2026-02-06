@@ -117,9 +117,10 @@
     }
 
     #wpil-setup-wizard-progress-loading{
+        display: none;
         position: absolute;
         top: 30px;
-        left: 30%;
+        left: 18%;
         width: 50%;
     }
 
@@ -263,6 +264,7 @@ $setup_title = array_rand(array_flip(array(
     <div id="wpil-setup-wizard-progress-loading"><div id="wpil-setup-wizard-progress-loading-bar" style="width: 90%"></div></div>
     <div id="wpil-setup-wizard-progress">
         <div class="complete"><span class="dashicons dashicons-yes-alt"></span> <?php esc_html_e('Connect to Google Search Console', 'wpil'); ?></div>
+        <div class="complete"><span class="dashicons dashicons-yes-alt"></span> <?php esc_html_e('Connect to AI', 'wpil'); ?></div>
         <div class="complete"><span class="dashicons dashicons-yes-alt"></span> <?php esc_html_e('Complete Installation', 'wpil'); ?></div>
     </div>
     <div class="wpil-setup-wizard-content">

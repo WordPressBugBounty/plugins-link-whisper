@@ -24,8 +24,8 @@
         // if we've just navved back from the GSC auth screen
         var params = new URLSearchParams(window.location.search);
         if(params.has('access_valid')){
-            // run the setup!
-            changePage('run-setup');
+            // run the ai page!
+            changePage('connect-openai');
         }
     });
 

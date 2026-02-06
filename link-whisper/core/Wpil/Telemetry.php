@@ -104,7 +104,11 @@ class Wpil_Telemetry
         89 => 'tour_widget_minimized',
         90 => 'tour_navigation_clicked',
         91 => 'tour_auto_started',
-        92 => 'tour_reset'
+        92 => 'tour_reset',
+
+        93 => 'linkwhisper_ai_banner_dismissed', // dismissed the 'sign up for ai' banner
+        94 => 'report_open_anchor_length',
+        95 => 'link_updated_from_anchor_length_report'
     );
 
     static $user_events = array(
@@ -177,7 +181,8 @@ class Wpil_Telemetry
         add_action('wp_ajax_wpil_dismiss_telemetry_notice', array(__CLASS__, 'ajax_dismiss_dashboard_telemetry_notice'));
 
         // general UI
-        add_action('wp_ajax_user_opened_ai_popup', array(__CLASS__, 'ajax_track_ajax'));
+        add_action('wp_ajax_user_opened_ai_popup', array(__CLASS__, 'ajax_track_ajax')); // no need for priority setting since this is only called during telemtry events
+        add_action('wp_ajax_user_dismissed_ai_popup', array(__CLASS__, 'ajax_track_ajax'), 9);
 
         // an event from our frontend system
         add_action('wp_ajax_wpil_log_event', array(__CLASS__, 'ajax_log_frontend_event'));
@@ -425,6 +430,8 @@ class Wpil_Telemetry
             // General UI
             case 'wp_ajax_user_opened_ai_popup':
                 $event_name = 'linkwhisper_ai_banner_opened';
+            case 'wp_ajax_user_dismissed_ai_popup':
+                $event_name = 'linkwhisper_ai_banner_dismissed';
             default:
                 // something happened, but we don't know what it was!
                 break;

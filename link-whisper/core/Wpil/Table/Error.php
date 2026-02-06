@@ -258,6 +258,19 @@ class Wpil_Table_Error extends WP_List_Table
 
                 return $display_link;
             case 'anchor':
+                $view = '';
+                if(isset($item->post_id, $item->post_type) && !empty($item->post_id)){
+                    $post = new Wpil_Model_Post($item->post_id, $item->post_type);
+                    $link = new Wpil_Model_Link([
+                        //'link_id' => $item->id,
+                        'url' => $item->url,
+                        'anchor' => strip_tags($item->{$column_name}),
+                        'post' => $post
+                    ]);
+                    $view = '<a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $post->getLinks()->view)) . '" title="'.esc_attr__('View On Page','wpil').'" target="_blank"><span class="dashicons dashicons-external" style="position: relative;top: 3px;"></span></a>';
+                }
+                
+                return '<div>'.esc_html($item->{$column_name}).' '.$view.'</div>';
             case 'sentence':
                 return '<div>'.esc_html($item->{$column_name}).'</div>';
             case 'created':
@@ -283,8 +296,19 @@ class Wpil_Table_Error extends WP_List_Table
 
             $object_name = 'Item';
             if($item->post_type === 'post'){
-                $name = get_post_type_labels(get_post_type_object(get_post_type($item->post_id)));
-                $object_name = (!empty($name) && isset($name->singular_name)) ? $name->singular_name: 'Post';
+                $post_type =  (!empty(get_post($item->post_id)) && get_post_type($item->post_id)) ? get_post_type($item->post_id): '';
+                if(!empty($post_type)){
+                    $name = null;
+                    $post_object = get_post_type_object($post_type);
+                    if(!empty($post_object)){
+                        $name = get_post_type_labels($post_object);
+                    }
+
+                    $object_name = (!empty($name) && isset($name->singular_name)) ? $name->singular_name: 'Post';
+                }else{
+                    $object_name = 'Post';
+                }
+                
             }else{
                 $object_name = __('Term', 'wpil');
                 // todo: get term taxonomy name

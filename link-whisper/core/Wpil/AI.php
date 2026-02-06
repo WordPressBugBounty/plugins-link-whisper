@@ -89,7 +89,14 @@ class Wpil_AI
             return array();
         }*/
 
-        return (is_array($content)) ? self::sendMultiRequest($args): self::sendRequest($args);
+        $response = null;
+        if(is_array($content)){
+            $response = self::sendMultiRequest($args);
+        }else{
+            $response = self::sendRequest($args);
+        }
+
+        return $response; 
     }
 
     /**
@@ -251,12 +258,18 @@ class Wpil_AI
         }
 
         // if this is the first go round
-        if(self::$ai_service_connected && isset($_POST['start_time']) && empty($_POST['start_time'])){
-            // do a credit check
-            $credit = self::get_available_ai_credits(true);
-            if($credit < 1){
-                self::$insufficient_quota = true;
+        if(isset($_POST['start_time']) && empty($_POST['start_time'])){
+            // and we're connected to the ai service
+            if(self::$ai_service_connected){
+                // do a credit check
+                $credit = self::get_available_ai_credits(true);
+                if($credit < 1){
+                    self::$insufficient_quota = true;
+                }
             }
+
+            // clear the embedding id lock
+            self::set_last_embedding_id_lock();
         }
 
         if(in_array('create-post-embeddings', $selected_processes)){
@@ -433,6 +446,7 @@ class Wpil_AI
 
     public static function ajax_wpil_dismiss_api_key_decoding_error(){
         update_option('wpil_open_ai_key_decoding_error', '0');
+        update_option('wpil_ai_token_decoding_error', '0'); // also update the Link Whisper AI since the user _should_ have updated the wp encryption tokens needed to run the system
     }
 
     public static function ajax_estimate_site_processing_cost(){
@@ -601,6 +615,12 @@ class Wpil_AI
             // generate it now
             $relatedness = Wpil_AI::calculate_relatedness_sitemap();
             Wpil_Sitemap::save_sitemap($relatedness, 'ai_sitemap', 'AI Sitemap');
+        }
+
+        // if the embeddingsd are complete and no other factors concern us
+        if(self::has_completed_post_embedding_calculations()){
+            // clear the embedding lock
+            self::set_last_embedding_id_lock();
         }
 
         if(!Wpil_Base::overTimeLimit(5, 35)){
@@ -4684,8 +4704,30 @@ class Wpil_AI
         global $wpdb;
         $table = $wpdb->prefix . 'wpil_ai_embedding_data';
 
+        $index = self::get_last_embedding_id_lock();
+
+        if(!empty($index)){
+            return $index;
+        }
+
         $index = $wpdb->get_var("SELECT `embed_index` FROM {$table} ORDER BY `embed_index` DESC LIMIT 1");
+
+        self::set_last_embedding_id_lock($index);
+
         return (!empty($index)) ? (int)$index: 0;
+    }
+
+    private static function get_last_embedding_id_lock(){
+        $lock = get_transient('wpil_last_embedding_index_lock');
+        return (!empty($lock)) ? (int)$lock: 0;
+    }
+
+    private static function set_last_embedding_id_lock($id = null){
+        if(empty($id)){
+            delete_transient('wpil_last_embedding_index_lock');
+        }else{
+            set_transient('wpil_last_embedding_index_lock', (int)$id, DAY_IN_SECONDS);
+        }
     }
 
     /**

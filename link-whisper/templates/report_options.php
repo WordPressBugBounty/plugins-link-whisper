@@ -22,6 +22,8 @@
     <label for="show_broken_link_type" <?= ('error' === $report) ? '' :  $hide?>>Show if broken link internal or external&nbsp;&nbsp;&nbsp;</label>
     <input type="checkbox" name="report_options[show_broken_link_discovered]" id="show_broken_link_discovered" <?=$show_broken_link_discovered ? 'checked' : ''?> <?= ('error' === $report) ? '' :  $hide?>/>
     <label for="show_broken_link_discovered" <?= ('error' === $report) ? '' :  $hide?>>Show when broken link detected&nbsp;&nbsp;&nbsp;</label>
+    <input type="checkbox" name="report_options[enable_tours]" id="enable_tours" <?=$enable_tours ? 'checked' : ''?>/>
+    <label for="enable_tours">Enable interactive tours&nbsp;&nbsp;&nbsp;</label>
 </fieldset>
 <fieldset class="screen-options">
     <legend><?php _e('Pagination', 'wpil'); ?></legend>

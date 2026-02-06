@@ -1,5 +1,5 @@
 <h2 class="nav-tab-wrapper" style="margin-bottom:1em;">
-    <?php $type = (isset($_GET['type']) && !empty($_GET['type'])) ? $_GET['type']: ''; ?>
+    <?php $type = (isset($_GET['type']) && !empty($_GET['type'])) ? esc_attr($_GET['type']): ''; ?>
     <div class="wpil-is-tooltipped wpil-no-scale" style="display: inline-block;" <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-report-tabs'); ?>>
         <a class="nav-tab <?=empty($type)?'nav-tab-active':''?>" id="general-tab" href="<?=admin_url('admin.php?page=link_whisper')?>"><?php  esc_html_e( "Dashboard", 'wpil' )?></a>
         <?php if(WPIL_STATUS_HAS_RUN_SCAN){ ?>
@@ -59,8 +59,8 @@
     <form action='' method="post" id="wpil_report_reset_data_form">
         <input type="hidden" name="reset_data_nonce" value="<?php echo wp_create_nonce($user->ID . 'wpil_reset_report_data'); ?>">
         <?php if (!empty($_GET['type'])) : ?>
-            <a href="javascript:void(0)" class="button-primary csv_button" data-type="<?=$_GET['type']?>" id="wpil_cvs_export_button"  data-file-name="<?php esc_attr_e('detailed-link-export.csv', 'wpil'); ?>">Detailed Export to CSV</a>
-            <a href="javascript:void(0)" class="button-primary csv_button" data-type="<?=$_GET['type']?>_summary" id="wpil_cvs_export_button"  data-file-name="<?php esc_attr_e('summary-link-export.csv', 'wpil'); ?>">Summary Export to CSV</a>
+            <a href="javascript:void(0)" class="button-primary csv_button" data-type="<?=esc_attr($_GET['type'])?>" id="wpil_cvs_export_button"  data-file-name="<?php esc_attr_e('detailed-link-export.csv', 'wpil'); ?>">Detailed Export to CSV</a>
+            <a href="javascript:void(0)" class="button-primary csv_button" data-type="<?=esc_attr($_GET['type'])?>_summary" id="wpil_cvs_export_button"  data-file-name="<?php esc_attr_e('summary-link-export.csv', 'wpil'); ?>">Summary Export to CSV</a>
             <?php 
                 if(!empty(get_transient('wpil_resume_scan_data'))){
                     echo '<a href="javascript:void(0)" class="button-primary wpil-resume-link-scan">' . __('Resume Link Scan', 'wpil') . '</a>';

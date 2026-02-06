@@ -474,11 +474,29 @@ class Wpil_Model_Post
                     $content .= $this->getMetaContent();
                     $this->editor = !empty($content) ? 'wordpress': null;
 
-                    if(class_exists('ThemifyBuilder_Data_Manager')){
+                    // get the currently active theme
+                    $theme = wp_get_theme();
+                    $is_themify = false;
+                    if(!empty($theme) && $theme->exists() &&
+                        (false !== stripos($theme->name, 'Themify Ultra') ||
+                        false !== stripos($theme->parent_theme, 'Themify Ultra'))
+                    ){
+                        $is_themify = true;
+                    }
+
+                    if(class_exists('ThemifyBuilder_Data_Manager') || $is_themify){
                         // if there's Themify static editor content in the post content
                         if(false !== strpos($content, 'themify_builder_static')){
                             // remove it
                             $content = mb_ereg_replace('<!--themify_builder_static-->[\w\W]*?<!--/themify_builder_static-->', '', $content);
+                            $this->editor = 'themify';
+                        }
+
+                        // if there's themify builder content present
+                        if(false !== strpos($content, 'themify_builder_content')){
+                            // remove it too
+                            $content = mb_ereg_replace('<!--themify_builder_content-->[\w\W]*?<!--/themify_builder_content-->', '', $content);
+                            $this->editor = 'themify';
                         }
                     }
 
@@ -1202,6 +1220,7 @@ class Wpil_Model_Post
                                 'ai_relation_score' => (isset($dat->ai_relation_score) && !empty($dat->ai_relation_score)) ? $dat->ai_relation_score: 0,
                                 'target_id' => (isset($dat->target_id) && !empty($dat->target_id)) ? $dat->target_id: 0,
                                 'target_id' => (isset($dat->target_type) && !empty($dat->target_type)) ? $dat->target_type: 0,
+                                'anchor_word_count' => (isset($dat->anchor_word_count) && !empty($dat->anchor_word_count)) ? $dat->anchor_word_count: 0,
                             ]);
                         }else{
                             $meta['wpil_links_outbound_internal_count']++;
@@ -1219,6 +1238,7 @@ class Wpil_Model_Post
                                 'ai_relation_score' => (isset($dat->ai_relation_score) && !empty($dat->ai_relation_score)) ? $dat->ai_relation_score: 0,
                                 'target_id' => (isset($dat->target_id) && !empty($dat->target_id)) ? $dat->target_id: 0,
                                 'target_id' => (isset($dat->target_type) && !empty($dat->target_type)) ? $dat->target_type: 0,
+                                'anchor_word_count' => (isset($dat->anchor_word_count) && !empty($dat->anchor_word_count)) ? $dat->anchor_word_count: 0,
                             ]);
                         }
                     }else{
@@ -1236,6 +1256,7 @@ class Wpil_Model_Post
                             'link_context' => (isset($dat->link_context) && !empty($dat->link_context)) ? $dat->link_context: 0,
                             'target_id' => (isset($dat->target_id) && !empty($dat->target_id)) ? $dat->target_id: 0,
                             'target_id' => (isset($dat->target_type) && !empty($dat->target_type)) ? $dat->target_type: 0,
+                            'anchor_word_count' => (isset($dat->anchor_word_count) && !empty($dat->anchor_word_count)) ? $dat->anchor_word_count: 0,
                         ]);
                     }
                 }

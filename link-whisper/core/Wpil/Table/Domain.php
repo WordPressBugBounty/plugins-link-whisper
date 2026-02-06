@@ -441,8 +441,8 @@ class Wpil_Table_Domain extends WP_List_Table
                 <div class="wpil-hamburger-filter-fields">
                 <?php if (!empty($_GET['type'])) : ?>
                     <div class="wpil-is-tooltipped wpil-no-scale wpil-tooltip-no-position" style="display:inline-block" data-wpil-tooltip-read-time="4500">
-                        <a href="javascript:void(0)" class="wpil-filter-submit-button csv_button" data-type="<?=$_GET['type']?>" id="wpil_cvs_export_button" style="text-align:left" data-file-name="<?php esc_attr_e('detailed-link-export.csv', 'wpil'); ?>">📤 Detailed Export to CSV</a>
-                        <a href="javascript:void(0)" class="wpil-filter-submit-button csv_button" data-type="<?=$_GET['type']?>_summary" id="wpil_cvs_export_button" style="text-align:left" data-file-name="<?php esc_attr_e('summary-link-export.csv', 'wpil'); ?>">📤 Summary Export to CSV</a>
+                        <a href="javascript:void(0)" class="wpil-filter-submit-button csv_button" data-type="<?=esc_attr($_GET['type'])?>" id="wpil_cvs_export_button" style="text-align:left" data-file-name="<?php esc_attr_e('detailed-link-export.csv', 'wpil'); ?>">📤 Detailed Export to CSV</a>
+                        <a href="javascript:void(0)" class="wpil-filter-submit-button csv_button" data-type="<?=esc_attr($_GET['type'])?>_summary" id="wpil_cvs_export_button" style="text-align:left" data-file-name="<?php esc_attr_e('summary-link-export.csv', 'wpil'); ?>">📤 Summary Export to CSV</a>
                     </div>
                     <?php 
                         if(!empty(get_transient('wpil_resume_scan_data'))){

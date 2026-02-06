@@ -7,7 +7,13 @@
 
     /////////// preloading
     function getSuggestions(manualActivate = false){
-        $('[data-wpil-ajax-container]').each(function(k, el){
+        var active = $('.wpil-suggestion-processing').length; // keep track of how many we have running at teh same teime
+
+        $('[data-wpil-ajax-container]').not('.wpil-suggestion-processing').not('.wpil-suggestion-processed').each(function(k, el){
+            if(active > 4){
+                $(el).find('.progress_count').text('Waiting to Start...');
+                return;
+            }
             var $el = $(el);
             var url = $el.attr('data-wpil-ajax-container-url');
             var count = 0;
@@ -18,6 +24,13 @@
                 return
             }
 
+            if(url.length < 1 || !urlParams){
+                $el.addClass('wpil-suggestion-processed');
+                return;
+            }else{
+                $el.addClass('wpil-suggestion-processing');
+            }
+
             $el.css({'display': 'block'});
             $('.wpil-get-manual-suggestions-container').css({'display': 'none'});
 
@@ -25,13 +38,16 @@
 				ajaxGetSuggestionsOutbound($el, url, count);
 			}
 
+            active++;
+
             setupProcessingError();
         });
     }
 
     getSuggestions();
 
-    $(document).on('click', '#wpil-get-manual-suggestions', function(e){e.preventDefault(); getSuggestions(true)});
+    var debounceSuggestions = null;
+    $(document).on('click', '#wpil-get-manual-suggestions', function(e){e.preventDefault(); clearTimeout(debounceSuggestions); debounceSuggestions = setTimeout(function(){ getSuggestions(true); }, 100); });
 
     var globalSuggestionProgressTracker = {
         errorCount: 0
@@ -50,6 +66,7 @@
         var urlParams = parseURLParams(url);
         var post_id = (urlParams.post_id) ? urlParams.post_id[0] : null;
         var term_id = (urlParams.term_id) ? urlParams.term_id[0] : null;
+        var keywords = (urlParams.keywords) ? urlParams.keywords[0] : '';
         var linkOrphaned = (urlParams.link_orphaned) ? urlParams.link_orphaned[0] : null;
         var sameParent = (urlParams.same_parent) ? urlParams.same_parent[0] : null;
         var sameCategory = (urlParams.same_category) ? urlParams.same_category[0] : '';
@@ -217,17 +234,18 @@
             var linkOrphaned = container.find('#field_link_orphaned').prop('checked');
             var sameParent = container.find('#field_same_parent').prop('checked');
             var sameCategory = container.find('#field_same_category').prop('checked');
-            var selectedCategories = container.find('select[name="wpil_selected_category"').val();
+            var selectedCategories = container.find('select[name="wpil_selected_category"]').val();
             var sameTag = container.find('#field_same_tag').prop('checked');
             var selectedTags = container.find('select[name="wpil_selected_tag"').val();
             var category_checked = '';
             var tag_checked = '';
             var post_id = (urlParams.post_id) ? urlParams.post_id[0] : 0;
             var postTypeSelect = container.find('#field_select_post_types').prop('checked');
-            var postTypes = container.find('select[name="selected_post_types"').val();
+            var postTypes = container.find('select[name="selected_post_types"]').val();
+            var keywords = container.find('textarea[name="keywords"]').val();
 
             // remove any active filtering settings
-            url = url.replace(new RegExp("(&link_orphaned[^&]*)|(&same_parent[^&]*)|(&same_category[^&]*)|(&same_tag[^&]*)|(&select_post_types[^&]*)|(&selected_category[^&]*)|(&selected_tag[^&]*)|(&selected_post_types[^&]*)", 'ig'), '');
+            url = url.replace(new RegExp("(&link_orphaned[^&]*)|(&same_parent[^&]*)|(&same_category[^&]*)|(&same_tag[^&]*)|(&select_post_types[^&]*)|(&selected_category[^&]*)|(&selected_tag[^&]*)|(&selected_post_types[^&]*)|(&keywords[^&]*)", 'ig'), '');
 
             //link to orphaned
             if (linkOrphaned) {
@@ -257,6 +275,10 @@
             if(postTypeSelect && postTypes){
                 url += "&select_post_types=true";
                 url += "&selected_post_types=" + postTypes.join(',');
+            }
+
+            if(keywords){
+                url += "&keywords=" + encodeURIComponent(keywords.replaceAll("\n", ';'));
             }
 
             if(urlParams.wpil_no_preload && '1' === urlParams.wpil_no_preload[0]){
@@ -449,10 +471,13 @@
             suggestionInsertTracker++;
 
             $.ajax({
-                url: ajaxurl,
+                url: ajaxurl + '?action=wpil_save_linking_references',
+                method: 'POST',
+                data: JSON.stringify(data_post),
+                contentType: 'application/json; charset=UTF-8',
                 dataType: 'json',
-                data: data_post,
-                method: 'post',
+                processData: false,
+                timeout: 90000,
                 error: function (jqXHR, textStatus, errorThrown) {
                     var wrapper = document.createElement('div');
                     $(wrapper).append('<strong>' + textStatus + '</strong><br>');
@@ -2188,7 +2213,7 @@
         if($('#report_domains').length > 0){
             return 'domain_report';
         }else if ($('.tbl-link-reports').length > 0){
-            return 'link_report';
+            return ($('#wpil-report-sub-type').length > 0) ? $('#wpil-report-sub-type').val(): 'link_report';
         }else if ($('#report_clicks').length > 0){
             return 'click_report';
         }else if ($('#report_sitemaps').length > 0){
@@ -2969,7 +2994,9 @@
         var id = 'wpil_editor' + block.data('id');
         var sentence = form.find('.wpil_content').html();
 
-        if (typeof inbound_internal_link !== 'undefined') {
+        if($('.wpil-inbound-links.best_keywords.inbound').length && $('.wpil-inbound-links.best_keywords.inbound').data('wpil-inbound-internal-link').length){
+            var link = $(block).closest('table.best_keywords').data('wpil-inbound-internal-link');
+        }else if (typeof inbound_internal_link !== 'undefined') {
             var link = inbound_internal_link;
         } else {
             var link = $(block).closest('tr').find('.post-slug:first').attr('href');
@@ -3117,8 +3144,15 @@
             block.closest('tr').find('.raw_html.custom-text').html(sentence_clear).show();
         }
 
-        block.closest('tr').find('.chk-keywords').prop('checked', true);
-        wpil_editor_remove(block)
+        block.closest('tr').find('.chk-keywords, .wpil_link_select').filter(function(){
+            if($(this).hasClass('chk-keywords')){
+                return $(this).prop('checked', true);
+            }else{
+                $(this).closest('tr').find('.wpil_activate_edit_link').trigger('click');
+            }
+        });
+        wpil_editor_remove(block);
+        updateRowWordCounts($(block.find('.wpil_sentence')));
     });
 
     /**
@@ -3169,6 +3203,10 @@
             var input = el.closest('.sentence').find('input[name="custom_sentence"]');
             var sentence = el.closest('.wpil_sentence').html();
             var editorContent = el.closest('.sentence').find('.wpil_content');
+        }
+
+        if(!sentence){
+            return;
         }
 
         sentence = sentence.replace(/<span[^>]+wpil_suggestion_tag[^>]+>([a-zA-Z0-9=+]+)<\/span>/g, function (x) {
@@ -3409,13 +3447,36 @@
         }
     });
 
+    var updateWordsWait = null;
+    function updateRowWordCounts(sentence){
+        if(!sentence.hasClass('wpil_sentence') || $('.wpil-activity-panel').length < 1){
+            return;
+        }
+        var parentRow = sentence.parents('tr');
+        clearTimeout(updateWordsWait);
+        updateWordsWait = setTimeout(function(){
+            var sentenceWords = sentence.find('a .wpil_word').length;
+            parentRow.find('.wpil-activity-panel-word-count').text(sentenceWords);
+        }, 500);
+    };
+            
+
     $(document).on('click', '#wpil_show_expanded_details', function(){
         if($(this).is(':checked')){
-            $('.wpil-suggestion-peripheral').css({'display': 'block'});
+            $('.wpil-suggestion-peripheral').addClass('peripheral-visible');
+            ajax_update_expanded_details(true);
         }else{
-            $('.wpil-suggestion-peripheral').css({'display': 'none'});
+            $('.wpil-suggestion-peripheral').removeClass('peripheral-visible');
+            ajax_update_expanded_details(false);
         }
     });
+
+    function ajax_update_expanded_details(status){
+        $.post(ajaxurl, {
+            action: 'wpil_update_expanded_details_toggle',
+            status: (status) ? 1: 0
+        }, function (response) {});
+    }
 
     var mouseExit;
     $(document).on('mouseover', '.wpil_help i, .wpil_help div', function(){

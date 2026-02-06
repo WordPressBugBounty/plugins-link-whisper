@@ -1,5 +1,5 @@
 <h2 class="nav-tab-wrapper" style="margin-bottom:1em;">
-    <?php $type = (isset($_GET['type']) && !empty($_GET['type'])) ? $_GET['type']: ''; ?>
+    <?php $type = (isset($_GET['type']) && !empty($_GET['type'])) ? esc_attr($_GET['type']): ''; ?>
     <a class="nav-tab <?=empty($type)?'nav-tab-active':''?>" id="general-tab" href="<?=admin_url('admin.php?page=link_whisper')?>"><?php  esc_html_e( "Dashboard", 'wpil' )?></a>
     <?php if(WPIL_STATUS_HAS_RUN_SCAN){ ?>
     <?php 
@@ -56,8 +56,8 @@
     <form action='' method="post" id="wpil_clear_clicks_data_form">
         <?php /*
         <div class="wpil-is-tooltipped wpil-no-scale wpil-tooltip-no-position" style="display:inline-block" data-wpil-tooltip-read-time="4500" <?php echo $export_tooltip_text; ?>>
-            <a href="javascript:void(0)" class="button-primary csv_button" data-type="<?=$_GET['type']?>" id="wpil_cvs_export_button"  data-file-name="<?php esc_attr_e('detailed-clicks-export.csv', 'wpil'); ?>">Detailed Export to CSV</a>
-            <a href="javascript:void(0)" class="button-primary csv_button" data-type="<?=$_GET['type']?>_summary" id="wpil_cvs_export_button"  data-file-name="<?php esc_attr_e('summary-clicks-export.csv', 'wpil'); ?>">Summary Export to CSV</a>
+            <a href="javascript:void(0)" class="button-primary csv_button" data-type="<?=esc_attr($_GET['type'])?>" id="wpil_cvs_export_button"  data-file-name="<?php esc_attr_e('detailed-clicks-export.csv', 'wpil'); ?>">Detailed Export to CSV</a>
+            <a href="javascript:void(0)" class="button-primary csv_button" data-type="<?=esc_attr($_GET['type'])?>_summary" id="wpil_cvs_export_button"  data-file-name="<?php esc_attr_e('summary-clicks-export.csv', 'wpil'); ?>">Summary Export to CSV</a>
         </div>
         */?>
         <input type="hidden" name="nonce" value="<?php echo wp_create_nonce($user->ID . 'wpil_clear_clicks_data'); ?>">
@@ -76,8 +76,8 @@
         <input type="hidden" name="reset_data_nonce" value="<?php echo wp_create_nonce($user->ID . 'wpil_reset_report_data'); ?>">
         <?php if (!empty($_GET['type']) && false) : ?>
             <div class="wpil-is-tooltipped wpil-no-scale wpil-tooltip-no-position" style="display:inline-block" data-wpil-tooltip-read-time="4500" <?php echo $export_tooltip_text; ?>>
-                <a href="javascript:void(0)" class="button-primary csv_button" data-type="<?=$_GET['type']?>" id="wpil_cvs_export_button"  data-file-name="<?php esc_attr_e('detailed-link-export.csv', 'wpil'); ?>">Detailed Export to CSV</a>
-                <a href="javascript:void(0)" class="button-primary csv_button" data-type="<?=$_GET['type']?>_summary" id="wpil_cvs_export_button"  data-file-name="<?php esc_attr_e('summary-link-export.csv', 'wpil'); ?>">Summary Export to CSV</a>
+                <a href="javascript:void(0)" class="button-primary csv_button" data-type="<?=esc_attr($_GET['type'])?>" id="wpil_cvs_export_button"  data-file-name="<?php esc_attr_e('detailed-link-export.csv', 'wpil'); ?>">Detailed Export to CSV</a>
+                <a href="javascript:void(0)" class="button-primary csv_button" data-type="<?=esc_attr($_GET['type'])?>_summary" id="wpil_cvs_export_button"  data-file-name="<?php esc_attr_e('summary-link-export.csv', 'wpil'); ?>">Summary Export to CSV</a>
             </div>
             <?php 
                 if(!empty(get_transient('wpil_resume_scan_data'))){

@@ -45,8 +45,8 @@
                                     <div class="wpil-hamburger-filter-fields">
                                         <div class="wpil-csv-export-wrapper">
                                             <div style="display:inline-block">
-                                                <a href="javascript:void(0)" class="wpil-filter-submit-button csv_button" data-type="<?=$_GET['type']?>" id="wpil_cvs_export_button" style="text-align:left" data-file-name="<?php esc_attr_e('detailed-clicks-export.csv', 'wpil'); ?>">📤 Detailed Export to CSV</a>
-                                                <a href="javascript:void(0)" class="wpil-filter-submit-button csv_button" data-type="<?=$_GET['type']?>_summary" id="wpil_cvs_export_button" style="text-align:left" data-file-name="<?php esc_attr_e('summary-clicks-export.csv', 'wpil'); ?>">📤 Summary Export to CSV</a>
+                                                <a href="javascript:void(0)" class="wpil-filter-submit-button csv_button" data-type="<?=esc_attr($_GET['type'])?>" id="wpil_cvs_export_button" style="text-align:left" data-file-name="<?php esc_attr_e('detailed-clicks-export.csv', 'wpil'); ?>">📤 Detailed Export to CSV</a>
+                                                <a href="javascript:void(0)" class="wpil-filter-submit-button csv_button" data-type="<?=esc_attr($_GET['type'])?>_summary" id="wpil_cvs_export_button" style="text-align:left" data-file-name="<?php esc_attr_e('summary-clicks-export.csv', 'wpil'); ?>">📤 Summary Export to CSV</a>
                                             </div>
                                         </div>
                                     </div>

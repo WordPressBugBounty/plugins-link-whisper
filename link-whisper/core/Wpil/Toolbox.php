@@ -2138,4 +2138,27 @@ class Wpil_Toolbox
         // if we're here, we could be stuck
         return true;
     }
+
+    /**
+     * Merges JSON input into $_POST data so that our Ajax can run with it
+     **/
+    public static function retrieve_post_data(){
+        // if there's already post data
+        if(!empty($_POST)){
+            // exist
+            return;
+        }
+
+        // If sent as JSON, merge into $_POST so we can roll with the change without throwing everything off!
+        $content_type = isset($_SERVER['CONTENT_TYPE']) ? strtolower(trim($_SERVER['CONTENT_TYPE'])) : '';
+        if (strpos($content_type, 'application/json') !== false) {
+            $raw = file_get_contents('php://input');
+            if ($raw !== false && $raw !== '') {
+                $json = json_decode($raw, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($json)) {
+                    $_POST = array_merge($_POST, $json);
+                }
+            }
+        }
+    }
 }

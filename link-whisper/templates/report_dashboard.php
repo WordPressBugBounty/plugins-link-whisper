@@ -157,17 +157,23 @@
           font-weight: bold;
         }
         .actionbook-btn {
-          background: #0071c2;
-          color: white;
-          padding: 8px 16px;
-          border: none;
-          border-radius: 6px;
-          cursor: pointer;
-          min-width: 110px;
-          /*max-width: 90px;*/
-          text-align: center;
-          overflow: hidden;
-          text-overflow: ellipsis;
+            background: #0071c2;
+            color: white !important;
+            padding: 6px 0px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            min-width: 110px;
+            /*max-width: 90px;*/
+            text-align: center;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            position:relative;
+            user-select:none;
+            font-size: 10pt;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
         .actiondetails {
           border-top: 1px solid #e1e1e1;
@@ -322,7 +328,7 @@
     </style>
 
 <?php
-    $link_icon = '<svg width="24" height="24" style="position: absolute; top: 2px; right: -16px; height: 12px; width: 12px;fill:#ffffff; stroke:#ffffff; display:inline-block;" viewBox="0 0 24 24" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg"><g id="wpil-svg-outbound-1-icon-path" transform="matrix(0.046875,0,0,0.046875,0.0234375,0.02343964)">
+    $link_icon = '<svg width="24" height="24" style="position: absolute; margin: 1px 0px 0 3px; height: 12px; width: 12px;fill:#ffffff; stroke:#ffffff; display:inline-block;" viewBox="0 0 24 24" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg"><g id="wpil-svg-outbound-1-icon-path" transform="matrix(0.046875,0,0,0.046875,0.0234375,0.02343964)">
                             <path d="M 473.563,227.063 407.5,161 262.75,305.75 c -25,25 -49.563,41 -74.5,16 -25,-25 -9,-49.5 16,-74.5 L 349,102.5 283.937,37.406 c -14.188,-14.188 -2,-37.906 19,-37.906 h 170.625 c 20.938,0 37.938,16.969 37.938,37.906 v 170.688 c 0,20.937 -23.687,33.187 -37.937,18.969 z M 63.5,447.5 h 320 V 259.313 l 64,64 V 447.5 c 0,35.375 -28.625,64 -64,64 h -320 c -35.375,0 -64,-28.625 -64,-64 v -320 c 0,-35.344 28.625,-64 64,-64 h 124.188 l 64,64 H 63.5 Z"></path>
                         </g></svg>';
     ?>
@@ -466,9 +472,9 @@
                                         $density_status = 'tag-negative';
                                         $density_subtext = 'Fix';
                                     }
-
-                                    $density_subtext = '<a href="'. admin_url('admin.php?page=link_whisper&type=links&link_density=1') . '" target="_blank" style="color:#fff; position:relative;user-select:none;">' . $density_subtext .$link_icon.'</a>';
                                 }
+
+                                $density_subtext = '<a href="'. admin_url('admin.php?page=link_whisper&type=links&link_density=1') . '" class="actionbook-btn '.$density_status.'" target="_blank">' . $density_subtext .$link_icon.'</a>';
                                 ?>
                                 <div class="actionheader-left">
                                     <div>Link Coverage: <span class="wpil-report-stats-link-coverage"><?php echo $link_density['percent']; ?>%</span></div>
@@ -482,7 +488,7 @@
                                     </div>
                                 </div>
                                 <div class="actionprice-book">
-                                  <button class="actionbook-btn btnfix <?php echo $density_status; ?>"><?php echo $density_subtext; ?></button>
+                                    <?php echo $density_subtext; ?>
                                 </div>
                               </div>
                             </div>
@@ -506,12 +512,12 @@
                                         $link_relatedness_button_text = 'Fix';
                                     }
                                     $link_relatedness .= '%';
-                                    $link_relatedness_button_text = '<a href="'. admin_url('admin.php?page=link_whisper&type=links&link_relation=1') . '" target="_blank" style="color:#fff; position:relative;user-select: none;">'.$link_relatedness_button_text.$link_icon.'</a>';
+                                    $link_relatedness_button_text = '<a href="' . admin_url('admin.php?page=link_whisper&type=links&link_relation=1') . '" class="actionbook-btn '.$link_relatedness_status.'">'.$link_relatedness_button_text.$link_icon.'</a>';
                                 }else{
                                     $link_relatedness = "Connect to AI for Analysis";
                                     $link_relatedness_status = 'tag-neutral';
                                     $link_relatedness_button_text = 'Connect';
-                                    $link_relatedness_button_text = '<a href="' . esc_url(Wpil_AI::get_linkwhisper_ai_auth_url(admin_url('admin.php?page=link_whisper_ai_subscription'))) . '" style="color:#fff; position:relative;user-select: none;">'.$link_relatedness_button_text.$link_icon.'</a>';
+                                    $link_relatedness_button_text = '<a href="' . esc_url(Wpil_AI::get_linkwhisper_ai_auth_url(admin_url('admin.php?page=link_whisper_ai_subscription'))) . '" class="actionbook-btn '.$link_relatedness_status.'">'.$link_relatedness_button_text.$link_icon.'</a>';
                                 }
                             ?>
                             <div class="actioncard">
@@ -528,7 +534,7 @@
                                     </div>
                                 </div>
                                 <div class="actionprice-book">
-                                  <button class="actionbook-btn <?php echo $link_relatedness_status; ?>"><?php echo $link_relatedness_button_text; ?></button>
+                                    <?php echo $link_relatedness_button_text; ?>
                                 </div>
                               </div>
                             </div>
@@ -554,10 +560,9 @@
                                         $external_link_emphasis_subtext = '';
                                         $external_link_tag = 'Fix';
                                     }
-
-                                    $external_link_tag = '<a href="'. admin_url('admin.php?page=link_whisper&type=domains&domain_focus=1') . '" target="_blank" style="color:#fff; position:relative;user-select: none;">'.$external_link_tag.$link_icon.'</a>';
                                 }
 
+                                $external_link_tag = '<a href="'. admin_url('admin.php?page=link_whisper&type=domains&domain_focus=1') . '" target="_blank" class="actionbook-btn '.$external_link_emphasis_status.'">'.$external_link_tag.$link_icon.'</a>';
                             ?>
                             <div class="actioncard">
                               <div class="actionheader">
@@ -573,7 +578,7 @@
                                     </div>
                                 </div>
                                 <div class="actionprice-book">
-                                  <button class="actionbook-btn <?php echo $external_link_emphasis_status; ?>"><?php echo $external_link_tag; ?></button>
+                                  <?php echo $external_link_tag; ?>
                                 </div>
                               </div>
                             </div>
@@ -600,7 +605,9 @@
 
                                     $anchor_word_percent = (round($percentage, 2) * 100) . '%';
                                 }
-                            
+
+                                $anchor_word_button_text = '<a href="'. admin_url('admin.php?page=link_whisper&type=links&anchor_length=1') . '" target="_blank" class="actionbook-btn '.$anchor_word_status.'">'.$anchor_word_button_text.$link_icon.'</a>';
+                                $anchor_word_button_text = '<a href="#" class="actionbook-btn '.$anchor_word_status.'">Coming Soon</a>';
                             ?>
                             <div class="actioncard">
                               <div class="actionheader">
@@ -616,7 +623,7 @@
                                     </div>
                                 </div>
                                 <div class="actionprice-book">
-                                  <button class="actionbook-btn <?php echo $anchor_word_status; ?>"><?php echo esc_html($anchor_word_button_text); ?></button>
+                                  <?php echo $anchor_word_button_text; ?>
                                 </div>
                               </div>
                             </div>

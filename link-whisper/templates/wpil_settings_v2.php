@@ -70,6 +70,7 @@
     $ai_disable_inbound_suggestion_cron = Wpil_Settings::disable_ai_suggestions_cron_task();
     $ai_max_processing_age = Wpil_Settings::get_ai_max_processing_age();
     $ai_suggestion_relatedness_threshold = Wpil_Settings::get_ai_suggestion_relatedness_threshold();
+    $ai_linkwhisper_decoding_error = !empty(get_option('wpil_ai_token_decoding_error', '0'));
 
     // if we're not doing anything
     if(!empty($ai_selected_process)){
@@ -267,6 +268,30 @@
                         <?php } ?>
                         <?php if(!$missing_token){ ?>
                             <p><?php esc_html_e('The tokens look to be defined, so they may have been changed since the API key was last encrypted. In that case, re-entering the API key will update the encoding and should make it useable.', 'wpil'); ?></p>
+                        <?php }else{ ?>
+                            <p><?php echo sprintf(esc_html__('If you would like to know more about the tokens, the fine people at Kinsta have an article that %s.', 'wpil'), '<a href="https://kinsta.com/knowledgebase/wordpress-salts/" target="_blank">' . __('explains them in detail', 'wpil') . '</a>'); ?></p>
+                        <?php } ?>
+                            <p><?php esc_html_e('If you have already taken care of the tokens, please feel free to dismiss this notice.', 'wpil'); ?></p>
+                    </div>
+                <?php } ?>
+                <?php if($ai_linkwhisper_decoding_error){ ?>
+                    <div class="notice wpil-notice update is-dismissible notice-error wpil-ai-key-decoding-error-notice" id="wpil_message" >
+                        <div style="display:flex;">
+                            <img src="<?php echo WP_INTERNAL_LINKING_PLUGIN_URL . '/images/lw-icon.png' ?>" width="32px" height="32px" style="margin: 10px 10px 0px 0;">
+                            <p style="font-weight: 600;"><?php esc_html_e('Notice: Link Whisper AI Connection Error', 'wpil'); ?></p>
+                        </div>
+                        <p><?php esc_html_e('Link Whisper has encountered an error when trying to connect to its AI server.', 'wpil'); ?></p>
+                        <p><?php esc_html_e('Normally when this happens, it\'s because the security tokens that Link Whisper uses to encrypt the connection data have changed or are missing.', 'wpil'); ?></p>
+                        <p><?php echo sprintf(esc_html__('The tokens that Link Whisper uses are called "%s" and "%s", and they are usually defined inside of your site\'s wp-config.php file.', 'wpil'), 'LOGGED_IN_KEY', 'LOGGED_IN_SALT'); ?></p>
+                        <?php $missing_token = false; ?>
+                        <?php if(empty(Wpil_Toolbox::get_salt())){ $missing_token = true; ?>
+                            <p><?php echo sprintf(esc_html__('Doing a check of the file, it looks like the "%s" token isn\'t defined.', 'wpil'), 'LOGGED_IN_KEY'); ?></p>
+                        <?php } ?>
+                        <?php if(empty(Wpil_Toolbox::get_key())){  $missing_token = true; ?>
+                            <p><?php echo sprintf(esc_html__('And it appears the "%s" token isn\'t currently defined.', 'wpil'), 'LOGGED_IN_SALT'); ?></p>
+                        <?php } ?>
+                        <?php if(!$missing_token){ ?>
+                            <p><?php esc_html_e('The tokens look to be defined, so they may have been changed since the AI connection was last authenticated. In that case, re-authenticating the AI connection will update the token information and should make it possible to run the AI.', 'wpil'); ?></p>
                         <?php }else{ ?>
                             <p><?php echo sprintf(esc_html__('If you would like to know more about the tokens, the fine people at Kinsta have an article that %s.', 'wpil'), '<a href="https://kinsta.com/knowledgebase/wordpress-salts/" target="_blank">' . __('explains them in detail', 'wpil') . '</a>'); ?></p>
                         <?php } ?>
@@ -747,7 +772,10 @@
                                 <div style="display: inline-block; position: relative;">
                                     <?php if(empty(Wpil_Settings::get_linkwhisper_ai_token()) && empty(Wpil_Settings::getOpenAIKey())){ // if they aren't authenticated and don't have an openai key?>
                                         <a href="<?php echo esc_url(admin_url('admin.php?page=link_whisper_ai_subscription'))?>" style="margin-top:5px; user-select: none; text-align: center;" class="button-primary"><?php esc_html_e('Get Started!', 'wpil'); ?></a>
-                                    <?php } else { ?>
+                                    <?php } elseif($ai_linkwhisper_decoding_error && $is_connected_to_linkwhisper_ai) { ?>
+                                        <a href="<?php echo esc_url(Wpil_AI::get_linkwhisper_ai_auth_url())?>" style="margin-top:5px; user-select: none; text-align: center;" class="button-primary"><?php esc_html_e('Re-connect', 'wpil'); ?></a>
+                                        <a style="margin-top:5px; user-select: none; text-align: center;" id="wpil-disconnect-ai-subscription" data-nonce="<?php echo wp_create_nonce('disconnect-ai-subscription'); ?>" class="button-primary"><?php esc_html_e('Disconnect', 'wpil'); ?></a>
+                                    <?php }else { ?>
                                         <a href="<?php echo esc_url(Wpil_AI::get_linkwhisper_ai_auth_url())?>" style="margin-top:5px; user-select: none; text-align: center;" class="button-primary <?php echo ($is_connected_to_linkwhisper_ai) ? 'hide-setting': '';?>"><?php esc_html_e('Connect', 'wpil'); ?></a>
                                         <a style="margin-top:5px; user-select: none; text-align: center;" id="wpil-disconnect-ai-subscription" data-nonce="<?php echo wp_create_nonce('disconnect-ai-subscription'); ?>" class="button-primary <?php echo (!$is_connected_to_linkwhisper_ai) ? 'hide-setting': '';?>"><?php esc_html_e('Disconnect', 'wpil'); ?></a>
                                     <?php } ?>
@@ -776,6 +804,7 @@
                                         <?php } ?>
                                     </div>
                                 </div>
+                                <div style="width:350px; display:inline-block"></div>
                                 <div style="clear:both;"></div>
                             </td>
                         </tr>
@@ -894,15 +923,11 @@
                                     <i class="dashicons dashicons-editor-help"></i>
                                     <div style="background: rgba(0, 0, 0, 0.8); width: 400px">
                                         <?php 
-                                        esc_html_e('This setting controls the maximum number of posts that Link Whisper will ask OpenAI to calculate relation data for in a single batch.', 'wpil');
+                                        esc_html_e('This setting controls the maximum number of posts that Link Whisper will process during the AI Relation Analysis.', 'wpil');
                                         ?>
                                         <br><br>
                                         <?php 
-                                        esc_html_e('Since this is only the requested number of posts, it\'s possible that OpenAI will only process some of the requested posts.', 'wpil');
-                                        ?>
-                                        <br><br>
-                                        <?php 
-                                        esc_html_e('By default, we ask it to process 500 posts, but if you\'re experiencing persistent errors, you may need to reduce the number of posts.', 'wpil');
+                                        esc_html_e('By default, we ask it to process 50 posts, but if you\'re experiencing persistent errors, you may need to reduce the number of posts.', 'wpil');
                                         ?>
                                     </div>
                                 </div>
@@ -986,15 +1011,15 @@
                                         <i class="dashicons dashicons-editor-help"></i>
                                         <div style="margin: -50px 0px 0px 30px; width: 400px">
                                             <?php 
-                                            _e('Clicking this button will tell Link Whisper to send post content data to OpenAI so it can be processed.', 'wpil');
+                                            _e('Clicking this button will tell Link Whisper to send post content data to AI so it can be processed.', 'wpil');
                                             echo '<BR><BR>';
-                                            _e('Processing the data requires the Settings tab to remain open in order to run, and it will incur charges on your OpenAI account.', 'wpil');
+                                            _e('Processing the data requires the Settings tab to remain open in order to run, and it will use your AI credits.', 'wpil');
                                             echo '<BR><BR>';
-                                            _e('An estimate of the total charges accrued from running the process will be displayed along with the current progress.', 'wpil');
+                                            _e('As the credits are used, a total will be shown on the page along with the current progress.', 'wpil');
                                             echo '<BR><BR>';
                                             _e('The total cost and amount of time required depends on the size of the site and the amount of content on each page.', 'wpil');
                                             echo '<BR><BR>';
-                                            _e('As a ballpark and using the pricing from October 2024, it usually takes 1 hour and $1.03 to process a 1000 page site with all AI processing methods active and the versions set to "GPT-4o Mini".', 'wpil');
+                                            _e('As a rule of thumb, it usually requires 1 credit per process per post (using "GPT-4o Mini"). So for example, processing a post with AI Relation Analysis and Keyword Detection usually costs 2 credits.', 'wpil');
                                             ?>
                                         </div>
                                     </div>
@@ -1012,7 +1037,7 @@
                                                     <div style="max-width: 150px" class="content-analysis-loading-completion">
                                                         Completed: <div class="wpil-completed-count"><?php echo esc_html($ai_processing_status['completed']['create-post-embeddings']);?></div>
                                                     </div>
-                                                    <?php $progress_percent = round(intval($ai_processing_status['completed']['create-post-embeddings']) / intval($ai_processing_status['total']), 2) * 100;?>
+                                                    <?php $progress_percent = (!empty($ai_processing_status['total'])) ? round(intval($ai_processing_status['completed']['create-post-embeddings']) / intval($ai_processing_status['total']), 2) * 100: 0;?>
                                                     <div class="progress_panel loader content-analysis-loader" data-wpil-total-count="<?php echo intval($ai_processing_status['total']); ?>" data-wpil-loading-completed="<?php echo intval($ai_processing_status['completed']['create-post-embeddings']); ?>"><div class="progress_count" style="width:<?php echo $progress_percent . '%';?>"><?php echo $progress_percent . '%'; ?></div></div>
                                                     <div style="max-width: 150px">
                                                         Total: <?php echo intval($ai_processing_status['total']);?>
@@ -1027,7 +1052,7 @@
                                                     <div style="max-width: 150px" class="content-calculation-loading-completion">
                                                         Completed: <div class="wpil-completed-count"><?php echo esc_html($ai_processing_status['completed']['calculated-post-embeddings']);?></div>
                                                     </div>
-                                                    <?php $progress_percent = round(intval($ai_processing_status['completed']['calculated-post-embeddings']) / intval($ai_processing_status['total']), 2) * 100;?>
+                                                    <?php $progress_percent = (!empty($ai_processing_status['total'])) ? round(intval($ai_processing_status['completed']['calculated-post-embeddings']) / intval($ai_processing_status['total']), 2) * 100: 0;?>
                                                     <div class="progress_panel loader content-calculation-loader" data-wpil-total-count="<?php echo intval($ai_processing_status['total']); ?>" data-wpil-loading-completed="<?php echo intval($ai_processing_status['completed']['calculated-post-embeddings']); ?>"><div class="progress_count" style="width:<?php echo $progress_percent . '%';?>"><?php echo $progress_percent . '%'; ?></div></div>
                                                     <div style="max-width: 150px">
                                                         Total: <?php echo intval($ai_processing_status['total']);?>
@@ -1042,7 +1067,7 @@
                                                     <div style="max-width: 150px" class="product-detection-loading-completion">
                                                         Completed: <div class="wpil-completed-count"><?php echo esc_html($ai_processing_status['completed']['product-detecting']);?></div>
                                                     </div>
-                                                    <?php $progress_percent = round(intval($ai_processing_status['completed']['product-detecting']) / intval($ai_processing_status['total']), 2) * 100;?>
+                                                    <?php $progress_percent = (!empty($ai_processing_status['total'])) ? round(intval($ai_processing_status['completed']['product-detecting']) / intval($ai_processing_status['total']), 2) * 100: 0;?>
                                                     <div class="progress_panel loader product-detection-loader" data-wpil-total-count="<?php echo intval($ai_processing_status['total']); ?>" data-wpil-loading-completed="<?php echo intval($ai_processing_status['completed']['product-detecting']); ?>"><div class="progress_count" style="width:<?php echo $progress_percent . '%';?>"><?php echo $progress_percent . '%'; ?></div></div>
                                                     <div style="max-width: 150px">
                                                         Total: <?php echo intval($ai_processing_status['total']);?>
@@ -1057,7 +1082,7 @@
                                                     <div style="max-width: 150px" class="keyword-detection-loading-completion">
                                                         Completed: <div class="wpil-completed-count"><?php echo esc_html($ai_processing_status['completed']['keyword-detecting']);?></div>
                                                     </div>
-                                                    <?php $progress_percent = round(intval($ai_processing_status['completed']['keyword-detecting']) / intval($ai_processing_status['total']), 2) * 100;?>
+                                                    <?php $progress_percent = (!empty($ai_processing_status['total'])) ? round(intval($ai_processing_status['completed']['keyword-detecting']) / intval($ai_processing_status['total']), 2) * 100: 0;?>
                                                     <div class="progress_panel loader keyword-detection-loader" data-wpil-total-count="<?php echo intval($ai_processing_status['total']); ?>" data-wpil-loading-completed="<?php echo intval($ai_processing_status['completed']['keyword-detecting']); ?>"><div class="progress_count" style="width:<?php echo $progress_percent . '%';?>"><?php echo $progress_percent . '%'; ?></div></div>
                                                     <div style="max-width: 150px">
                                                         Total: <?php echo intval($ai_processing_status['total']);?>
@@ -1072,7 +1097,7 @@
                                                     <div style="max-width: 150px" class="keyword-assigning-loading-completion">
                                                         Completed: <div class="wpil-completed-count"><?php echo esc_html($ai_processing_status['completed']['keyword-assigning']);?></div>
                                                     </div>
-                                                    <?php $progress_percent = round(intval($ai_processing_status['completed']['keyword-assigning']) / intval($ai_processing_status['total']), 2) * 100;?>
+                                                    <?php $progress_percent = (!empty($ai_processing_status['total'])) ? round(intval($ai_processing_status['completed']['keyword-assigning']) / intval($ai_processing_status['total']), 2) * 100: 0;?>
                                                     <div class="progress_panel loader keyword-assigning-loader" data-wpil-total-count="<?php echo intval($ai_processing_status['total']); ?>" data-wpil-loading-completed="<?php echo intval($ai_processing_status['completed']['keyword-assigning']); ?>"><div class="progress_count" style="width:<?php echo $progress_percent . '%';?>"><?php echo $progress_percent . '%'; ?></div></div>
                                                     <div style="max-width: 150px">
                                                         Total: <?php echo intval($ai_processing_status['total']);?>
@@ -1134,7 +1159,7 @@
                                             ?>
                                             <br><br>
                                             <?php 
-                                            _e('The system sends batches of post content data to OpenAI for processing slowly to take advantage of reduced prices.', 'wpil');
+                                            _e('The system sends batches of post content data to AI for processing without the need to keep the tab open.', 'wpil');
                                             ?>
                                             <br><br>
                                             <?php
@@ -1719,7 +1744,7 @@
                                 $auth_message = (!$has_custom) ? __('Authorize Link Whisper', 'wpil'): __('Authorize Your App', 'wpil');
                                 if(empty($authenticated) || empty($authorized)){ ?>
                                     <div class="wpil_gsc_app_inputs">
-                                        <input style="width: 100%;max-width: 400px;margin: 0 0 10px 0;" id="wpil_gsc_access_code" class="wpil_gsc_get_authorize" type="text" name="wpil_gsc_access_code"/>
+                                        <input style="width: 100%;max-width: 400px;margin: 0 0 10px 0;" id="wpil_gsc_access_code" class="wpil_gsc_get_authorize wpil-non-license-key-field" type="text" name="wpil_gsc_access_code"/>
                                         <label for="wpil_gsc_access_code" class="wpil_gsc_get_authorize"><a class="wpil_gsc_enter_app_creds wpil_gsc_button button-primary"><?php esc_html_e('Authorize', 'wpil'); ?></a></label>
                                         <a style="margin-top:5px;" class="wpil-get-gsc-access-token button-primary" href="<?php echo Wpil_Settings::getGSCAuthUrl(); ?>"><?php echo $auth_message; ?></a>
                                         <?php /*
@@ -2042,6 +2067,24 @@
                                 </div>
                             </td>
                         </tr>
+                        <tr id="wpil-enable-tours" class="wpil-advanced-settings wpil-setting-row">
+                            <td scope='row' class="wpil-setting-name-row"><?php esc_html_e('Enable Interactive Tours', 'wpil'); ?></td>
+                            <td class="wpil-setting-input-row">
+                                <div class="wpil-setting-input-container" style="max-width:80px;">
+                                    <input type="hidden" name="wpil_enable_tours" value="0" />
+                                    <input type="checkbox" name="wpil_enable_tours" <?=!empty(get_option('wpil_enable_tours', '1'))?'checked':''?> value="1" />
+                                    <div class="wpil_help" style="float:right;">
+                                        <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
+                                        <div style="margin: -100px 0 0 30px;">
+                                            <?php esc_html_e("Enable or disable interactive tours and onboarding guides throughout the Link Whisper interface.", 'wpil'); ?>
+                                            <br>
+                                            <br>
+                                            <?php esc_html_e("When disabled, all tour widgets will be hidden. Your tour progress is preserved and will be restored if you re-enable tours.", 'wpil'); ?>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
                         <tr class="wpil-advanced-settings wpil-setting-row">
                             <td scope='row' class="wpil-setting-text">
                                 <span class="settings-carrot">
@@ -2189,17 +2232,15 @@
                                     <br>
                                 </div>
                                 <div class="setting-control">
-                                    <input type="hidden" name="wpil_reset_ai_setting_cache" value="0" />
-                                    <input type='checkbox' name="wpil_reset_ai_setting_cache" value="1" />
-                                    <label><?php esc_html_e('Reset the stored AI Setting cache?', 'wpil'); ?></label>
+                                    <label><input type='text' name="wpil_upload_linkwhisper_ai_token" class="wpil-non-license-key-field" style="margin-right: 15px;" value="" /><?php esc_html_e('Manually upload AI access token?', 'wpil'); ?></label>
                                     <div class="wpil_help" style="float:right;">
                                         <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
                                         <div style="margin: -260px 0 0 30px;">
-                                            <p><?php esc_html_e('Resetting the AI Setting cache will clear the existing data and tell Link Whisper to do a fresh check of the AI Settings.', 'wpil'); ?></p>
+                                            <p><?php esc_html_e('This field allows you to manually upload the access token that goes with your Link Whisper AI account.', 'wpil'); ?></p>
                                             <br>
-                                            <p><?php esc_html_e('This will allow the .', 'wpil'); ?></p>
+                                            <p><?php esc_html_e('Normally, the access token is automatically sent to your site and stored. But sometimes security plugins block the delivery and the token needs to be manually uploaded.', 'wpil'); ?></p>
                                             <br>
-                                            <p><?php esc_html_e('This is useful for cases where changes have been made in the OpenAI account, and the settings haven\'t caught up yet.', 'wpil'); ?></p>
+                                            <p><?php esc_html_e('To use this, please enter the access token, (not the linkwhisper license key), and save the settings.', 'wpil'); ?></p>
                                         </div>
                                     </div>
                                     <br>

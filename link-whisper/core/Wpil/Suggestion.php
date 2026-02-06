@@ -255,6 +255,7 @@ class Wpil_Suggestion
 
         $same_category = Wpil_Settings::get_suggestion_filter('same_category');
         $max_suggestions_displayed = Wpil_Settings::get_max_suggestion_count();
+        $ai_active = Wpil_Settings::has_ai_enabled();
 
         if('outbound_suggestions' === $_POST['type']){
             // get the suggestions from the database
@@ -268,6 +269,9 @@ class Wpil_Suggestion
 
             // merge them all into a suitable array
             $phrase_groups = self::merge_phrase_suggestion_arrays($phrases);
+            if($ai_active){
+                $phrase_groups = self::remove_low_ai_scoring_suggestions($phrase_groups);
+            }
 
             foreach($phrase_groups as $phrases){
                 foreach($phrases as $phrase){
@@ -498,6 +502,39 @@ class Wpil_Suggestion
         }
 
         return $merged_phrases;
+    }
+
+    public static function remove_low_ai_scoring_suggestions($phrases = array()){
+        if(empty($phrases)){
+            return $phrases;
+        }
+
+        $ai_relatedness_threshold = Wpil_Settings::get_ai_suggestion_relatedness_threshold();                
+        if(empty($ai_relatedness_threshold)){
+            return $phrases;
+        }
+
+        foreach($phrases as $key => $phrase_data){
+            foreach($phrase_data as $k => $dat){
+                if(empty($dat->suggestions)){
+                    continue;
+                }
+                foreach($dat->suggestions as $key2 => $suggestion){
+
+                    if(isset($suggestion->ai_relatedness_calculation) && !empty($suggestion->ai_relatedness_calculation) && $suggestion->ai_relatedness_calculation < $ai_relatedness_threshold){
+                        unset($phrases[$key][$k]->suggestions[$key2]);
+                    }
+                }
+                if(empty($phrases[$key][$k]->suggestions)){
+                    unset($phrases[$key][$k]);
+                    if(empty($phrases[$key])){
+                        unset($phrases[$key]);
+                    }
+                }
+            }
+        }
+
+        return $phrases;
     }
 
     public static function getPostProcessCount($post){
@@ -856,7 +893,10 @@ class Wpil_Suggestion
 
             //check if suggestion has at least 2 words & is less than 10 words long, and then calculate count of close words
             foreach ($suggestions as $key => $suggestion) {
-                if ((!empty($_REQUEST['keywords']) && count($suggestion['words']) != count(array_unique(explode(' ', $keyword)))) // if the user is searching for keywords and the current suggestion does not contain all of them OR
+                if ((   !empty($_REQUEST['keywords']) && 
+                        count($suggestion['words']) < 2 && count(array_unique(explode(' ', $keyword))) > 3 // if there's only one keyword and the user is searching for a bunch
+                      //  count($suggestion['words']) != count(array_unique(explode(' ', $keyword)))
+                    ) // if the user is searching for keywords and the current suggestion does not contain all of them OR
                     || (    empty($_REQUEST['keywords']) && // the user is not searching for keywords
                             count($suggestion['words']) < 2 && // there are less than 2 words here
                                 (   !isset($suggestion['passed_target_keywords']) || // there are not target keywords OR
@@ -876,7 +916,14 @@ class Wpil_Suggestion
                 $suggestion['length'] = self::getSuggestionAnchorLength($phrase, $suggestion['words']);
 
                 // if the suggestion isn't long enough and the anchor hasn't passed the target keyword check
-                if($suggestion['length'] < self::get_min_anchor_length() && (!isset($suggestion['passed_target_keywords']) || isset($suggestion['passed_target_keywords']) && !empty(Wpil_Settings::get_use_anchor_limit_tk_matches()))){
+                if( $suggestion['length'] < self::get_min_anchor_length() && 
+                        (   !isset($suggestion['passed_target_keywords']) || 
+                            isset($suggestion['passed_target_keywords']) && !empty(Wpil_Settings::get_use_anchor_limit_tk_matches())
+                        ) && // AND!
+                        (   empty($_REQUEST['keywords']) || // the user is not searching for keywords OR
+                            !empty($_REQUEST['keywords']) && count(array_unique(explode(' ', $keyword))) > 1 // he is searching for keywords, but it's more than one // i.e allow matches on single keywoirds through regardless of settings
+                        )
+                ){
                     // remove it and continue to the next
                     unset ($suggestions[$key]);
                     continue;
@@ -1109,7 +1156,10 @@ class Wpil_Suggestion
 
         // if we've completed processsing
         // get the AI suggestions
-        $ai_suggested_sentences = (!empty($target)) ? Wpil_AI::get_ai_post_suggestion_sentences($post): self::get_ai_suggested_sentences($post, $target, $process_key);
+        $ai_suggested_sentences = (!empty($target)) ? 
+            //Wpil_AI::get_ai_post_suggestion_sentences($post): // TODO: rexamine and think over in rebuild
+            self::get_ai_suggested_sentences($post, $target, $process_key): 
+            self::get_ai_suggested_sentences($post, $target, $process_key);
         $using_ai_anchors = !Wpil_Settings::get_disable_ai_anchor_building();
 
         $processed_sentences = Wpil_AI::get_processed_anchor_sentences($post, true, true);
@@ -1517,15 +1567,18 @@ class Wpil_Suggestion
                     }
                 }
             }
-
             //check if suggestion has at least 2 words & is less than 10 words long, and then calculate count of close words
             foreach ($suggestions as $key => $suggestion) {
-                if ((!empty($_REQUEST['keywords']) && count($suggestion['words']) != count(array_unique(explode(' ', $keyword))))
-                    || (empty($_REQUEST['keywords']) && count($suggestion['words']) < 2 && 
-                        (   !isset($suggestion['passed_target_keywords']) || // there are no target keywords OR
-                            isset($suggestion['passed_target_keywords']) && !empty(Wpil_Settings::get_use_anchor_limit_tk_matches()) // there are target keywords, but we're applying the anchor lenght limits to them
-                        )
-                    )
+                if ((   !empty($_REQUEST['keywords']) && 
+                        count($suggestion['words']) < 2 && count(array_unique(explode(' ', $keyword))) > 3 // if there's only one keyword and the user is searching for a bunch
+                      //  count($suggestion['words']) != count(array_unique(explode(' ', $keyword)))
+                    ) // if the user is searching for keywords and the current suggestion does not contain all of them OR
+                    || (    empty($_REQUEST['keywords']) && // the user is not searching for keywords
+                            count($suggestion['words']) < 2 && // there are less than 2 words here
+                                (   !isset($suggestion['passed_target_keywords']) || // there are not target keywords OR
+                                    isset($suggestion['passed_target_keywords']) && !empty(Wpil_Settings::get_use_anchor_limit_tk_matches()) // there are target keywords, but we're applying the anchor lenght limits to them
+                                )
+                        ) 
                 ) {
                     unset ($suggestions[$key]);
                     continue;
@@ -2551,6 +2604,11 @@ class Wpil_Suggestion
             $content = mb_ereg_replace('<script(?:[^>]*)>(.*?)<\/script>', '', $content);
         }
 
+        // remove any noscript tags that might be present. We really don't want to suggest links for fallback sections either!
+        if(false !== strpos($content, '<noscript')){
+            $content = mb_ereg_replace('<noscript(?:[^>]*)>(.*?)<\/noscript>', '', $content);
+        }
+
         // remove any YooTheme JSON that's in the content
         if( false !== strpos($content, '<!--more-->') && (false !== strpos($content, '<!--') || false !== strpos($content, '<!-- ')) && Wpil_Editor_YooTheme::yoo_active()){
             $content = mb_ereg_replace('<!--\s*?(\{(?:.*?)\})\s*?-->', '', $content);
@@ -2611,17 +2669,19 @@ class Wpil_Suggestion
         foreach($list as $key => $item){
             // decode all the attributes now that the content has been broken into sentences
             if(false !== strpos($item, 'wpil-attr-replace_')){
-                $list[$key] = preg_replace_callback('|(?:[a-zA-Z-]*=["\'](wpil-attr-replace_([^"\']*?))["\'])[^<>]*?|i', function($i){
+                $item = preg_replace_callback('|(?:[a-zA-Z-]*=["\'](wpil-attr-replace_([^"\']*?))["\'])[^<>]*?|i', function($i){
                     return str_replace($i[1], base64_decode($i[2]), $i[0]);
                 }, $item);
             }
 
             // also decode any links
             if(false !== strpos($item, 'wpil-link-replace_')){
-                $list[$key] = preg_replace_callback('/(?:wpil-link-replace_([A-z0-9=\/+]*))/', function($i){
+                $item = preg_replace_callback('/(?:wpil-link-replace_([A-z0-9=\/+]*))/', function($i){
                     return str_replace($i[0], base64_decode($i[1]), $i[0]);
                 }, $item);
             }
+
+            $list[$key] = $item;
         }
 
         $list = self::mergeSplitSentenceTags($list);
@@ -3164,6 +3224,156 @@ class Wpil_Suggestion
     }
 
     /**
+     * Gets the supplied post's paragraphs so that we can examine and reference them
+     *
+     * @param $content
+     * @param $with_links
+     * @param $word_segments
+     * @param $single_words
+     * @return array
+     */
+    public static function get_post_paragraphs($content)
+    {
+        // replace unicode chars with their decoded forms
+        $replace_unicode = array('\u003c', '\u003', '\u0022');
+        $replacements = array('<', '>', '"');
+
+        $content = str_ireplace($replace_unicode, $replacements, $content);
+
+        // decode page builder encoded sections
+        $content = self::decode_page_builder_content($content);
+
+        // remove the heading tags from the text
+        $content = mb_ereg_replace('<h1(?:[^>]*)>(.*?)<\/h1>|<h2(?:[^>]*)>(.*?)<\/h2>|<h3(?:[^>]*)>(.*?)<\/h3>|<h4(?:[^>]*)>(.*?)<\/h4>|<h5(?:[^>]*)>(.*?)<\/h5>|<h6(?:[^>]*)>(.*?)<\/h6>', '', $content);
+
+        // remove the head tag if it's present. It should only be present if processing a full page stored in the content
+        if(false !== strpos($content, '<head')){
+            $content = mb_ereg_replace('<head(?:[^>]*)>(.*?)<\/head>', '', $content);
+        }
+
+        // remove any title tags that might be present. These should only be present if processing a full page stored in the content
+        if(false !== strpos($content, '<title')){
+            $content = mb_ereg_replace('<title(?:[^>]*)>(.*?)<\/title>', '', $content);
+        }
+
+        // remove any meta tags that might be present. These should only be present if processing a full page stored in the content
+        if(false !== strpos($content, '<meta')){
+            $content = mb_ereg_replace('<meta(?:[^>]*)>(.*?)<\/meta>', '', $content);
+        }
+
+        // remove any link tags that might be present. These should only be present if processing a full page stored in the content
+        if(false !== strpos($content, '<link')){
+            $content = mb_ereg_replace('<link(?:[^>]*)>(.*?)<\/link>', '', $content);
+        }
+
+        // remove any script tags that might be present. We really don't want to suggest links for schema sections
+        if(false !== strpos($content, '<script')){
+            $content = mb_ereg_replace('<script(?:[^>]*)>(.*?)<\/script>', '', $content);
+        }
+
+        // remove any YooTheme JSON that's in the content
+        if( false !== strpos($content, '<!--more-->') && (false !== strpos($content, '<!--') || false !== strpos($content, '<!-- ')) && Wpil_Editor_YooTheme::yoo_active()){
+            $content = mb_ereg_replace('<!--\s*?(\{(?:.*?)\})\s*?-->', '', $content);
+        }
+
+        // if there happen to be any css tags, remove them too
+        if(false !== strpos($content, '<style')){
+            $content = mb_ereg_replace('<style(?:[^>]*)>(.*?)<\/style>', '', $content);
+        }
+
+        // if there are any 'pre' tags, remove them from the content
+        if(false !== strpos($content, '<pre')){
+            $content = mb_ereg_replace('<pre(?:[^>]*)>(.*?)<\/pre>', "\n", $content);
+        }
+
+        // remove any shortcodes that the user has defined
+        $content = self::removeShortcodes($content);
+
+        // remove page builder modules that will be turned into things like headings, buttons, and links
+        $content = self::removePageBuilderModules($content);
+
+        // remove any gutenberg tags with json
+        $content = mb_ereg_replace('<!-- wp:[a-zA-Z]*?\/[a-zA-Z]*? {[\["].*?["\]]} -->', "\n", $content); // if we ever use this in a setting that doesn't involve direct human contorl, possibly nix this so that we don't accidentally break anything
+
+        // encode the links in the content to avoid breaking them. (And to avoid cases where there's a line break char in the anchor, and when the text is split, we get half a linmk in two sentences... which are then discarded for safety!)
+        $content = preg_replace_callback('|<a\s[^><]*?href=[\'\"][^><\'\"]*?[\'\"][^><]*?>[\s\S]*?<\/a>|i', function($i){ return str_replace($i[0], 'wpil-link-replace_' . base64_encode($i[0]), $i[0]); }, $content);
+
+        // encode the contents of attributes so we don't have mistakes when breaking the content into sentences
+        $content = preg_replace_callback('|(?:[a-zA-Z-]*?=["]([^"]*?)["])[^<>]*?|i', function($i){ return str_replace($i[1], 'wpil-attr-replace_' . base64_encode($i[1]), $i[0]); }, $content);
+        $content = preg_replace_callback('/(?:[a-zA-Z-_0-9]*?=[\']((?:[\\]+?[\']|[^\'])*?)[\'])[^<>]*?/i', function($i){ return str_replace($i[1], 'wpil-attr-replace_' . base64_encode($i[1]), $i[0]); }, $content);
+
+        $i_text = "(?<![[:alpha:]<>-_1-9])(?:[A-Za-z]\.){2,20}(?![[:alpha:]<>-_1-9])"; // also run a regex for searching common abbreviations
+        $content = preg_replace_callback('/' . $i_text . '/i' , function($i){ return str_replace($i[0], 'wpil-ignore-replace_' . base64_encode($i[0]), $i[0]); }, $content);
+
+        //divide text to sentences
+        $replace = [
+            ['.<', '. ', '. ', '.&nbsp;', '.\\', '!<', '! ', '! ', '!\\', '?<', '? ', '? ', '?\\', '<div', '<br', '<li', '<p', '<h1', '<h2', '<h3', '<h4', '<h5', '<h6', '。', '<td', '</td>', '<ul', '</ul>', '<ol', '</ol>'],
+            [".\n<", ". \n", ".\n", ".\n&nbsp;", ".\n\\", "!\n<", "! \n", "!\n", "!\n\\", "?\n<", "? \n", "?\n", "?\n\\", "\n<div", "\n<br", "\n<li", "\n<p", "\n<h1", "\n<h2", "\n<h3", "\n<h4", "\n<h5", "\n<h6", "\n。", "\n<td", "</td>\n", "\n<ul", "</ul>\n", "\n<ol", "</ol>\n"]
+        ];
+        $content = str_ireplace($replace[0], $replace[1], $content);
+        $content = preg_replace('|\.([A-Z]{1})|', ".\n$1", $content);
+        $content = preg_replace('|\[[^\]]+\]|i', "\n", $content);
+
+        $list = explode("\n", $content);
+
+
+        foreach($list as $key => $item){
+            // decode all the attributes now that the content has been broken into sentences
+            if(false !== strpos($item, 'wpil-attr-replace_')){
+                $item = preg_replace_callback('|(?:[a-zA-Z-]*=["\'](wpil-attr-replace_([^"\']*?))["\'])[^<>]*?|i', function($i){
+                    return str_replace($i[1], base64_decode($i[2]), $i[0]);
+                }, $item);
+            }
+
+            // also decode any links
+            if(false !== strpos($item, 'wpil-link-replace_')){
+                $item = preg_replace_callback('/(?:wpil-link-replace_([A-z0-9=\/+]*))/', function($i){
+                    return str_replace($i[0], base64_decode($i[1]), $i[0]);
+                }, $item);
+            }
+
+            $list[$key] = $item;
+        }
+
+        $list = self::mergeSplitSentenceTags($list);
+        self::removeEmptySentences($list, true);
+        self::trimTags($list, true);
+
+        $phrases = [];
+        foreach ($list as $item) {
+            $item = trim($item);
+
+            if (in_array(substr($item, -1), ['.', ',', '!', '?', '。'])) {
+                $item = substr($item, 0, -1);
+            }
+
+            // save the src before we decode the ignored txt
+            $src_raw = $item;
+            // decode the ignored txt
+            $item = self::decodeIgnoredText($item);
+
+            $sentence = [
+                'src_raw' => $src_raw,
+                'src' => $item,
+                'text' => trim(strip_tags(htmlspecialchars_decode($item)))
+            ];
+
+            $phrases = array_merge($phrases, self::getSentences($sentence));
+
+            /*if($full_sentences){
+                
+            }else
+
+            //add sentence to array if it has at least 2 words
+            if (!empty($sentence['text'])) {
+                $phrases = array_merge($phrases, self::getPhrasesFromSentence($sentence, true));
+            }*/
+        }
+
+        return $phrases;
+    }
+
+    /**
      * Indexes the processed phrase ids so that we can look them up by id in the AI processing
      **/
     public static function indexPhraseIds($phrases = array()){
@@ -3360,23 +3570,41 @@ class Wpil_Suggestion
             }
         }
 
-        $words = [];
-        foreach ($posts as $key => $p) {
-            //get unique words from post title
-            if (!empty($keyword)) { 
-                $title_words = array_unique(Wpil_Word::getWords($keyword));
-            } else {
-                $title = $p->getTitle();
-                $title_words = array_map(function($w){ return trim(trim($w, '[]{}\'"()$&|'));}, array_unique(Wpil_Word::getWords($title)));
-            }
+        if(false && !empty($target) /*&& $words = get_transient('wpil_inbound_title_words_' . $process_key)*/){// TODO: Remove at update 2.3.3 if no one complains about slower inbound Internal suggestions // renabling since I think there has been a slowdown for some users. I think that I disabled the check because a user was having issues with the keyword searching not updating. I think that's been fixed now, so it should be safe to set this going again. // nope! enalbing this makes it so that multi-line searching for separate keywords doesn't work. This caches the first line of keywords and then uses those post results on alll other keywords. Effectiely removing outside of accidental collisions
+            return $words;
+        }else{
+            $words = [];
+            foreach ($posts as $key => $p) {
+                //get unique words from post title
+                if (!empty($keyword)) { 
+                    $title_words = array_unique(Wpil_Word::getWords($keyword));
+                } else {
+                    $title = $p->getTitle();
+                    $word_list = Wpil_Word::getWords($title);
+                    // if these are outbound suggestions
+                    if(empty($target)){
+                        // get any target keywords the post has and add them to the title so we can make outbound matches based on them
+                        // TODO: investigate this later... With the current state of phrase processing, this isn't actually needed to log posts for processing, and only serves to throw in a bunch of random words in suggestions
+//                        $word_list = array_merge($word_list, Wpil_TargetKeyword::get_active_keyword_list($p->id, $p->type));
+                    }
 
-            foreach ($title_words as $word) {
-                $word = Wpil_Stemmer::Stem(Wpil_Word::strtolower($word));
-                //check if word is not a number and is not in the ignore words list
-                if (!empty($_REQUEST['keywords']) ||
-                    (strlen($word) > 2 && !in_array($word, $ignore_words) && (!$ignore_numbers || !is_numeric(str_replace(['.', ',', '$'], '', $word))))
-                ) {
-                    $words[$word][] = $p;
+                    $title_words = array_map(function($w){ return trim(trim($w, '[]{}\'"()$&|'));}, array_unique($word_list));
+                }
+
+                foreach ($title_words as $word) {
+                    $normalized_word = Wpil_Stemmer::Stem(Wpil_Word::remove_accents(Wpil_Word::strtolower($word)), true, true);
+                    $word = Wpil_Stemmer::Stem(Wpil_Word::strtolower($word));
+
+                    //check if word is not a number and is not in the ignore words list
+                    if (!empty($_REQUEST['keywords']) ||
+                        (strlen($word) > 2 && !in_array($word, $ignore_words) && (!$ignore_numbers || !is_numeric(str_replace(['.', ',', '$'], '', $word))))
+                    ) {
+                        $words[$word][] = $p;
+
+                        if(strlen($normalized_word) > 2 && $word !== $normalized_word){
+                            $words[$normalized_word][] = $p;
+                        }
+                    }
                 }
             }
         }
@@ -5086,7 +5314,7 @@ class Wpil_Suggestion
                     }
                 }
             }elseif(empty($multi_lang)){
-                $ai_term_ids = 'AND t.term_id IN (' . implode(',', $ai_term_ids) . ')';
+                $ai_term_ids = !empty($ai_term_ids) ? 'AND t.term_id IN (' . implode(',', $ai_term_ids) . ')': '';
                 $results = $wpdb->get_col("SELECT t.term_id FROM {$wpdb->prefix}term_taxonomy tt LEFT JOIN {$wpdb->prefix}terms t ON tt.term_id = t.term_id WHERE tt.taxonomy IN ('" . implode("', '", $taxonomies) . "') {$ai_term_ids} {$language_ids} $exclude");
             }
 

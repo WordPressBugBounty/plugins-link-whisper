@@ -98,6 +98,8 @@ class Wpil_Settings
         'wpil_delete_all_data',
         'wpil_email_notifications_enabled',
         'wpil_remote_dashboard',
+        'wpil_enable_telemetry',
+        'wpil_testing_mode',
         'wpil_external_links_open_new_tab',
         'wpil_insert_links_as_relative',
         'wpil_prevent_two_way_linking',
@@ -175,7 +177,10 @@ class Wpil_Settings
     }
 
     public static function ai_init(){
-        if (!empty($_GET['ai_auth_complete'])){ ?>
+        if (!empty($_GET['ai_auth_complete'])){
+            // refresh the subscription cache
+            Wpil_AI::get_user_ai_subscription(true);
+            ?>
             <script>
             // This page is now in the popup window
             window.addEventListener("load", () => {
@@ -282,7 +287,7 @@ class Wpil_Settings
         }
 
         $sub = Wpil_AI::get_user_ai_subscription();
-        $credits = Wpil_AI::get_available_ai_credits();
+        $credits = Wpil_AI::get_available_ai_credits(isset($_GET['refresh_credits']));
         $recommended = (empty($sub)) ? count(Wpil_AI::get_processable_post_ids()): false;
 
         $renew = '';
@@ -632,7 +637,336 @@ class Wpil_Settings
     </style>
     <div class="wpil-credit-purchase-table-wrapper">
         <div class="wpil-credit-puchase-table">
-            <div id="wpil-credit-pricing" class="pricing-table">
+            <br><br>
+            <!-- Credit Balance Section -->
+            <div class="lw-credit-balance-section">
+                <div class="lw-credit-balance-card-compact">
+                    <div class="lw-credit-header-row">
+                        <div class="lw-credit-title-with-balance">
+                            <span class="lw-credit-label-inline">Available AI Credits:</span>
+                            <span class="lw-credit-number-inline"><?php echo number_format((!empty($credits) ? $credits: 0)); ?></span>
+                            <a href="<?php echo admin_url('admin.php?page=link_whisper_ai_subscription&refresh_credits=1') ?>" class="lw-refresh-icon" title="Refresh Balance">
+                                <span class="dashicons dashicons-update"></span>
+                            </a>
+                        </div>
+                        <div class="lw-credit-actions-group">
+                            <?php if (!empty($sub)): ?>
+                            <a href="https://linkwhisper.com/my-account/#tab-52427614" target="_blank" style="margin: 0!important;" class="lw-btn lw-btn-secondary">
+                                <span class="dashicons dashicons-admin-generic"></span> Manage Subscription
+                            </a>
+                            <?php elseif(empty($credits)): ?>
+                            <a href="<?php echo esc_url(Wpil_AI::get_linkwhisper_ai_auth_url())?>" class="lw-btn lw-btn-secondary lw-ai-sub-connect-check"><?php esc_html_e('Connect! (Requires Credits)', 'wpil'); ?></a>
+                            <?php endif; ?>
+                            <a href="https://linkwhisper.com/ai-pricing-free" target="_blank" style="margin: 0!important;" class="lw-btn lw-btn-primary">
+                                <span class="dashicons dashicons-cart"></span> Buy Credits
+                            </a>
+                        </div>
+                    </div>
+                    <?php if (false && !empty($ai_credit_data['updated_at'])): ?>
+                        <div class="lw-credit-timestamp">
+                            Last updated: <?php echo date('M j, Y g:i a', $ai_credit_data['updated_at']); ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <style>
+                /**
+                 * Link Whisper AI Credits Display Styles
+                 */
+
+                /* Credit Balance Section */
+                .lw-credit-balance-section {
+                    margin-bottom: 20px;
+                }
+
+                .lw-credit-balance-card-compact {
+                    background: #f8f9fa;
+                    color: #1e1e1e;
+                    padding: 15px 20px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                    border: 1px solid #e1e4e7;
+                }
+
+                .lw-credit-header-row {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    margin-bottom: 6px;
+                    flex-wrap: wrap;
+                }
+
+                .lw-credit-title-with-balance {
+                    display: flex;
+                    align-items: baseline;
+                    gap: 10px;
+                    flex: 1;
+                    min-width: 0;
+                }
+
+                .lw-credit-actions-group {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    margin-left: auto;
+                }
+
+                .lw-credit-label-inline {
+                    font-size: 15px;
+                    font-weight: 500;
+                    color: #666;
+                }
+
+                .lw-credit-number-inline {
+                    font-size: 28px;
+                    font-weight: 700;
+                    line-height: 1;
+                    color: #1e1e1e;
+                }
+
+                .lw-refresh-icon {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 24px;
+                    height: 24px;
+                    margin-left: 4px;
+                    color: #666;
+                    text-decoration: none;
+                    transition: all 0.2s ease;
+                }
+
+                .lw-refresh-icon:hover {
+                    color: rgb(120, 102, 255);
+                    transform: rotate(90deg);
+                }
+
+                .lw-refresh-icon:active {
+                    transform: rotate(180deg);
+                }
+
+                .lw-refresh-icon .dashicons {
+                    font-size: 18px;
+                    width: 18px;
+                    height: 18px;
+                }
+
+                .lw-credit-timestamp {
+                    font-size: 11px;
+                    color: #666;
+                    margin: 0;
+                    line-height: 1.3;
+                }
+
+                /* Buttons */
+                .lw-btn {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 8px 16px;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    text-decoration: none;
+                    border: none;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    white-space: nowrap;
+                }
+
+                .lw-btn .dashicons {
+                    font-size: 16px;
+                    width: 16px;
+                    height: 16px;
+                }
+
+                .lw-btn-primary {
+                    background: rgb(120, 102, 255);
+                    color: #ffffff;
+                    border: 1px solid rgb(120, 102, 255);
+                }
+
+                .lw-btn-primary:hover {
+                    background: rgb(95, 77, 230);
+                    color: #ffffff;
+                    text-decoration: none;
+                    border: 1px solid rgb(95, 77, 230);
+                }
+
+                .lw-btn-secondary {
+                    background: #ffffff;
+                    color: #333333;
+                    border: 1px solid #ddd;
+                }
+
+                .lw-btn-secondary:hover {
+                    background: #f6f7f7;
+                    color: #333333;
+                    text-decoration: none;
+                    border: 1px solid #ccc;
+                }
+
+                /* Icon-only refresh button */
+                .lw-btn-icon {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 32px;
+                    height: 32px;
+                    padding: 0;
+                    background: rgba(255, 255, 255, 0.2);
+                    border: 1px solid rgba(255, 255, 255, 0.3);
+                    border-radius: 6px;
+                    color: #ffffff;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    flex-shrink: 0;
+                }
+
+                .lw-btn-icon:hover {
+                    background: rgba(255, 255, 255, 0.3);
+                    transform: scale(1.05);
+                }
+
+                .lw-btn-icon:active {
+                    transform: scale(0.95);
+                }
+
+                .lw-btn-icon .dashicons {
+                    font-size: 18px;
+                    width: 18px;
+                    height: 18px;
+                    margin: 0;
+                }
+
+                .lw-btn-icon:disabled {
+                    opacity: 0.6;
+                    cursor: not-allowed;
+                }
+
+                /* Notifications */
+                .lw-notification {
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    padding: 15px 20px;
+                    border-radius: 6px;
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                    z-index: 10000;
+                    font-size: 14px;
+                    font-weight: 600;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
+                .lw-notification .dashicons {
+                    font-size: 18px;
+                    width: 18px;
+                    height: 18px;
+                }
+
+                .lw-notification-success {
+                    background: #d4edda;
+                    color: #155724;
+                    border: 1px solid #c3e6cb;
+                }
+
+                .lw-notification-error {
+                    background: #f8d7da;
+                    color: #721c24;
+                    border: 1px solid #f5c6cb;
+                }
+
+                /* Responsive Design */
+                @media (max-width: 768px) {
+                    .lw-credit-header-row {
+                        gap: 10px;
+                    }
+
+                    .lw-credit-title-with-balance {
+                        flex: 1 1 100%;
+                        flex-wrap: wrap;
+                        gap: 6px;
+                    }
+
+                    .lw-credit-actions-group {
+                        flex: 1 1 100%;
+                        margin-left: 0;
+                        justify-content: flex-start;
+                    }
+
+                    .lw-credit-label-inline {
+                        font-size: 14px;
+                    }
+
+                    .lw-credit-number-inline {
+                        font-size: 24px;
+                    }
+
+                    .lw-btn {
+                        padding: 7px 12px;
+                        font-size: 13px;
+                    }
+
+                    .lw-btn-icon {
+                        width: 28px;
+                        height: 28px;
+                    }
+
+                    .lw-btn-icon .dashicons {
+                        font-size: 16px;
+                        width: 16px;
+                        height: 16px;
+                    }
+                }
+
+                @media (max-width: 480px) {
+                    .lw-credit-number-inline {
+                        font-size: 22px;
+                    }
+
+                    .lw-credit-balance-card-compact {
+                        padding: 12px 15px;
+                    }
+
+                    .lw-credit-label-inline {
+                        font-size: 13px;
+                    }
+
+                    .lw-credit-timestamp {
+                        font-size: 10px;
+                    }
+
+                    .lw-btn {
+                        padding: 6px 10px;
+                        font-size: 12px;
+                    }
+
+                    .lw-btn .dashicons {
+                        font-size: 14px;
+                        width: 14px;
+                        height: 14px;
+                    }
+                }
+            </style>
+            <script>
+                document.addEventListener('DOMContentLoaded', function () {
+                var links = document.querySelectorAll('a.lw-ai-sub-connect-check');
+
+                links.forEach(function (link) {
+                    link.addEventListener('click', function (e) {
+                    var confirmed = window.confirm('Have you bought AI credits? Link Whisper AI needs credits to function.');
+
+                    if (!confirmed) {
+                        e.preventDefault();
+                        e.stopImmediatePropagation();
+                    }
+                    });
+                });
+                });
+            </script>
+            <div style="display: none" id="wpil-credit-pricing" class="pricing-table">
                 <div class="plan-card">
                     <h3 class="plan-name">On Demand Credits</h3>
                     <p class="plan-description">Use for any AI process in Link Whisper.</p>
@@ -784,7 +1118,7 @@ class Wpil_Settings
             </div>
             <br><br>
             <?php } ?>
-            <div id="wpil-custom-plan-cta" class="custom-plan-cta">
+            <div style="display: none" id="wpil-custom-plan-cta" class="custom-plan-cta">
                 <div class="custom-plan-text">
                     <strong>Need more AI credits or a custom plan?</strong> Let’s talk. We’ll help you craft the perfect solution. 🚀
                 </div>
@@ -849,11 +1183,15 @@ document.addEventListener("DOMContentLoaded", () => {
         card.style.transition = "opacity 0.3s ease";
         card.style.opacity = "0";
         setTimeout(() => card.style.display = "none", 300);
+        }else{
+            card.style.maxWidth = '500px';
         }
     });
 
     setTimeout(() => {
-        document.getElementById('wpil-credit-pricing').style.display = "flex";
+        var pricing = document.getElementById('wpil-credit-pricing');
+        pricing.style.display = "flex";
+        pricing.style.flexDirection = "column";
         paymentFormWrapper.style.display = "block";
     }, 320);
 
@@ -1377,6 +1715,15 @@ function triggerConfettiExplosion() {
                     background: #2c55cb;
                 }
 
+                .wpil-hide-ai-banner{
+                    position: absolute;
+                    right: 170px;
+                }
+
+                .wpil-hide-ai-banner:hover{
+                    background: #7866ff;
+                }
+
                 .wpil-ai-popup-overlay {
                     display: none;
                     position: fixed;
@@ -1531,11 +1878,18 @@ function triggerConfettiExplosion() {
                     font-size: 14px;
                 }
             }
+
+            @media screen and (max-width: 960px) {
+                .wpil-hide-ai-banner{
+                    right: 42px;
+                }
+            }
             </style>
 
             <!-- Banner -->
             <div class="wpil-no-ai-banner" id="wpil-no-ai-banner">
-            🚀 Connect Link Whisper AI to unlock powerful features
+                <div>🚀 Connect Link Whisper AI to unlock powerful features</div>
+                <span id="wpil-hide-ai-banner" class="dashicons dashicons-no-alt wpil-hide-ai-banner"></span>
             </div>
 
             <!-- Modal Popup -->
@@ -1622,7 +1976,9 @@ function triggerConfettiExplosion() {
 
             <script>
                 document.addEventListener('DOMContentLoaded', () => {
+                    const wpBody = document.getElementById('wpbody');
                     const banner = document.getElementById('wpil-no-ai-banner');
+                    const dismissBanner = document.getElementById('wpil-hide-ai-banner');
                     const overlay = document.getElementById('wpil-ai-popup-overlay');
                     const popup = document.getElementById('wpil-ai-popup');
                     const closeBtn = document.getElementById('wpil-popup-close');
@@ -1651,7 +2007,23 @@ function triggerConfettiExplosion() {
                             overlay.style.display = 'none';
                         }
                     });
-                /*
+                
+                    // Perma hide the banner when the user dimisses it
+                    dismissBanner.addEventListener('click', () => {
+                        wpBody.style.top = 0;
+                        overlay.style.display = 'none';
+                        overlay.classList.add('wpil-hidden');
+                        banner.style.display = 'none';
+                        jQuery.ajax({
+                            type: 'POST',
+                            url: ajaxurl,
+                            dataType: 'json',
+                            data: {
+                                action: 'user_dismissed_ai_popup'
+                            },
+                        });
+                    });
+
                     const connectBtn = document.getElementById("wpil-connect-ai-button");
                     if (!connectBtn || connectBtn.dataset.aiAuthed == 1) return;
 
@@ -2185,6 +2557,15 @@ function triggerConfettiExplosion() {
             case 'id_ID':
                 $language = 'indonesian';
                 break;
+            case 'cs_CZ':
+                $language = 'czech';
+                break;
+            case 'bg_BG':
+                $language = 'bulgarian';
+                break;
+//            case 'el':
+//                $language = 'greek';
+//                break;
             default:
                 $language = 'english';
                 break;
@@ -2374,6 +2755,15 @@ function triggerConfettiExplosion() {
             case 'indonesian':
                 $file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/ignore_word_lists/ID_ignore_words.txt';
                 break;
+            case 'czech':
+                $file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/ignore_word_lists/CZ_ignore_words.txt';
+                break;
+            case 'bulgarian':
+                $file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/ignore_word_lists/BG_ignore_words.txt';
+                break;
+//            case 'greek':
+//                $file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/ignore_word_lists/GK_ignore_words.txt';
+//                break;
             default:
                 $file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/ignore_word_lists/EN_ignore_words.txt';
                 break;
@@ -2593,7 +2983,10 @@ function triggerConfettiExplosion() {
             'hungarian'     => 'Magyar',
             'romanian'      => 'Română',
             'ukrainian'     => 'Українська',
-            'indonesian'    => 'Bahasa Indonesia'
+            'indonesian'    => 'Bahasa Indonesia',
+            'czech'         => 'Čeština',
+            'bulgarian'     => 'български'
+//            'greek'         => 'Ελληνικά'
         );
         
         return $languages;
@@ -2671,7 +3064,10 @@ function triggerConfettiExplosion() {
                         'hu' => 'hungarian',
                         'ro' => 'romanian',
                         'uk' => 'ukrainian',
-                        'id' => 'indonesian'
+                        'id' => 'indonesian',
+                        'cs' => 'czech',
+                        'bg' => 'bulgarian'
+//                        'el' => 'greek'
                     );
 
                     // if we support the language, return it as the active one
@@ -2719,7 +3115,10 @@ function triggerConfettiExplosion() {
                         'hu' => 'hungarian',
                         'ro' => 'romanian',
                         'uk' => 'ukrainian',
-                        'id' => 'indonesian'
+                        'id' => 'indonesian',
+                        'cs' => 'czech',
+                        'bg' => 'bulgarian'
+//                        'el' => 'greek'
                     );
 
                     // if we support the language, return it as the active one
@@ -2767,6 +3166,7 @@ function triggerConfettiExplosion() {
             //update ignore words
             update_option(WPIL_OPTION_IGNORE_WORDS, $ignore_words);
 
+            $setting_update_msg = '';
             if (empty($_POST[WPIL_OPTION_POST_TYPES]))
             {
                 $_POST[WPIL_OPTION_POST_TYPES] = [];
@@ -2812,6 +3212,19 @@ function triggerConfettiExplosion() {
             // update the list of known keyword sources
             update_option('wpil_available_target_keyword_sources', Wpil_TargetKeyword::get_available_keyword_sources()); // should mention at_save, but the name would be getting too long
 
+            // if the user just uploaded his secret access token...
+            if(isset($_POST['wpil_upload_linkwhisper_ai_token']) && !empty($_POST['wpil_upload_linkwhisper_ai_token'])){
+                // save the damn thing to the database
+                $token = $_POST['wpil_upload_linkwhisper_ai_token'];
+
+                if(is_string($token) && false !== strpos($token, 'ai-')){
+                    // save the token to the options
+                    update_option('wpil_ai_access_token', Wpil_Toolbox::encrypt($token));
+                    // and update the flag so we know it's live
+                    update_option('wpil_ai_access_authorized', '1');
+                }
+            }
+
             //save other settings
             $opt_keys = self::$keys;
             foreach($opt_keys as $opt_key) {
@@ -2824,6 +3237,36 @@ function triggerConfettiExplosion() {
                         update_option($opt_key, sanitize_text_field($_POST[$opt_key]));
                     }
                 }
+            }
+
+            // if the user has checked the option to cancel the active broken link scans
+            if(isset($_POST['wpil_clear_error_checker_process']) && !empty($_POST['wpil_clear_error_checker_process'])){
+                // run the finishing routine for the link checker
+                update_option('wpil_error_reset_run', 0);
+                Wpil_Error::mergeIgnoreLinks();
+                Wpil_Error::deleteValidLinks();
+                update_option('wpil_error_check_links_cron', 1);
+                // tell the user that we've cancelled the process
+                $setting_update_msg .= '&broken_link_scan_cancelled=1';
+                set_transient('wpil_clear_error_checker_message', __('Broken Link scan cancelled!', 'wpil'), 60);
+            }
+
+            // if the user has checked the option to create the database tables
+            if(isset($_POST['wpil_force_create_database_tables']) && !empty($_POST['wpil_force_create_database_tables'])){
+                // run the table create routine
+                Wpil_Base::createDatabaseTables();
+                // tell the user that we've re-run the process
+                $setting_update_msg .= '&database_creation_activated=1';
+                set_transient('wpil_database_creation_message', __('Database creation routine complete!', 'wpil'), 60);
+            }
+
+            // if the user has checked the option to update the database tables
+            if(isset($_POST['wpil_force_database_update']) && !empty($_POST['wpil_force_database_update'])){
+                // run the table update routine
+                Wpil_Base::updateTables(true);
+                // tell the user that we've re-run the process
+                $setting_update_msg .= '&database_update_activated=1';
+                set_transient('wpil_database_update_message', __('Database update routine complete!', 'wpil'), 60);
             }
 
             // clear the item caches if they're set
@@ -3450,6 +3893,22 @@ function triggerConfettiExplosion() {
      **/
     public static function get_linkwhisper_ai_active(){
         return !empty(get_option('wpil_ai_access_authorized', '0'));
+    }
+
+    /**
+     * Gets if the user has connected Link Whisper to the AI API
+     **/
+    public static function get_selected_ai_provider(){
+        $selected = get_option('wpil_select_ai_provider', '');
+
+        if(empty($selected)){
+            if(self::get_linkwhisper_ai_active()){
+                $selected = 'linkwhisper';
+            }elseif(!empty(self::getOpenAIKey())){
+                $selected = 'openai';
+            }
+        }
+        return $selected;
     }
 
     /** 
@@ -5021,6 +5480,10 @@ function triggerConfettiExplosion() {
         return $cleaned;
     }
 
+    public static function get_if_testing_mode_active(){
+        return !empty(get_option('wpil_testing_mode', '0'));
+    }
+
     public static function get_ai_inbound_suggestion_ids(){
         $ids = get_transient('wpil_ai_suggestion_post_process_cron_ids');
         if(empty($ids) && $ids === false){
@@ -5126,6 +5589,9 @@ function triggerConfettiExplosion() {
     public static function get_if_remote_dashboard_active(){
         return false;
         return !empty(get_option('wpil_remote_dashboard', '1'));
+    }
+    public static function get_show_expanded_suggestion_details(){
+        return !empty(get_option('wpil_show_expanded_suggestion_details', '0'));
     }
 
     public static function get_service_pages_to_ignore(){

@@ -53,13 +53,20 @@ function selectText(element) {
 
         // if we're scrolling to a link
         if(undefined !== data.scrollLink && Object.keys(data.scrollLink).length > 1){
-            var link;
+            var link,
+                links,
+                decoded = $('<textarea />').html(data.scrollLink.url).text();
 
             // if we can find the link's monitor id
-            if(data.scrollLink.monitorId && $('[data-wpil-monitor-id="' +data.scrollLink.monitorId+ '"]').length > 0){
+            if(data.scrollLink.monitorId && $('[data-wpil-monitor-id="' +data.scrollLink.monitorId+ '"]').length > 0 && data.scrollLink.monitorId > 0){
                 link = $('[data-wpil-monitor-id="' +data.scrollLink.monitorId+ '"]');
             }else if($('a[href="' +data.scrollLink.url+ '"]').length > 0){
-                var links = $('a[href="' +data.scrollLink.url+ '"]');
+                links = $('a[href="' +data.scrollLink.url+ '"]');
+            }else if($('a[href="' +decoded+ '"]').length > 0){
+                links = $('a[href="' +decoded+ '"]');
+            }
+
+            if(links.length){
                 links.each(function(ind, element){
                     if( !link && 
                         ($(element).text().trim() === data.scrollLink.anchor.trim()) || 
