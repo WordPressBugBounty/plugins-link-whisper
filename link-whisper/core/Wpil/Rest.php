@@ -77,7 +77,7 @@ class Wpil_Rest
 
             if ( !empty($response['access_valid']) ) {
                 // and update the flag so we know it's live
-                update_option('wpil_gsc_app_authorized', true);
+                update_option('wpil_gsc_app_authorized', true, false);
             }
 
             return 'ok';
@@ -116,16 +116,20 @@ class Wpil_Rest
             $uid = (int)$request->get_param('uid');
             $uemail = $request->get_param('uemail');
 
-            if(!empty($token) && false !== strpos($token, 'ai-')){
+            if( !empty($token) && 
+                false !== strpos($token, 'ai-') && // if the code isn't corrupted
+                (bool) preg_match('/\Aai-[0-9a-f]{64}\z/i', $token) && // is a valid token
+                (bool) preg_match('/\A[0-9a-f]{32}\z/i', $user_id)) // has a valid id
+            {
                 // save the token to the options
                 update_option('wpil_ai_access_token', Wpil_Toolbox::encrypt($token));
                 // and the user id
                 update_option('wpil_ai_access_user_id', $user_id);
                 // and the user email
-                update_option('wpil_ai_access_user_email', $uemail);
+                update_option('wpil_ai_access_user_email', sanitize_email($uemail));
                 // tag the user with the id
-                update_user_meta($uid, 'wpil_ai_access_user_id', $user_id);
-                update_user_meta($uid, 'wpil_ai_access_user_email', $uemail);
+//                update_user_meta($uid, 'wpil_ai_access_user_id', $user_id);
+//                update_user_meta($uid, 'wpil_ai_access_user_email', $uemail);
                 // and update the flag so we know it's live
                 update_option('wpil_ai_access_authorized', true);
             }

@@ -1489,7 +1489,7 @@
                             </td>
                         </tr>
                         <?php if(class_exists('ACF')){ ?>
-                        <tr>
+                        <tr class="wpil-advanced-settings wpil-setting-row">
                             <td scope='row' class="wpil-setting-text"><?php esc_html_e('Disable Linking for Advanced Custom Fields', 'wpil'); ?></td>
                             <td>
                                 <input type="hidden" name="wpil_disable_acf" value="0" />
