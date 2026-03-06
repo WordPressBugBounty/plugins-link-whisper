@@ -108,6 +108,10 @@ class Wpil_StemmerLoader{
 //                $stemmer_file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/word_stemmers/GK_Stemmer.php';
 //                define('WPIL_CURRENT_LANGUAGE', 'greek');
 //                break;
+            case 'turkish':
+                $stemmer_file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/word_stemmers/TK_Stemmer.php';
+                define('WPIL_CURRENT_LANGUAGE', 'turkish');
+                break;
             default:
                 $stemmer_file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/word_stemmers/EN_Stemmer.php';
                 define('WPIL_CURRENT_LANGUAGE', 'english');

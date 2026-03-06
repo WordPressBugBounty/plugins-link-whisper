@@ -32,6 +32,8 @@ class Wpil_Error
     public static function ajaxErrorResetData()
     {
         Wpil_Base::verify_nonce('wpil_error_reset_data');
+        // clear any previous post-processing retry state when the user manually resets scans
+        delete_option('wpil_error_post_process');
         self::fillPosts();
         self::fillTerms();
         self::prepareIgnoreTable();
@@ -53,6 +55,10 @@ class Wpil_Error
     public static function ajaxErrorProcess()
     {
         ini_set('default_socket_timeout', 15);
+        // be sure to ignore any external object caches
+        Wpil_Base::ignore_external_object_cache();
+        // Remove any hooks that may interfere with AJAX requests
+        Wpil_Base::remove_problem_hooks();
         $total = self::getTotalPostsCount();
         $not_ready = self::getNotReadyPosts();
         $time_limit = 10;
@@ -79,10 +85,10 @@ class Wpil_Error
             // set a flag for the current post so we can skip it if there's an error during processing
             self::setProcessingPost($post);
             // get if there's been errors in processing the post
-            $error_count = self::getProcessingPostErrorCount($post);
+            $error_count = self::getProcessingPostErrorCount($post); // TODO: refactor some day!
 
             // if there's been a strangely high number of errors
-            if($error_count > 5){
+            if($error_count > 7){
                 // mark the post as completed and move on to the next one
                 self::markPostAsScanned($post);
                 continue;
@@ -204,7 +210,7 @@ class Wpil_Error
                     $sentences = array();
 
                     if (Wpil_Base::overTimeLimit(20, $time_limit)) {
-                        self::setProcessingPostSuccess();
+//                        self::setProcessingPostSuccess();
                         self::sendResponse(count($not_ready), $proceed, $total);
                     }
                 }
@@ -218,7 +224,7 @@ class Wpil_Error
             }
         }
 
-        self::setProcessingPostSuccess();
+//        self::setProcessingPostSuccess();
         self::sendResponse(count($not_ready), $proceed, $total);
 
         die;
@@ -392,18 +398,21 @@ class Wpil_Error
         $id = $post->id . '_' . $post->type;
 
         $existing = get_option('wpil_error_post_process', array());
-
+        $existing = is_array($existing) ? $existing : array();
         if(isset($existing[$id])){
-            if(empty($existing['completed'])){
-                $existing[$id]++;
-            }else{
-                $existing['completed'] = false;
-            }
+            // Always increment retries when revisiting the same post.
+            // 'completed' used to suppress one increment, but that can hide stalled loops.
+            $existing[$id]++;
+            // $existing['completed'] = false;
             update_option('wpil_error_post_process', $existing);
             return true;
+        }else{
+            $existing[$id] = 0;
         }
 
-        update_option('wpil_error_post_process', array($id => 0, 'completed' => false));
+        // Track only the current post's retry count.
+        // update_option('wpil_error_post_process', array($id => 0, 'completed' => false));
+        update_option('wpil_error_post_process', $existing);
     }
 
     /**
@@ -418,7 +427,7 @@ class Wpil_Error
 
         $existing = get_option('wpil_error_post_process', array());
 
-        if(!empty($existing) && isset($existing[$id]) && empty($existing['completed'])){
+        if(!empty($existing) && isset($existing[$id])){
             return $existing[$id];
         }else{
             return 0;
@@ -431,11 +440,11 @@ class Wpil_Error
      **/
     public static function setProcessingPostSuccess(){
         $existing = get_option('wpil_error_post_process', array());
-
-        if(!empty($existing)){
-            $existing['completed'] = true;
-            update_option('wpil_error_post_process', $existing);
-        }
+        // Intentionally no-op: retry state should be based on post re-entry, not a 'completed' toggle.
+        // if(!empty($existing)){
+        //     $existing['completed'] = true;
+        //     update_option('wpil_error_post_process', $existing);
+        // }
     }
 
     /**
@@ -470,6 +479,8 @@ class Wpil_Error
 
         if ($finish) {
             update_option('wpil_error_reset_run', 0);
+            // scan is complete; remove temporary retry state
+            delete_option('wpil_error_post_process');
             self::mergeIgnoreLinks();
             self::deleteValidLinks();
             update_option('wpil_error_check_links_cron', 1);
@@ -749,7 +760,7 @@ class Wpil_Error
      * @param string $order
      * @return array
      */
-    public static function getData($per_page, $page, $orderby = '', $order = '', $post_id = 0)
+    public static function getData($per_page, $page, $orderby = '', $order = '', $post_id = 0, $search = '')
     {
         global $wpdb;
 
@@ -779,6 +790,63 @@ class Wpil_Error
 
         if(!empty($post_id)){
             $where .= " AND `post_id` = " . (int) $post_id;
+        }
+
+        if(isset($_GET['recommended']) && !empty($_GET['recommended'])){
+            $where .= " AND `recommended_action` IS NOT NULL AND `recommended_action` != ''";
+        }
+
+        $search = is_string($search) ? trim($search) : '';
+        if('' !== $search){
+            if(self::isLikelyBrokenLinkUrlSearch($search)){
+                $search_like = '%' . $wpdb->esc_like($search) . '%';
+                $where .= $wpdb->prepare(" AND (`url` LIKE %s OR REPLACE(`url`, '&amp;', '&') LIKE %s)", $search_like, $search_like);
+            }else{
+                $search_words = preg_split('/\s+/', $search);
+                $search_words = array_values(array_filter(array_unique(array_map('trim', $search_words))));
+
+                if(!empty($search_words)){
+                    $post_title_conditions = [];
+                    $term_title_conditions = [];
+
+                    foreach($search_words as $word){
+                        $word_like = '%' . $wpdb->esc_like($word) . '%';
+                        $post_title_conditions[] = $wpdb->prepare('post_title LIKE %s', $word_like);
+                        $term_title_conditions[] = $wpdb->prepare('name LIKE %s', $word_like);
+                    }
+
+                    $matched_post_ids = [];
+                    if(!empty($post_title_conditions)){
+                        $matched_post_ids = $wpdb->get_col("SELECT `ID` FROM {$wpdb->posts} WHERE " . implode(' AND ', $post_title_conditions));
+                        $matched_post_ids = array_map('intval', $matched_post_ids);
+                        $matched_post_ids = array_filter($matched_post_ids);
+                    }
+
+                    $matched_term_ids = [];
+                    if(!empty($term_title_conditions)){
+                        $matched_term_ids = $wpdb->get_col("SELECT `term_id` FROM {$wpdb->terms} WHERE " . implode(' AND ', $term_title_conditions));
+                        $matched_term_ids = array_map('intval', $matched_term_ids);
+                        $matched_term_ids = array_filter($matched_term_ids);
+                    }
+
+                    $search_where = [];
+                    if(!empty($matched_post_ids)){
+                        $search_where[] = "(`post_type` = 'post' AND `post_id` IN (" . implode(',', $matched_post_ids) . '))';
+                    }
+
+                    if(!empty($matched_term_ids)){
+                        $search_where[] = "(`post_type` = 'term' AND `post_id` IN (" . implode(',', $matched_term_ids) . '))';
+                    }
+
+                    if(!empty($search_where)){
+                        $where .= ' AND (' . implode(' OR ', $search_where) . ')';
+                    }else{
+                        $where .= ' AND 1=0';
+                    }
+                }else{
+                    $where .= ' AND 1=0';
+                }
+            }
         }
 
         $limit = " LIMIT " . (($page - 1) * $per_page) . ',' . $per_page;
@@ -842,6 +910,9 @@ class Wpil_Error
             $esc_url = ($link->url === '{{wpil-empty-url}}') ? '{{wpil-empty-url}}': esc_url($link->url);
 
             $result[$key]->post_title = esc_html($p->getTitle());
+//            if(empty($link->recommended_action) && !empty($link->suggested_url_replacement)){
+//                $result[$key]->recommended_action = 'rewrite';
+//            }
             if(768 == $link->code){
                 $result[$key]->ignore_link = '<a class="wpil_stop_ignore_link" target="_blank" data-link_id="' . esc_attr($link->id) . '" data-post_id="'.esc_attr($p->id).'" data-post_type="'.esc_attr($p->type).'" data-anchor="' . $anchor . '" data-url="'.$esc_url.'">' . __('Stop Ignoring Link', 'wpil') . '</a>';
             }else{
@@ -872,6 +943,43 @@ class Wpil_Error
             'total' => $total,
             'links' => $result
         ];
+    }
+
+    private static function isLikelyBrokenLinkUrlSearch($search)
+    {
+        $search = trim($search);
+        if($search === ''){
+            return false;
+        }
+
+        if(filter_var($search, FILTER_VALIDATE_URL)){
+            return true;
+        }
+
+        if(preg_match('/\s/', $search)){
+            return false;
+        }
+
+        if(
+            strpos($search, '//') === 0 ||
+            strpos($search, '/') === 0 ||
+            strpos($search, './') === 0 ||
+            strpos($search, '../') === 0 ||
+            strpos($search, '?') === 0 ||
+            strpos($search, '#') === 0
+        ){
+            return true;
+        }
+
+        if(preg_match('/^[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i', $search)){
+            return true;
+        }
+
+        if(preg_match('/^[^\/\s]+\/[^\/\s]+$/', $search)){
+            return true;
+        }
+
+        return false;
     }
 
     public static function getCodeMessage($code, $code_in_message = false){
@@ -1052,6 +1160,26 @@ class Wpil_Error
     {
         global $wpdb;
         $wpdb->delete($wpdb->prefix . 'wpil_broken_links', ['id' => $link_id]);
+    }
+
+    /**
+     * Gets a display label for the recommended action.
+     **/
+    public static function get_recommended_action_label($link = null){
+        if(empty($link) || empty($link->recommended_action)){
+            return __('None', 'wpil');
+        }
+
+        switch($link->recommended_action){
+            case 'redirect':
+                return __('Redirect', 'wpil');
+            case 'rewrite':
+                return __('Rewrite URL', 'wpil');
+            case 'delete':
+                return __('Delete Link', 'wpil');
+            default:
+                return __('None', 'wpil');
+        }
     }
 
     /**
@@ -1496,7 +1624,6 @@ class Wpil_Error
                         // if it's not, update the listing
                         $wpdb->update($broken_links, array('code' => $updated_code, 'last_checked' => current_time('mysql', 1), 'check_count' => ($link->check_count + 1)), array('id' => $link->id));
                     }
-
                 }
             }
 
@@ -1607,6 +1734,7 @@ class Wpil_Error
         }
 
         $links = !empty($_POST['links']) ? $_POST['links'] : [];
+        $remove_anchor = (isset($_POST['remove_anchor']) && !empty($_POST['remove_anchor'])) ? 1 : 0;
         foreach ($links as $link) {
             $link = self::getLinkById($link);
             if ($link) {
@@ -1615,6 +1743,7 @@ class Wpil_Error
                     'post_id' => $link->post_id,
                     'post_type' => $link->post_type,
                     'url' => $link->url,
+                    'remove_anchor' => $remove_anchor,
                 ], true);
             }
         }
@@ -1638,6 +1767,7 @@ class Wpil_Error
             '<th class="wpil-activity-panel-post">Post</th>',
             '<th>Anchor Text</th>',
             '<th>Broken URL</th>',
+            '<th>Recommendation</th>',
             '<th>Sentence</th>'
         ];
         $body = '';
@@ -1661,7 +1791,7 @@ class Wpil_Error
                                 <div style="margin: 3px 0;">
                                     <div class="wpil-report-edit-display wpil-activity-panel-anchor-display" ><div class="wpil-anchor-display-text">' . esc_html($link->anchor) . '</div> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $scroll_link], $post->getLinks()->view)) . '" target="_blank"><span class="dashicons dashicons-external" title="'.esc_attr__('View On Page','wpil').'" style="position: relative;top: 3px;"></span></a></div>';
                     $body .=        '<input class="wpil-activity-panel-anchor-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->anchor) . '">';
-                    $body .=   '</div>
+                $body .=   '</div>
                             </td>
                             <td class="wpil-activity-panel-limited-text-cell">
                                 <div style="margin: 3px 0;">
@@ -1669,6 +1799,7 @@ class Wpil_Error
                     $body .=        '<input class="wpil-activity-panel-url-edit wpil-report-edit-input" type="text" value="' . $esc_url . '">';
                     $body .=  '</div>
                             </td>
+                            <td class="wpil-activity-panel-limited-text-cell"><div style="margin: 3px 0;">'.esc_html(self::get_recommended_action_label($link)).'</div></td>
                             <td class="wpil-activity-panel-limited-text-cell"><div style="margin: 3px 0;">'.esc_attr($link->sentence).'</div></td>';
                 $body .= '</tr>';
             }
@@ -1678,6 +1809,7 @@ class Wpil_Error
         '<div class="wpil-update-activity-items" style="display: flex; justify-content: space-between;">
             <a href="#" class="wpil-edit-selected-activity-items inactive" style="margin: 0 0 0 10px;" data-nonce="' . wp_create_nonce(wp_get_current_user()->ID . 'activity-item-action') . '"><span class="wpil-edit-inactive">📝 Edit Selected</span><span class="wpil-edit-active">🛑Stop Editing</span></a>
             <a href="#" class="wpil-update-selected-activity-items wpil_link_edit_update disabled" style="margin: 0 0 0 10px;" data-nonce="' . wp_create_nonce(wp_get_current_user()->ID . 'activity-item-action') . '">🔄 Update Selected</a>
+            <a href="#" class="wpil-apply-selected-recommendations disabled" style="margin: 0 0 0 10px; display:none;" data-nonce="' . wp_create_nonce(wp_get_current_user()->ID . 'broken-links-apply-recommendations') . '">✅ Apply Recommendations</a>
         </div>';
 
         $table .= '
@@ -1721,6 +1853,52 @@ class Wpil_Error
             wp_send_json(array('continue' => array('button_text' => sprintf(__('Deleting High-Confidence Links... %d Remaining'), count($links)))));
         }
 
+    }
+
+    /**
+     * Applies recommended actions to selected broken links.
+     **/
+    public static function ajaxApplyBrokenLinkRecommendations(){
+        Wpil_Base::verify_nonce('broken-links-apply-recommendations');
+
+        if (empty($_POST['links'])) {
+            wp_send_json(array('error' => array('title' => __('Error', 'wpil'), 'text' => __('No links selected.', 'wpil'))));
+        }
+
+        $links = !empty($_POST['links']) ? $_POST['links'] : [];
+        $applied = 0;
+
+        foreach ($links as $link_id) {
+            $link = self::getLinkById((int) $link_id);
+            if (!$link) {
+                continue;
+            }
+
+            $action = !empty($link->recommended_action) ? $link->recommended_action : '';
+            $replacement = !empty($link->suggested_url_replacement) ? $link->suggested_url_replacement : '';
+
+            if($action === 'delete'){
+                Wpil_Link::delete([
+                    'link_id' => $link->id,
+                    'post_id' => $link->post_id,
+                    'post_type' => $link->post_type,
+                    'url' => $link->url,
+                    'anchor' => base64_encode($link->anchor),
+                ], true);
+                $applied++;
+                continue;
+            }
+
+            if(($action === 'redirect' || $action === 'rewrite') && !empty($replacement)){
+                $updated = Wpil_Link::updateExistingLink($link->post_id, $link->post_type, $link->url, $replacement, $link->anchor, '');
+                if($updated){
+                    self::deleteLink($link->id);
+                    $applied++;
+                }
+            }
+        }
+
+        wp_send_json(array('success' => array('title' => __('Success', 'wpil'), 'text' => sprintf(__('Applied %d recommendations.', 'wpil'), $applied))));
     }
 
     public static function get_high_confidence_broken_links(){
@@ -1779,5 +1957,35 @@ class Wpil_Error
             // delete them now
             $wpdb->query("DELETE FROM {$broken_link_table} WHERE `id` IN (" . implode(',', $links_to_remove) . ")");
         }
+    }
+
+    public static function replace_broken_links_with_suggested(){
+        global $wpdb;
+        $table = $wpdb->prefix . 'wpil_broken_links';
+
+        $broken_links = $wpdb->get_results("SELECT * FROM {$table} WHERE `suggested_url_replacement` IS NOT NULL AND `suggested_url_replacement` != '' LIMIT 30");
+
+        if(!empty($broken_links)){
+            foreach($broken_links as $link){
+                if(Wpil_Base::overTimeLimit(5, 25)){
+                    break;
+                }
+
+                $post = new Wpil_Model_Post($link->post_id, $link->post_type);
+                if(!$post->check_if_post_exists()){
+                    // remove the link from the table
+                    $wpdb->query("DELETE FROM {$table} WHERE `id` = {$link->id}");
+                    // proceed to the next
+                    continue;
+                }
+                Wpil_Link::updateExistingLink($post->id, $post->type, $link->url, $link->suggested_url_replacement);
+
+                if(Wpil_Base::action_happened('link_url_updated')){
+                    $wpdb->query("DELETE FROM {$table} WHERE `id` = {$link->id}"); // maybe we should remove the link regardless? TODO: think about
+                }
+            }
+        }
+
+        return empty($broken_links);
     }
 }

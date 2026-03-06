@@ -12,6 +12,7 @@ class Wpil_Table_Error extends WP_List_Table
     function get_columns()
     {
         $options = get_user_meta(get_current_user_id(), 'report_options', true);
+        $show_recommended_actions = (isset($_GET['recommended']) && !empty($_GET['recommended']));
 
         $checkbox_help_overlay = 'class="wpil-report-header-container wpil-is-tooltipped wpil-no-scale wpil-tooltip-target-parent wpil-tooltip-target.column-checkbox" data-wpil-tooltip-read-time="5500" ' . Wpil_Toolbox::generate_tooltip_text('broken-link-report-table-checkbox-col');
         $post_help_overlay = 'class="wpil-report-header-container wpil-is-tooltipped wpil-no-scale wpil-tooltip-target-parent wpil-tooltip-target.column-post" data-wpil-tooltip-read-time="4500" ' . Wpil_Toolbox::generate_tooltip_text('broken-link-report-table-post-col');
@@ -23,6 +24,7 @@ class Wpil_Table_Error extends WP_List_Table
         $code_help_overlay = 'class="wpil-report-header-container wpil-is-tooltipped wpil-no-scale wpil-tooltip-target-parent wpil-tooltip-target.column-code" data-wpil-tooltip-read-time="6500" ' . Wpil_Toolbox::generate_tooltip_text('broken-link-report-table-status-col');
         $created_help_overlay = 'class="wpil-report-header-container wpil-is-tooltipped wpil-no-scale wpil-tooltip-target-parent wpil-tooltip-target.column-created" data-wpil-tooltip-read-time="3500" ' . Wpil_Toolbox::generate_tooltip_text('broken-link-report-table-discovered-col');
         $actions_help_overlay = 'class="wpil-report-header-container wpil-is-tooltipped wpil-no-scale wpil-tooltip-target-parent wpil-tooltip-target.column-actions" data-wpil-tooltip-read-time="4500" ' . Wpil_Toolbox::generate_tooltip_text('broken-link-report-table-delete-col');
+        $recommendation_help_overlay = 'class="wpil-report-header-container wpil-is-tooltipped wpil-no-scale wpil-tooltip-target-parent wpil-tooltip-target.column-recommended_action" data-wpil-tooltip-read-time="4500" ' . Wpil_Toolbox::generate_tooltip_text('broken-link-report-table-recommendation-col');
 
         $columns = array(
             'checkbox' => '<div ' . $checkbox_help_overlay  . '><input type="checkbox" id="wpil_check_all_errors" style="display: none" /></div>',
@@ -35,6 +37,7 @@ class Wpil_Table_Error extends WP_List_Table
 
         $columns = array_merge($columns, array(
             'url'       => '<div ' . $url_help_overlay  . '>' . __('Broken URL', 'wpil') . '</div>',
+            'recommended_action' => '<div ' . $recommendation_help_overlay  . '>' . __('Recommended Action', 'wpil') . '</div>',
             'anchor'    => '<div ' . $anchor_help_overlay  . '>' . __('Anchor', 'wpil') . '</div>',
 //            'sentence'  => '<div ' . $sentence_help_overlay  . '>' . __('Sentence', 'wpil') . '</div>',
             'type'      => '<div ' . $type_help_overlay  . '>' . __('Type', 'wpil') . '</div>',
@@ -49,6 +52,10 @@ class Wpil_Table_Error extends WP_List_Table
 
         if(empty($options['show_broken_link_discovered']) || $options['show_broken_link_discovered'] !== 'on'){
             unset($columns['created']);
+        }
+
+        if(!$show_recommended_actions){
+            unset($columns['recommended_action']);
         }
 
         $columns = array_merge($columns, [
@@ -232,12 +239,13 @@ class Wpil_Table_Error extends WP_List_Table
         $orderby = isset($_REQUEST['orderby']) ? $_REQUEST['orderby'] : '';
         $order = isset($_REQUEST['order']) ? $_REQUEST['order'] : '';
         $post_id = isset($_REQUEST['post_id']) ? (int)$_REQUEST['post_id'] : 0;
+        $search = !empty($_REQUEST['s']) ? sanitize_text_field(wp_unslash($_REQUEST['s'])) : '';
 
         $columns = $this->get_columns();
         $hidden = [];
         $sortable = $this->get_sortable_columns();
         $this->_column_headers = [$columns, $hidden, $sortable];
-        $data = Wpil_Error::getData($per_page, $page, $orderby, $order, $post_id);
+        $data = Wpil_Error::getData($per_page, $page, $orderby, $order, $post_id, $search);
         $this->items = $data['links'];
 
         $this->set_pagination_args(array(
@@ -254,9 +262,32 @@ class Wpil_Table_Error extends WP_List_Table
                 return '<input type="checkbox" data-id="' . $item->id . '" data-broken-link-id="' . $item->id . '" style="display:none" />';
             case 'url':
                 $url = (strpos($item->$column_name, '{{wpil-empty-url') !== false) ? esc_attr__('No URL Found!'): esc_url($item->$column_name);
-                $display_link = (strpos($item->$column_name, '{{wpil-empty-url') !== false) ? '<span class="wpil-error-report-url">' . $url . '</span>': '<span class="wpil-error-report-url" href="' . $url . '" target="_blank">' . $url . '</span>';
+                if(strpos($item->$column_name, '{{wpil-empty-url') !== false){
+                    $display_link = '<span class="wpil-error-report-url">' . $url . '</span>';
+                }else{
+                    $display_link = '<span class="wpil-error-report-url">' .
+                        '<span class="wpil-error-report-url-wrap">' .
+                            '<span class="wpil-error-report-url-text" title="' . esc_attr($url) . '">' . $url . '</span>' .
+                            '<a class="wpil-error-report-url-go" href="' . esc_url($url) . '" target="_blank" rel="noopener noreferrer" title="' . esc_attr__('Go to URL', 'wpil') . '">' .
+                                '<span class="dashicons dashicons-external"></span>' .
+                            '</a>' .
+                        '</span>' .
+                    '</span>';
+                }
 
                 return $display_link;
+            case 'recommended_action':
+                $action = isset($item->recommended_action) ? $item->recommended_action : '';
+                switch($action){
+                    case 'redirect':
+                        return '<span class="wpil-recommendation-tag wpil-recommendation-redirect">' . esc_html__('Redirect', 'wpil') . '</span>';
+                    case 'rewrite':
+                        return '<span class="wpil-recommendation-tag wpil-recommendation-rewrite">' . esc_html__('Rewrite URL', 'wpil') . '</span>';
+                    case 'delete':
+                        return '<span class="wpil-recommendation-tag wpil-recommendation-delete">' . esc_html__('Delete Link', 'wpil') . '</span>';
+                    default:
+                        return '<span class="wpil-recommendation-tag wpil-recommendation-none">' . esc_html__('None', 'wpil') . '</span>';
+                }
             case 'anchor':
                 $view = '';
                 if(isset($item->post_id, $item->post_type) && !empty($item->post_id)){
@@ -321,6 +352,10 @@ class Wpil_Table_Error extends WP_List_Table
                 'edit-post' => '<a class="wpil-action-panel-button" href="'.$post->getLinks()->edit.'" target="_blank">' . sprintf(__('Edit %s', 'wpil'), $object_name) . '</a>',
                 'ignore-broken-link' => $item->ignore_link
             ];
+
+            if(!empty($item->recommended_action)){
+                $actions['apply-recommendation'] = '<a class="wpil-action-panel-button wpil-apply-recommendation" href="#" data-broken-link-id="'.esc_attr($item->id).'" data-nonce="' . wp_create_nonce($user->ID . 'broken-links-apply-recommendations') . '">' . __('Apply Recommendation', 'wpil') . '</a>';
+            }
 
             $content = 
             '<div class="wpil-report-action-panel-wrapper">
@@ -423,11 +458,52 @@ class Wpil_Table_Error extends WP_List_Table
                     </script>
                     <div class="wpil-hamburger-filter-container" style="display:flex; flex-direction: column;">
                         <div class="wpil-hamburger-filter-option">
+                            <div class="wpil-hamburger-filter-title">Search Broken Links</div>
+                            <div class="wpil-hamburger-filter-fields field-200">
+                                <form class="wpil-report-search-form-inner" method="get">
+                                    <input type="hidden" name="page" value="link_whisper" />
+                                    <input type="hidden" name="type" value="error" />
+                                    <?php if(!empty($_GET['codes'])){ ?>
+                                        <input type="hidden" name="codes" value="<?php echo esc_attr(wp_unslash($_GET['codes'])); ?>" />
+                                    <?php } ?>
+                                    <?php if(!empty($_GET['post_type'])){ ?>
+                                        <input type="hidden" name="post_type" value="<?php echo esc_attr(wp_unslash($_GET['post_type'])); ?>" />
+                                    <?php } ?>
+                                    <?php if(!empty($_GET['category'])){ ?>
+                                        <input type="hidden" name="category" value="<?php echo (int)$_GET['category']; ?>" />
+                                    <?php } ?>
+                                    <?php if(!empty($_GET['orderby'])){ ?>
+                                        <input type="hidden" name="orderby" value="<?php echo esc_attr(wp_unslash($_GET['orderby'])); ?>" />
+                                    <?php } ?>
+                                    <?php if(!empty($_GET['order'])){ ?>
+                                        <input type="hidden" name="order" value="<?php echo esc_attr(wp_unslash($_GET['order'])); ?>" />
+                                    <?php } ?>
+                                    <?php if(!empty($_GET['post_id'])){ ?>
+                                        <input type="hidden" name="post_id" value="<?php echo (int)$_GET['post_id']; ?>" />
+                                    <?php } ?>
+                                    <?php if(!empty($_GET['recommended'])){ ?>
+                                        <input type="hidden" name="recommended" value="<?php echo esc_attr(wp_unslash($_GET['recommended'])); ?>" />
+                                    <?php } ?>
+                                    <p class="search-box">
+                                        <label class="screen-reader-text" for="wpil-error-search-input"><?php esc_html_e('Search', 'wpil'); ?></label>
+                                        <input type="search" id="wpil-error-search-input" name="s" value="<?php echo isset($_REQUEST['s']) ? esc_attr(wp_unslash($_REQUEST['s'])) : ''; ?>" placeholder="<?php esc_attr_e('Keyword or URL', 'wpil'); ?>" />
+                                        <?php submit_button(__('Search', 'wpil'), '', '', false, array('id' => 'wpil-error-search-submit')); ?>
+                                    </p>
+                                </form>
+                            </div>
+                        </div>
+                        <div class="wpil-hamburger-filter-option">
+                            <div class="wpil-hamburger-filter-title">Delete Links</div>
+                            <div class="wpil-hamburger-filter-fields">
+                                <a href="javascript:void(0)" id="wpil_error_delete_high_confidence" data-nonce="<?php echo wp_create_nonce(get_current_user_id() . 'broken-links-delete-selected'); ?>" class="button-primary <?php echo ($high_confidence_link_count>0)?'':'button-disabled';?> wpil-is-tooltipped wpil-no-scale" data-wpil-tooltip-read-time="6500" <?php echo Wpil_Toolbox::generate_tooltip_text('broken-link-report-table-bulk-delete');?>><?php echo $high_confidence_button_text; ?></a>
+                            </div>
+                        </div>
+                        <div class="wpil-hamburger-filter-option">
                             <div class="wpil-hamburger-filter-title">Filter By Code</div>
                             <div class="wpil-hamburger-filter-fields">
                                 <div class="actions bulkactions" id="error_table_code_filter" style="padding: 0 1px 0 0;">
                                     <input type="hidden" class="current-post" value="<?php echo (isset($_GET['post_id']) && !empty($_GET['post_id'])) ? (int) $_GET['post_id']: 0; ?>">
-                                    <div class="wpil-is-tooltipped wpil-no-scale" data-wpil-tooltip-read-time="6500" style="display:inline-block;width: 100%" <?php echo Wpil_Toolbox::generate_tooltip_text('broken-link-report-codes');?>>
+                                    <div class="wpil-is-tooltipped wpil-no-scale" data-wpil-tooltip-read-time="6500" style="display:inline-block;" <?php echo Wpil_Toolbox::generate_tooltip_text('broken-link-report-codes');?>>
                                         <div class="codes" style="margin-bottom: 5px;">
                                             <div class="item closed">Status Codes <i class="dashicons dashicons-arrow-down"></i><i class="dashicons dashicons-arrow-up"></i></div>
                                             <?php if(count($codes) > 3){ ?>
@@ -441,14 +517,14 @@ class Wpil_Table_Error extends WP_List_Table
                                                 </div>
                                             <?php endforeach; ?>
                                         </div>
-                                        <span class="wpil-filter-submit-button" id="wpil_error_filter" style="width: 90%;"><?php echo "🔎 ";?> Filter</span>
+                                        <span class="button-primary" id="wpil_error_filter">Filter by Status Code</span>
                                     </div>
                                 </div>
                             </div>
                         </div>
                         <div class="wpil-hamburger-filter-option">
                             <div class="wpil-hamburger-filter-title">Filter Posts</div>
-                            <div class="wpil-hamburger-filter-fields">
+                            <div class="wpil-hamburger-filter-fields field-150">
                                 <?php
                                 $post_type = !empty($_GET['post_type']) ? $_GET['post_type'] : 0;
                                 $cat = !empty($_GET['category']) ? $_GET['category'] : 0;
@@ -469,7 +545,7 @@ class Wpil_Table_Error extends WP_List_Table
                                         <?php endforeach; */ ?>
                                     </select>
                                     <!--/filter by post type-->
-                                    <span class="wpil-filter-submit-button wpil_error_table_filter_submit" style="display: inline-block; width: 90%;margin: 10px 0 0 0;">🔎 Filter</span>
+                                    <span class="button-primary">Filter Posts</span>
                                     <input type="hidden" class="post-filter-nonce" value="<?php echo wp_create_nonce(get_current_user_id() . 'wpil_filter_nonce'); ?>">
                                 </div>
                             </div>

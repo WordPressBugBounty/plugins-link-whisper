@@ -42,7 +42,7 @@
     $available_models = Wpil_AI::get_available_models();
 
     // get the currently open setting tab. Default to "General Settings" if no tab is selected
-    $current_tab = (isset($_GET['tab']) && !empty($_GET['tab'])) ? $_GET['tab']: 'general-settings';
+    $current_tab = (isset($_GET['tab']) && !empty($_GET['tab'])) ? esc_attr($_GET['tab']): 'general-settings';
 
     // get if we're highlighting a setting
     $highlight = (isset($_GET['setting_highlight']) && !empty($_GET['setting_highlight'])) ? $_GET['setting_highlight']: '';

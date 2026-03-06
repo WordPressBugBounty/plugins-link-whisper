@@ -2566,6 +2566,9 @@ function triggerConfettiExplosion() {
 //            case 'el':
 //                $language = 'greek';
 //                break;
+            case 'tr_TR':
+                $language = 'turkish';
+                break;
             default:
                 $language = 'english';
                 break;
@@ -2764,6 +2767,9 @@ function triggerConfettiExplosion() {
 //            case 'greek':
 //                $file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/ignore_word_lists/GK_ignore_words.txt';
 //                break;
+            case 'turkish':
+                $file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/ignore_word_lists/TK_ignore_words.txt';
+                break;
             default:
                 $file = WP_INTERNAL_LINKING_PLUGIN_DIR . 'includes/ignore_word_lists/EN_ignore_words.txt';
                 break;
@@ -2985,8 +2991,9 @@ function triggerConfettiExplosion() {
             'ukrainian'     => 'Українська',
             'indonesian'    => 'Bahasa Indonesia',
             'czech'         => 'Čeština',
-            'bulgarian'     => 'български'
+            'bulgarian'     => 'български',
 //            'greek'         => 'Ελληνικά'
+            'turkish'       => 'Türkçe'
         );
         
         return $languages;
@@ -3066,8 +3073,9 @@ function triggerConfettiExplosion() {
                         'uk' => 'ukrainian',
                         'id' => 'indonesian',
                         'cs' => 'czech',
-                        'bg' => 'bulgarian'
+                        'bg' => 'bulgarian',
 //                        'el' => 'greek'
+                        'tr' => 'turkish'
                     );
 
                     // if we support the language, return it as the active one
@@ -3117,8 +3125,9 @@ function triggerConfettiExplosion() {
                         'uk' => 'ukrainian',
                         'id' => 'indonesian',
                         'cs' => 'czech',
-                        'bg' => 'bulgarian'
+                        'bg' => 'bulgarian',
 //                        'el' => 'greek'
+                        'tr' => 'turkish'
                     );
 
                     // if we support the language, return it as the active one

@@ -4,7 +4,7 @@ jQuery(document).ready(function($){
         $('.wpil-email-signup-offer').css('display', 'flex');
 
         // listen for the user dismissing the email sign up notice, and hide the notice if he does dismiss it
-        $('.wpil-email-signup-offer .notice-dismiss').on('click', function(e){
+        $(document).on('click', '.wpil-email-signup-offer .notice-dismiss', function(e){
             $.ajax({
                 type: 'POST',
                 url: wpil_ajax.ajax_url,

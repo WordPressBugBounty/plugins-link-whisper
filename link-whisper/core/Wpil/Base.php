@@ -700,6 +700,7 @@ class Wpil_Base
             }
         }
 
+        $script_handles = array();
         $js_path = 'js/wpil_admin.js';
         $f_path = WP_INTERNAL_LINKING_PLUGIN_DIR.$js_path;
         $ver = filemtime($f_path);
@@ -968,6 +969,11 @@ class Wpil_Base
             $script_params['wpil_email_dismiss_nonce']  = wp_create_nonce('wpil_email_dismiss_nonce' . (int)$user->ID);
             $script_params['current_user']              = (int)$user->ID;
 
+            // say that we added the secondary scripts to trigger the variable outputting
+            $added_secondary = true;
+            // and register the handle
+            $script_handles[] = 'wpil_email_signup_script';
+
             wp_register_style('wpil_convertkit_style', WP_INTERNAL_LINKING_PLUGIN_URL . 'css/email_signup.css');
             wp_enqueue_style('wpil_convertkit_style');
         }
@@ -980,6 +986,11 @@ class Wpil_Base
             $script_params['wpil_review_dismiss_nonce'] = wp_create_nonce('wpil_review_notice_nonce' . (int)$user->ID);
             $script_params['wpil_review_nonce']         = wp_create_nonce('wpil_review_nonce' . (int)$user->ID);
             $script_params['current_user']              = (int)$user->ID;
+
+            // say that we added the secondary scripts to trigger the variable outputting
+            $added_secondary = true;
+            // and register the handle
+            $script_handles[] = 'wpil_review_notice_script';
 
             wp_register_style('wpil_convertkit_style', WP_INTERNAL_LINKING_PLUGIN_URL . 'css/email_signup.css');
             wp_enqueue_style('wpil_convertkit_style');
@@ -998,6 +1009,11 @@ class Wpil_Base
 
         if($added_standard){
             wp_localize_script('wpil_admin_script', 'wpil_ajax', $script_params);
+        }elseif($added_secondary){
+            foreach($script_handles as $handle){
+                wp_localize_script($handle, 'wpil_ajax', $script_params);
+                break; // just need this once
+            }
         }
     }
 
@@ -1366,9 +1382,6 @@ class Wpil_Base
      */
     public static function activate()
     {
-        update_option(WPIL_EMAIL_OFFER_DISMISSED, '');
-        update_option(WPIL_PREMIUM_NOTICE_DISMISSED, '');
-
         if('' === get_option(WPIL_OPTION_IGNORE_NUMBERS, '')){
             update_option(WPIL_OPTION_IGNORE_NUMBERS, '1');
         }

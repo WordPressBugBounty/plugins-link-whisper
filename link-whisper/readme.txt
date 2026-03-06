@@ -1,28 +1,35 @@
 Link Whisper Free
-Contributors: linkwhspr
+Contributors: sreenathlw, mattbissett, linkwhspr
 Tags: links, SEO, internal linking, link building, orphan content
 Requires at least: 4.6
-Tested up to: 6.8.2
-Stable Tag: 0.9.1
+Tested up to: 6.9.1
+Stable Tag: 0.9.2
 Requires PHP: 5.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Quickly build smart internal links both to and from your content. Additionally, gain valuable insights with in-depth internal link reporting.
+The AI-powered internal linking plugin for WordPress. Build internal links faster, find linking opportunities, and improve SEO automatically.
 
 == Description ==
 
-Are you interested in a faster and easier way to build internal links? If so, Link Whisper is a tool that can help you gain the value of powerful internal links without having to manually build them.
+Link Whisper is an AI-powered internal linking plugin for WordPress trusted by 50,000+ site owners, including sites featured by Matthew Woodward, Authority Hacker, and Diggity Marketing. It helps you find internal linking opportunities, build links faster, and improve SEO without manual work.
+
+Stop building internal links manually. Link Whisper's AI analyzes your content and whispers exactly which pages should link to each other — right inside your WordPress editor. Accept the suggestion. Done. Your site's link structure improves in minutes, not months.
+
+It also finds orphan pages (posts with zero internal links) so nothing on your site gets left behind.
 
 ## SMALL SUGGESTIONS, BIG RESULTS
-Link Whisper quietly and quickly “whispers” contextual internal link suggestions that can both help your readers better find content on your site and helps Google rank your site better due to the improved link structure.
+Link Whisper’s advanced AI now “whispers” smart, contextual internal link suggestions in real time, helping you create a seamless journey for your readers without the manual work.
 
-Google, Moz, Search Engine Land, and even Bing knows that internal links are important. Link Whisper helps you take what was once a time-intensive chore (that gets even bigger as your site grows) and turns it into an opportunity for you to have a better-optimized site than your competitors.
+Users created over 10 million links in the past 30 days alone and report saving around 12 hours per week on internal linking tasks. By using semantic analysis to build a powerful site structure, Link Whisper makes it easier for Google to crawl, understand, and rank your content for maximum visibility.
 
-## AUTOMATIC LINK SUGGESTIONS AS YOU WRITE
-Links Whisper is smart. Powered by artificial intelligence, Link Whisper starts suggesting relevant internal links when you start writing your article…right within the WordPress editor.
+Google, Moz, Search Engine Land, and even Bing knows that internal links are important. LinkWhisper helps you take what was once a time-intensive chore (that gets even bigger as your site grows) and turns it into an opportunity for you to have a better-optimized site than your competitors.
 
-Depending on how many articles you have on your site and the relevance of your existing content, Link Whisper will suggest dozens or more internal links from the content you are editing.
+## HOW LINK WHISPER'S AI WORKS
+
+Link Whisper doesn't just match keywords. Its AI reads your content like a human editor — understanding context, topic relationships, and semantic relevance — to surface the linking suggestions a senior SEO would make manually. LinkWhisper's AI-powered analysis runs natively without requiring any separate API keys.
+
+The result: higher-quality suggestions with less noise, especially on larger sites where keyword-only matching creates too many irrelevant results.
 
 Just copy the link suggestion and then paste where suggested. Internal links done.
 
@@ -31,7 +38,7 @@ Just copy the link suggestion and then paste where suggested. Internal links don
 ## INTERNAL LINKS REPORTING
 Ever wondered if you have any “orphan” content out there that doesn’t have a single internal link built to it?
 
-With Link Whisper you can quickly see which pages have very few or no internal links pointing to them.
+With LinkWhisper you can quickly see which pages have very few or no internal links pointing to them.
 
 In addition to the number of links pointing to a given post, the reports page also shows how many outbound internal links and external links are coming from each article.
 
@@ -46,20 +53,36 @@ Within the settings, you can ask link whisper to ignore certain words or phrases
 
 Want to open all internal links in a new tab? No problem! Link Whisper has an optional setting for that.
 
-== Premium Features for Link Whisper ==
+## Start free. Upgrade when you're ready to go hands-off.
 
-You can see everything offered in the premium version of [Link Whisper Right Here.](https://www.linkwhisper.com)
+The free version gives you AI-powered link suggestions right in your editor and a link health report showing orphan pages and link distribution. Most users see immediate value on their first writing session.
+
+When you're ready to add links in bulk, auto-link across your entire site, or get full broken link reporting — that's when Link Whisper Premium pays for itself.
+
+== Premium Features for LinkWhisper ==
+
+You can see everything offered in the premium version of [LinkWhisper Right Here.](https://www.linkwhisper.com)
 <ul>
+    <li>[Premium feature] - Forget spending hours manually configuring rules; Link Whisper’s one-click setup uses native AI to quickly map your site’s topical clusters and fix orphan pages. With a single click, the plugin implements a 'set-it-and-forget-it' internal link strategy that keeps your site optimized and crawl-ready as you grow.</li>
     <li>[Premium feature] - Add multiple links at once with anchor text already selected.  Just check the box and click down and Link Whisper automatically adds the links in WordPress for you. (No need to copy and paste one at a time).</li>
+    <li>[Premium feature] - Orphan Pages Finder — Instantly surface pages on your site with zero internal links pointing to them. Orphaned pages don't rank. Now you'll know exactly which ones need fixing.
     <li>[Premium feature] - Ability to add inbound internal links to old pages that may have been orphaned or simply need more internal link "juice".  The feature alone can have a massive impact on your rankings in Google.</li>
     <li>[Premium feature] - Add, edit, or delete links quickly to any page on your site directly from the reports page.</li>
     <li>[Premium feature] - Edit sentences right within Link Whisper (huge time saver), click to alter anchor text, or add custom URLs.</li>
-    <li>[Premium feature] - Ignore certain URLs or categories on site so Link Whisper doesn't ever suggest those as link opportunities.  Take more control over the link structure of your site.</li>
-    <li>[Premium feature] – Add target SEO keywords that you are trying to rank for in Google and Link Whisper will suggest the most relevant links for your articles. Link Whisper can even import target SEO keywords from Yoast, RankMath and other SEO plugins.</li>
+    <li>[Premium feature] - Ignore certain URLs or categories on site so LinkWhisper doesn't ever suggest those as link opportunities.  Take more control over the link structure of your site.</li>
+    <li>[Premium feature] – Add target SEO keywords that you are trying to rank for in Google and LinkWhisper will suggest the most relevant links for your articles. Link Whisper can even import target SEO keywords from Yoast, RankMath and other SEO plugins.</li>
     <li>[Premium feature] - Auto-linking. Set your keywords and the URLs you want those keywords to link to.  Link Whisper will automatically find all mentions of those keywords and link to the location of your choice.  Super powerful and you have control to link only once per post if you want.</li>
     <li>[Premium feature] - Bulk link changer. Has your site ever changed URL structure?  You can now change the old URL to a new URL across every mention on your site with the click of a button.</li>
     <li>[Premium feature] - Broken link checker. Link Whisper can check your site for broken links and allow you to edit or delete them. Getting a lot of false positives? Link Whisper will double check its findings over a period of time to make sure the link really is broken and not temporarily unavailable.</li>
     <li>[Premium feature] - Get cross-site linking suggestions. You can "connect" multiple sites running Link Whisper Premium to each other, and Link Whisper will show you relevant linking suggestions between them.</li>
+</ul>
+
+### What "One-Click" Actually Does (Technical Breakdown): ###
+<ul>
+    <li>**Auto-Indexing:** It performs an immediate semantic scan of your existing 100 or 10,000+ posts.</li>
+    <li>**Topical Clustering:** The AI automatically groups related posts into "silos" so the links it creates actually make sense to Google.</li>
+    <li>**Bulk Linking:** It identifies the best places to insert links across your entire history of content and can add them all at once.</li>
+    <li>**Native LLM Activation:** Upon activation, it automatically connects to its purpose-built AI engine, there is no need to manually set up OpenAI API keys to get started.</li>
 </ul>
 
 == Link Whisper Premium Walkthrough Video ==
@@ -68,31 +91,41 @@ https://www.youtube.com/watch?v=CYDWA1L-Mbs
 
 == Frequently Asked Questions ==
 
+= Why Is Internal Linking Important for SEO? =
+
+Internal linking helps search engines understand how your content is connected and which pages are most important. A strong internal linking structure improves crawlability, distributes authority across your site, and helps users discover more of your content. Link Whisper makes internal link building faster and more strategic by showing you the best linking opportunities automatically.
+
 = What Kind of Link Suggestions Can I Expect? =
 
-Link Whisper suggests link based on the content of your site. In other words, it finds relevant connections that are related. These in-content, relevant links are the most powerful type of internal link there is.
+Link Whisper helps with internal link building by analyzing your content and identifying relevant connections between your posts and pages. It suggests natural, in-context links that make sense to readers and strengthen your site structure for SEO.
 
-You are in complete control to either accept or reject the link suggestion.
+You will see suggestions based on topics, keywords, and meaning, not just exact word matches. This means the links are typically more relevant and useful than manual linking.
+
+You are always in full control. You can accept, edit, or ignore any suggestion with a click.
 
 = What if I Want to Remove Links After I Make Them? =
 
-Internal links added with Link Whisper act just like any other link on your site. You can remove the links within your editor, just like you would any other link.
+Yes. Any links you create with Link Whisper can be removed or changed at any time. The plugin simply helps you with internal link management, but the links themselves are normal WordPress links that you control.
+
+Just open your post or page, edit the link, and save. :)
 
 = What if I Uninstall the Plugin, What Happens to All My Links? =
 
 All your links will remain active, even if you uninstall the plugin! Once you add internal links to your site, they are just like any other link. They are “permanent” links that will only be removed if you want them to (even if you stop using Link Whisper…which we hope you never do!).
 
-= Will Link Whisper Help Me Rank Better in Google? =
+= Will Internal Linking Help Me Rank Better in Google? =
 
-There is no guarantee that you will rank better in Google just because you start using Link Whisper. However, internal links definitely can have a positive impact on your rankings, so ideally you will see improved traffic as you use the smart link suggestions from Link Whisper.
+Internal links are one of Google's strongest on-page ranking signals — and Link Whisper makes sure you're not leaving any of them on the table. Thousands of users report improved rankings and traffic after getting their internal link structure right.
 
-= Who Should Use Link Whisper? =
+= Who Should Use LinkWhisper? =
 
-Link Whisper is ideal for bloggers, niche site creators, and anyone with a content heavy website. The more content you have on your site, the more powerful Link Whisper becomes.
+Link Whisper is designed for bloggers, marketers, agencies, and website owners who want to improve their SEO with better internal linking. It is especially helpful for content-heavy WordPress sites where managing links manually becomes time-consuming, particularly as AI tools make it easier than ever to publish more content.
+
+The more content you publish, the more opportunities Link Whisper can find to strengthen your site structure and help your pages rank.
 
 = What is Required to Use Link Whisper? =
 
-Link Whisper is a WordPress plugin. So, all you need is a self-hosted website that has WordPress installed.
+Link Whisper is a WordPress plugin, so you just need a self-hosted WordPress site where you can install plugins. After activation, it integrates into your dashboard and starts helping you find internal linking opportunities and improve SEO right away.
 
 = What if I Don’t Like the Link Suggestions I’m Getting? =
 
@@ -100,7 +133,7 @@ Remember, you can customize the settings to fine tune the types of links are sug
 
 = Can I use Link Whisper with languages other than English? =
 
-Yes you can! Link Whisper supports:
+Yes you can! LinkWhisper supports:
 
 <ul>
     <li>German</li>
@@ -121,13 +154,18 @@ Yes you can! Link Whisper supports:
     <li>Hebrew</li>
     <li>Hindi</li>
     <li>Hungarian</li>
+    <li>Ukrainian</li>
+    <li>Indonesian</li>
+    <li>Czech</li>
+    <li>Bulgarian</li>
+    <li>Turkish</li>
 </ul>
 
 = Does Link Whisper work with custom post types or WooCommerce products? =
 
 Yes to both!
 
-WooCommerce was a special focus when developing Link Whisper because we knew it would be important to store owners.
+WooCommerce was a special focus when developing LinkWhisper because we knew it would be important to store owners.
 
 Link Whisper should work with most custom post types since we adhere to WordPress post type standards for data retrieval.
 
@@ -158,6 +196,13 @@ We are confident that you’ll be happy with Link Whisper Premium. However, if y
 15. [Premium] The URL Changer allows you to update old links to point to new URLs.
 
 == Changelog ==
+= 0.9.2 =
+* [NEW LANGUAGE] Adding support for Turkish!!!
+* [IMPROVEMENT] Adding search function for the broken link report!
+* [UX/UI] Adding "View" links in the broken link report so you can more easily check if a link is broken.
+* [SECURITY] Fixing possible cross-site scripting vulnerability.
+* [BUGFIX] Fixing bug that would keep dismissed banners from staying dismissed.
+
 = 0.9.1 =
 * [SECURITY] Fixing possible cross-site scripting vulnerability.
 * [BUGFIX] Fixing minor PHP notice on the AI Subscription page when no plan is active.
