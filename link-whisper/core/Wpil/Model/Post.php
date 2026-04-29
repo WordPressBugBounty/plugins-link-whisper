@@ -610,7 +610,11 @@ class Wpil_Model_Post
         // if there are simple JSON data blocks in the content
         if(false !== strpos($content, '<!-- wp:') && (false !== strpos($content, '{"') || false !== strpos($content, '{\"'))){
             // remove the JSON part so we don't add links to it...
-            $content = preg_replace('#(<!-- wp:[a-zA-Z\/_\-1-9]*? )({(?:.*?)})( (?:\/)*-->)#', '$1$3', $content); // currently removing just the JSON in case the tag is useful
+            if(class_exists('ACF') && empty(get_option('wpil_disable_acf', false)) &&Wpil_Settings::getContentFormattingLevel() > 1){ // let acf blocks through tho if we're able to process them
+                $content = preg_replace('#(<!--\s*wp:(?!acf(?:\/|\b))[a-zA-Z0-9\/_\-]*?\s)({(?:.*?)})(\s*(?:\/)?-->)#', '$1$3', $content); // currently removing just the JSON in case the tag is useful
+            }else{
+                $content = preg_replace('#(<!-- wp:[a-zA-Z\/_\-1-9]*? )({(?:.*?)})( (?:\/)*-->)#', '$1$3', $content); // currently removing just the JSON in case the tag is useful
+            }
 
             // todo: either remove this or make it more intelligent so we can remove blocks that really can't be handled
             // if there are still JSON data blocks in the content
@@ -1095,6 +1099,33 @@ class Wpil_Model_Post
     }
 
     /**
+     * Get display name for the real post/term type.
+     *
+     * @return string
+     */
+    function getRealTypeName()
+    {
+        $real_type = $this->getRealType();
+        if (empty($real_type)) {
+            return '';
+        }
+
+        if ($this->type == 'term') {
+            $taxonomy = get_taxonomy($real_type);
+            if (!empty($taxonomy) && !empty($taxonomy->labels) && !empty($taxonomy->labels->singular_name)) {
+                return $taxonomy->labels->singular_name;
+            }
+        } elseif ($this->type == 'post') {
+            $post_type = get_post_type_object($real_type);
+            if (!empty($post_type) && !empty($post_type->labels) && !empty($post_type->labels->singular_name)) {
+                return $post_type->labels->singular_name;
+            }
+        }
+
+        return ucwords(str_replace(array('-', '_'), ' ', $real_type));
+    }
+
+    /**
      * Get post status
      *
      * @return string
@@ -1221,6 +1252,8 @@ class Wpil_Model_Post
                                 'target_id' => (isset($dat->target_id) && !empty($dat->target_id)) ? $dat->target_id: 0,
                                 'target_id' => (isset($dat->target_type) && !empty($dat->target_type)) ? $dat->target_type: 0,
                                 'anchor_word_count' => (isset($dat->anchor_word_count) && !empty($dat->anchor_word_count)) ? $dat->anchor_word_count: 0,
+                                'url_slug_word_count' => (isset($dat->url_slug_word_count) && !empty($dat->url_slug_word_count)) ? $dat->url_slug_word_count: 0,
+                                'anchor_slug_positional_match' => (isset($dat->anchor_slug_positional_match) && is_numeric($dat->anchor_slug_positional_match)) ? $dat->anchor_slug_positional_match: 0,
                             ]);
                         }else{
                             $meta['wpil_links_outbound_internal_count']++;
@@ -1239,6 +1272,8 @@ class Wpil_Model_Post
                                 'target_id' => (isset($dat->target_id) && !empty($dat->target_id)) ? $dat->target_id: 0,
                                 'target_id' => (isset($dat->target_type) && !empty($dat->target_type)) ? $dat->target_type: 0,
                                 'anchor_word_count' => (isset($dat->anchor_word_count) && !empty($dat->anchor_word_count)) ? $dat->anchor_word_count: 0,
+                                'url_slug_word_count' => (isset($dat->url_slug_word_count) && !empty($dat->url_slug_word_count)) ? $dat->url_slug_word_count: 0,
+                                'anchor_slug_positional_match' => (isset($dat->anchor_slug_positional_match) && is_numeric($dat->anchor_slug_positional_match)) ? $dat->anchor_slug_positional_match: 0,
                             ]);
                         }
                     }else{
@@ -1257,6 +1292,8 @@ class Wpil_Model_Post
                             'target_id' => (isset($dat->target_id) && !empty($dat->target_id)) ? $dat->target_id: 0,
                             'target_id' => (isset($dat->target_type) && !empty($dat->target_type)) ? $dat->target_type: 0,
                             'anchor_word_count' => (isset($dat->anchor_word_count) && !empty($dat->anchor_word_count)) ? $dat->anchor_word_count: 0,
+                            'url_slug_word_count' => (isset($dat->url_slug_word_count) && !empty($dat->url_slug_word_count)) ? $dat->url_slug_word_count: 0,
+                            'anchor_slug_positional_match' => (isset($dat->anchor_slug_positional_match) && is_numeric($dat->anchor_slug_positional_match)) ? $dat->anchor_slug_positional_match: 0,
                         ]);
                     }
                 }
@@ -1595,4 +1632,18 @@ class Wpil_Model_Post
         return $date;
     }
 
+    /**
+     * Checks to make sure the current post does in fact exist!
+     **/
+    function check_if_post_exists(){
+        global $wpdb;
+        $posty = null;
+        if($this->type === 'post'){
+            $posty = $wpdb->get_row($wpdb->prepare("SELECT `ID` FROM {$wpdb->posts} WHERE `ID` = %d", $this->id));
+        }else{
+            $posty = $wpdb->get_row($wpdb->prepare("SELECT `term_id` FROM {$wpdb->term_taxonomy} WHERE `term_id` = %d", $this->id));
+        }
+
+        return !empty($posty);
+    }
 }

@@ -492,7 +492,7 @@ class Wpil_Table_Error extends WP_List_Table
                                 </form>
                             </div>
                         </div>
-                        <div class="wpil-hamburger-filter-option">
+                        <div class="wpil-hamburger-filter-option" style="display:none;">
                             <div class="wpil-hamburger-filter-title">Delete Links</div>
                             <div class="wpil-hamburger-filter-fields">
                                 <a href="javascript:void(0)" id="wpil_error_delete_high_confidence" data-nonce="<?php echo wp_create_nonce(get_current_user_id() . 'broken-links-delete-selected'); ?>" class="button-primary <?php echo ($high_confidence_link_count>0)?'':'button-disabled';?> wpil-is-tooltipped wpil-no-scale" data-wpil-tooltip-read-time="6500" <?php echo Wpil_Toolbox::generate_tooltip_text('broken-link-report-table-bulk-delete');?>><?php echo $high_confidence_button_text; ?></a>

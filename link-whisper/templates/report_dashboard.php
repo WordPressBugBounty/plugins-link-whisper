@@ -1,670 +1,797 @@
 <div class="wrap wpil-report-page wpil_styles">
-    <?php
+<?php
+    // Error report codes
     $codes = Wpil_Dashboard::getAllErrorCodes();
     $codes = (!empty($codes)) ? '&codes=' . implode(',', $codes) : '';
-    ?>
-    <script type="text/javascript">
-        jQuery(document).ready(function ($) {
-            $('.actionheader').click(function () {
-              // Toggle the open class on the arrow
-              $(this).find('.actiontoggle-arrow').toggleClass('open');
-              // Toggle the details section inside the closest .card
-              $(this).closest('.actioncard').find('.actiondetails').slideToggle();
-            });
-          });
-    </script>
-    <style type="text/css">
-        .box.wpil-is-tooltipped.wpil-no-scale {
-            cursor: move;
-        }
-    </style>
-    <style>
-        .reportcontainer {
-            display: flex;
-            gap: 20px; /* Space between columns */
-            padding: 20px 0;
-            width: 100%;
-        }
-        .reportbox {
-            flex: 1; /* Equal width */
-            background: white;
-            padding: 20px;
-            text-align: center;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-        .reportbox i {
-            font-size: 30px;
-            margin-bottom: 10px;
-            display: block;
-            color: #000;
-            width: 100%;
-            text-align: left;
-        }
-        .reportbox h3 {
-            font-size: 18px;
-            color: gray;
-            margin-bottom: 5px;
-            padding-bottom: 10px;
-            font-weight: bold !important;
-        }
-        .reportbox p {
-            font-size: 20px;
-            font-weight: bold;
-        }
-        .blockdash {
-            padding-top: 20px;
-            text-align: left;
-        }
-        .blockdash a {
-            font-size: 16px;
-            font-weight: 700;
-        }
-        .topbarhandle a:focus{
-            user-select: none;
-            box-shadow: none;
-        }
-        .topbarhandle .reportbox .blockdash {
-            padding-top: 0px;
-        }
-        .topbarhandle .reportbox .blockdash h3 {
-            margin-top: 0px;
-            font-size: 16px;
-            padding-bottom: 18px;
-        }
-        .topbarhandle .reportbox .blockdash a,
-        .topbarhandle .reportbox .wpil-dashboard-infostat {
-            font-size: 30px;
-            font-weight: 500;
-            color: #000000;
-        }
-        .actioninfo-grid strong {
-            font-size: 16px;
-            color: grey;
-        }
-        #report_dashboard .box:nth-child(n+2) {
-            margin-left: 10px !important;
-        }
-        /* Responsive: Stack on smaller screens */
-        @media (max-width: 768px) {
-            .reportcontainer {
-                flex-wrap: wrap;
-            }
-            .reportbox {
-                max-width: 50%; /* 2 columns on medium screens */
-            }
-        }
-        @media (max-width: 480px) {
-            .reportbox {
-                max-width: 100%; /* 1 column on small screens */
-            }
-        }
-    </style>
-    <style type="text/css">
-        .actioncontainer {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 20px;
-        }
-        .actioncolumn {
-          flex: 1 1 48%;  /* Takes up 48% of the container width */
-          box-sizing: border-box;
-        }
-        .actioncontent {
-          background-color: white;
-          padding: 20px;
-          border-radius: 8px;
-          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-          min-height: 400px;
-        }
-        /* Responsive design: Stack columns on smaller screens */
-        @media (max-width: 768px) {
-          .actioncolumn {
-            flex: 1 1 100%;  /* Stacks the columns vertically */
-          }
-        }
-        .actioncard {
-          background: white;
-          border-radius: 10px;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-          padding: 20px;
-          max-width: 800px;
-          margin: 0 auto 15px;
-        }
-        .actionheader {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          /*margin-bottom: 15px;*/
-          /*cursor: pointer;*/
-        }
-        .actionheader-left {
-          display: flex;
-          align-items: center;
-          font-size: 18px;
-        }
-        .actionheader-left img {
-          width: 40px;
-          margin-right: 10px;
-        }
-        .actionprice-book {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-        .actionprice {
-          font-size: 20px;
-          font-weight: bold;
-        }
-        .actionbook-btn {
-            background: #0071c2;
-            color: white !important;
-            padding: 6px 0px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            min-width: 110px;
-            /*max-width: 90px;*/
-            text-align: center;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            position:relative;
-            user-select:none;
-            font-size: 10pt;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-        .actiondetails {
-          border-top: 1px solid #e1e1e1;
-          padding-top: 15px;
-        }
-        .actionflight-segment {
-          margin-bottom: 20px;
-        }
-        .actionsegment-title {
-          font-weight: normal;
-          margin-bottom: 8px;
-          font-size: 16px;
-          color: grey;
-        }
-        .actioninfo-grid {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 10px;
-        }
-        .actioninfo-block {
-          /*background: #f9f9f9;*/
-          padding: 10px 0px;
-          border-radius: 6px;
-          font-size: 30px;
-          font-weight: 500;
-          color: #000000;
-        }
-        .actioninfo-block strong {
-          display: block;
-          margin-bottom: 5px;
-        }
-        .actioninfo-icon {
-          margin-right: 5px;
-        }
-        .actiontoggle-arrow {
-          cursor: pointer;
-          transform: rotate(0deg);
-          transition: transform 0.3s ease;
-        }
-        .actiontoggle-arrow.open {
-          transform: rotate(180deg);
-        }
-    </style>
-    <style type="text/css">
-        .dashheadings {
-            padding: 20px 0 !important;
-            font-size: 20px !important;
-        }
-        span.informativeicons {
-            float: right;
-        }
-        span.informativeicons.infodiv i {
-            color: orange;
-        }
-        span.informativeicons.actiondiv i {
-            color: red;
-        }
-        .btngreat{
-            background-color: green !important;
-        }
-        .btnfix{
-            background-color: #ff5d5d !important;
-        }
-        .btnok {
-            background-color: orange !important;
-        }
-        .tag-negative{
-            background-color: #ff5d5d !important;
-        }
-        .tag-neutral{
-            background-color: orange !important;
-        }
-        .tag-positive{
-            background-color: green !important;
-        }
-        .unclickbox {
-            cursor: default;
-        }
-        .clickbox {
-            cursor: pointer;
-        }
-        .unclickbox .blockdash a {
-            cursor: default;
-        }
-        .informativeicons img {
-            border: 1px solid lightgrey;
-            border-radius: 20%;
-            padding: 2px;
-        }
-        h2.dashheadings {
-            font-weight: normal !important;
-        }
-        .actioncontent div h3 {
-            font-weight: normal !important;
-        }
-        div#report_dashboard_domains .host {
-            font-weight: 500;
-        }
-        #report_dashboard_domains .line {
-            background: #e5e2e2;
-        }
-    </style>
-    <style type="text/css">
-        /*tooltip*/
-        .cust-tooltipdash .wpil-report-header-tooltip .wpil_help i{
-            position: absolute;
-            top: -6px;
-            left: 5px;
-        }
-        .cust-tooltipdash .wpil-report-header-tooltip .wpil_help i::before{
-            position:absolute;
-            left:0;
-        }
-        .cust-tooltipdash .wpil-report-header-tooltip .wpil_help .wpil-help-text {
-            left: 50px;
-            top: -10px;
-        }
-        .wpil_help .wpil-help-text{
-            background-color: #fdfdfd;
-            color: #000;
-            border: 1px solid #cdcdcd;
-            box-shadow: 0px 0px 1px 1px #bcbcbc;
-        }
-        .cust-tooltipdash {
-            top: -4px !important;
-        }
-        .cust-tooltipdash .wpil_help {
-            position: relative !important;
-            top: 0;
-            right: 0;
-            margin: 0;
-            padding: 0;
-        }
-        .percchangeclick {
-            border: 1px solid #e2e2e2;
-            width: fit-content;
-            padding: 5px;
-            display: inline-flex;
-            margin-left: 10px;
-            border-radius: unset;
-        }
-    </style>
-    <style type="text/css">
 
-        #report_dashboard_domains .line1 span, #report_dashboard_domains .line2 span,
-        #report_dashboard_domains .line3 span, #report_dashboard_domains .line4 span {
-            background: #4272fd;
-        }
-        #report_dashboard_domains > div:nth-child(n+1):not(.line), #report_dashboard_domains > div:nth-child(n+2):not(.line) {
-            display: none;
-        }
-    </style>
+    // Loading state used by wizard banners
+    $loading = (isset($_GET['loading']) && !empty($_GET['loading']));
 
-<?php
-    $link_icon = '<svg width="24" height="24" style="position: absolute; margin: 1px 0px 0 3px; height: 12px; width: 12px;fill:#ffffff; stroke:#ffffff; display:inline-block;" viewBox="0 0 24 24" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg"><g id="wpil-svg-outbound-1-icon-path" transform="matrix(0.046875,0,0,0.046875,0.0234375,0.02343964)">
-                            <path d="M 473.563,227.063 407.5,161 262.75,305.75 c -25,25 -49.563,41 -74.5,16 -25,-25 -9,-49.5 16,-74.5 L 349,102.5 283.937,37.406 c -14.188,-14.188 -2,-37.906 19,-37.906 h 170.625 c 20.938,0 37.938,16.969 37.938,37.906 v 170.688 c 0,20.937 -23.687,33.187 -37.937,18.969 z M 63.5,447.5 h 320 V 259.313 l 64,64 V 447.5 c 0,35.375 -28.625,64 -64,64 h -320 c -35.375,0 -64,-28.625 -64,-64 v -320 c 0,-35.344 28.625,-64 64,-64 h 124.188 l 64,64 H 63.5 Z"></path>
-                        </g></svg>';
-    ?>
-    <h1 class="wp-heading-inline wpil-is-tooltipped wpil-no-overlay wpil-no-scale" <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-intro'); ?>>Dashboard</h1>
-    <hr class="wp-header-end">
-    <div id="poststuff">
-        <div id="post-body" class="metabox-holder">
-            <div id="post-body-content" style="position: relative;">
-                <?php include_once 'report_tabs_dashboard.php'; ?>
-                <?php $loading = (isset($_GET['loading']) && !empty($_GET['loading'])); ?>
-                <?php
-                $orphanedCount     = Wpil_Dashboard::getOrphanedPostsCount();
-                $brokenLinksCount  = Wpil_Dashboard::getBrokenLinksCount();
-                $notfoundLinksCount = Wpil_Dashboard::get404LinksCount();
-                function wpilDashboardgetStatusIcon($count){
-                    return (WP_INTERNAL_LINKING_PLUGIN_URL . '/images/') . (empty($count) ? 'check.png' : 'spanner.png');
-                }
-                ?>
-                <div id="report_dashboard <?php echo ($loading) && false ? 'wpil-dashboard-report-is-loading': '';?> ">
-                    <?php if($loading){ ?>
-                    <input type="hidden" class="wpil-wizard-loading-dashboard" value="1">
-                    <input type="hidden" class="wpil-wizard-inserting-autolinks" value="0">
-                    <input type="hidden" class="wpil-wizard-loading-dashboard-nonce" value="<?php echo wp_create_nonce($user->ID . 'wpil_dashboard_loading_nonce'); ?>">
-                    <div class="syns_div wpil_report_need_prepare wpil-report-download-banner wpil-is-tooltipped wpil-no-scale" <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-report-loading-bar'); ?>>
-                        <!--<p class="wpil-setup-wizard-sub-heading"><strong><?php esc_html_e('Processing AI Data:', 'wpil'); ?></strong></p>-->
-                        <div class="progress_panel" style="position:relative">
-                            <div class="wpil-dashboard-processing-status" style="position: absolute; z-index: 9999; width: 100%;">
-                                <div class="wpil-report-download-banner-process">
-                                    <i class="dashicons dashicons-clock" style="width: 40px;height: 40px;color: #fff;margin: 10px;font-size: 40px;"></i>
-                                    <span class="wpil-dashboard-processing-message" style="margin-left: 5px; padding: 18px 0px !important;position: absolute; font-size: 20px;color: white;">Scanning Site</span>
-                                </div>
-                                <div class="wpil-report-download-banner-remaining-time" style="margin-left: 5px; padding: 18px 0px !important; position: absolute; font-size: 20px; color: white; right: 15px; top: 0;">
-                                    <span class="wpil-dashboard-processing-time-remaining" style="margin-right:10px;">Calculating Time Remaining</span>
-                                    <span class="wpil-dashboard-processing-clock">--:--:--</span>
-                                </div>
-                            </div>
-                            <div class="progress_count" style="background-color:#2da7fd"><span class="wpil-loading-status"></span></div>
-                        </div>
+    // Stats
+    $posts_crawled       = (int) Wpil_Dashboard::getPostCount();
+    $orphanedCount       = (int) Wpil_Dashboard::getOrphanedPostsCount();
+    $brokenLinksCount    = (int) Wpil_Dashboard::getBrokenLinksCount();
+    $notfoundLinksCount  = (int) Wpil_Dashboard::get404LinksCount(); // not used in template yet
+
+    // Link coverage percent
+    $link_density = Wpil_Dashboard::get_percent_of_posts_hitting_link_targets();
+    $link_coverage_percent = !empty($link_density['percent']) ? (float) $link_density['percent'] : 0.0;
+
+    // Click stats
+    $summary   = Wpil_Dashboard::get_click_traffic_stats();
+    $clicks_30 = isset($summary['clicks_30']) ? (int) $summary['clicks_30'] : 0;
+    $clicks_old = isset($summary['clicks_old']) ? (int) $summary['clicks_old'] : 0;
+
+    $difference = $clicks_30 - $clicks_old;
+    $percent_change = $clicks_old != 0
+        ? round(($difference / $clicks_old) * 100, 2)
+        : ($clicks_30 > 0 ? 100 : 0);
+
+    $is_positive = ($difference >= 0);
+
+    // External focus
+    $external_link_emphasis = Wpil_Dashboard::get_external_link_distribution(1);
+    $external_link_emphasis_percent = 0.0;
+    if(!empty($external_link_emphasis) && isset($external_link_emphasis[0]->representation)){
+        $external_link_emphasis_percent = (float) (round($external_link_emphasis[0]->representation, 2) * 100);
+    }
+
+    // Anchor length score (your old flow uses total/filtered)
+    $anchor_word_counts = Wpil_Dashboard::getAnchorPostCounts();
+    $anchor_length_percent = null;
+    if(!empty($anchor_word_counts['total']) && !empty($anchor_word_counts['filtered'])){
+        $anchor_length_percent = (float) (round($anchor_word_counts['filtered'] / $anchor_word_counts['total'], 2) * 100);
+    }
+
+    // Internal & External links
+    $internal_links = Wpil_Dashboard::getInternalLinksCount();
+    $external_links = Wpil_Dashboard::getExternalLinksCount();
+
+    $internal_percent = round((($internal_links > 0) ? $internal_links / ($external_links + $internal_links): 0) * 100);
+    $external_percent = round((($external_links > 0) ? $external_links / ($external_links + $internal_links): 0) * 100);
+
+    // Link Quality Score
+    $link_relatedness = Wpil_Dashboard::get_related_link_percentage();
+
+    $relatedness_dash = max(0, min(100, $link_relatedness));
+    $relatedness_dash_str = number_format($relatedness_dash, 0) . ', 100';
+
+    // Links inserted
+    $links_inserted = Wpil_Dashboard::get_tracked_link_insert_count();
+
+    // Small helper: status badge classes
+    function wpil_dash_badge($type, $value){
+        $value = (float) $value;
+
+        if($type === 'coverage'){
+            if($value >= 80) return ['Good', 'bg-green-50 text-green-600'];
+            if($value >= 60) return ['OK', 'bg-orange-50 text-orange-600'];
+            return ['Needs Attention', 'bg-red-50 text-red-600'];
+        }
+
+        if($type === 'countup'){
+            if($value >= 1) return ['Great Job!', 'bg-green-50 text-green-600'];
+            if($value >= 0) return ['Getting Started', 'bg-orange-50 text-orange-600'];
+            return ['Needs Attention', 'bg-red-50 text-red-600'];
+        }
+
+        // counts (orphaned, broken)
+        if((int)$value <= 0){
+            return ['Good', 'bg-green-50 text-green-600'];
+        }
+
+        return ['Needs Attention', 'bg-red-50 text-red-600'];
+    }
+
+    // Circular gauge for coverage card
+    // Uses 36x36 circle path style like your HTML mockup
+    $coverage_dash = max(0, min(100, $link_coverage_percent));
+    $coverage_dash_str = number_format($coverage_dash, 0) . ', 100';
+
+    // Existing outbound icon used in old action buttons. Keep if you want later.
+    $link_icon = '<svg width="24" height="24" style="position: absolute; margin: 1px 0px 0 3px; height: 12px; width: 12px; fill: #ffffff; stroke: #ffffff; display:inline-block;" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><g transform="matrix(0.046875,0,0,0.046875,0.0234375,0.02343964)"><path d="M 473.563,227.063 407.5,161 262.75,305.75 c -25,25 -49.563,41 -74.5,16 -25,-25 -9,-49.5 16,-74.5 L 349,102.5 283.937,37.406 c -14.188,-14.188 -2,-37.906 19,-37.906 h 170.625 c 20.938,0 37.938,16.969 37.938,37.906 v 170.688 c 0,20.937 -23.687,33.187 -37.937,18.969 z M 63.5,447.5 h 320 V 259.313 l 64,64 V 447.5 c 0,35.375 -28.625,64 -64,64 h -320 c -35.375,0 -64,-28.625 -64,-64 v -320 c 0,-35.344 28.625,-64 64,-64 h 124.188 l 64,64 H 63.5 Z"></path></g></svg>';
+
+    // Badges
+    $coverage_badge = wpil_dash_badge('coverage', $link_coverage_percent);
+    $orphan_badge   = wpil_dash_badge('count', $orphanedCount);
+    $broken_badge   = wpil_dash_badge('count', $brokenLinksCount);
+    $insert_badge   = wpil_dash_badge('countup', $links_inserted);
+
+    // Tooltip markup is still WPIL custom, keep styles minimal and rely on existing plugin CSS
+
+    // Site Health Score
+    $health_metrics = [
+        'posts_crawled'            => $posts_crawled,
+        'broken_links'             => $brokenLinksCount,
+        'orphaned_posts'           => $orphanedCount,
+        'link_coverage_percent'    => $link_coverage_percent,
+        'link_relatedness_percent' => $link_relatedness,
+        'external_site_focus'      => $external_link_emphasis_percent,
+    ];
+
+    $health = Wpil_Dashboard::wpil_dash_site_health_score($health_metrics);
+    $health_meta = Wpil_Dashboard::wpil_dash_site_health_meta($health['score']);
+    $health_hint = Wpil_Dashboard::wpil_dash_site_health_hint($health);
+
+    // Circle math for the SVG ring
+    $health_radius = 40;
+    $health_circumference = 2 * M_PI * $health_radius; // 251.2 ish
+    $health_progress = max(0, min(100, (int) $health['score']));
+    $health_dasharray = $health_circumference;
+    $health_dashoffset = $health_circumference * (1 - ($health_progress / 100));
+
+    // Recommended Actions
+    // 1) URLs (match keys used by your generator)
+    $admin_urls = [
+        'broken_links'       => htmlspecialchars(admin_url('admin.php?page=link_whisper&type=error' . $codes)),
+        'orphaned_posts'     => admin_url('admin.php?page=link_whisper&type=links&orphaned=1'),
+        'link_density'       => admin_url('admin.php?page=link_whisper&type=links&link_density=1'),
+        'link_relation'      => admin_url('admin.php?page=link_whisper&type=links&link_relation=1'),
+        'domains_report'     => admin_url('admin.php?page=link_whisper&type=domains'),
+        'anchor_suggestions' => '', // wire later
+    ];
+
+    // 2) Metrics
+    $action_metrics = [
+        'broken_links'            => $brokenLinksCount,
+        'orphaned_posts'          => $orphanedCount,
+        'anchor_length_percent'   => $anchor_length_percent,          // can be null
+        'link_coverage_percent'   => $link_coverage_percent,
+        'link_relatedness_percent'=> $link_relatedness,
+        'external_site_focus'     => $external_link_emphasis_percent, // <-- you already compute this above
+        'admin_urls'              => $admin_urls,
+    ];
+
+    // 3) Generate actions
+    $recommended_actions = Wpil_Dashboard::wpil_dash_generate_recommended_actions($action_metrics);
+
+    // 4) Serious count (enabled CTAs only)
+    $serious = Wpil_Dashboard::wpil_dash_count_serious_actions($recommended_actions);
+
+    // generate hints for the health report!
+    $hint = Wpil_Dashboard::wpil_dash_health_hint_payload($health, $recommended_actions, $admin_urls);
+    $hint_text = !empty($hint['text']) ? $hint['text'] : '';
+    $hint_target = !empty($hint['target_action_id']) ? $hint['target_action_id'] : '';
+    $hint_url = !empty($hint['fallback_url']) ? $hint['fallback_url'] : '#';
+    $hint_key = !empty($health['top_drag']['key']) ? (string) $health['top_drag']['key'] : '';
+    $hint_stat_map = [
+        'broken_links'  => 'wpil-stat-broken-links',
+        'orphaned_posts'=> 'wpil-stat-orphaned-posts',
+        'link_coverage' => 'wpil-stat-link-coverage',
+        'link_quality'  => 'wpil-stat-link-quality',
+        'external_focus'=> 'wpil-stat-external-links',
+    ];
+    $hint_stat_id = (!empty($hint_key) && isset($hint_stat_map[$hint_key])) ? $hint_stat_map[$hint_key] : '';
+
+?>
+
+<script>
+    document.addEventListener('click', function(e) {
+    var el = e.target.closest('[data-wpil-hint-action-id]');
+    if (!el) return;
+
+    var actionId = el.getAttribute('data-wpil-hint-action-id');
+    var statId = el.getAttribute('data-wpil-hint-stat-id');
+
+    var target = null;
+    if (actionId) {
+        target = document.getElementById('wpil-action-' + actionId);
+    }
+    if (!target && statId) {
+        target = document.getElementById(statId);
+    }
+    if (!target) return; // no target, let normal link behavior happen
+
+    e.preventDefault();
+
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    // highlight
+    target.classList.add('wpil-health-highlight');
+    window.setTimeout(function() {
+        target.classList.remove('wpil-health-highlight');
+    }, 1800);
+    });
+</script>
+<style>
+    /* Keep brand helpers from your mock */
+    .lw-gradient-bg { background: linear-gradient(90deg, #7F5AF0 0%, #2C6BFF 100%); }
+    .lw-text-gradient { background: linear-gradient(90deg, #7F5AF0 0%, #2C6BFF 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+    @keyframes fillBar { from { width: 0%; } }
+    .animate-fill { animation: fillBar 1.5s ease-out forwards; }
+
+    .wpil-health-highlight{
+        box-shadow: 0 0 0 3px rgba(127, 90, 240, 0.35);
+        border-color: rgba(127, 90, 240, 0.65) !important;
+        transition: box-shadow 150ms ease, border-color 150ms ease;
+    }
+
+    .wpil-fix-progress-wrap{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: 10px;
+        vertical-align: middle;
+        font-size: 11px;
+        font-weight: 700;
+        color: #2563eb;
+    }
+    .wpil-fix-progress-wrap.is-complete{
+        color: #16a34a;
+    }
+    .wpil-fix-progress-ring{
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        background:
+            conic-gradient(#3b82f6 var(--wpil-fix-progress, 0%), #e5e7eb 0);
+        position: relative;
+        display: inline-block;
+    }
+    .wpil-fix-progress-ring::after{
+        content: '';
+        position: absolute;
+        inset: 3px;
+        border-radius: 999px;
+        background: #fff;
+    }
+    .wpil-fix-progress-link{
+        cursor: pointer;
+    }
+</style>
+
+<h1 class="wp-heading-inline wpil-is-tooltipped wpil-no-overlay wpil-no-scale" <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-intro'); ?>>Dashboard</h1>
+<hr class="wp-header-end">
+
+<div id="poststuff">
+  <div id="post-body" class="metabox-holder">
+    <div id="post-body-content" class="relative">
+
+      <?php //include_once 'report_tabs_dashboard.php'; ?>
+
+      <?php if($loading){ ?>
+        <input type="hidden" class="wpil-wizard-loading-dashboard" value="1">
+        <input type="hidden" class="wpil-wizard-inserting-autolinks" value="<?php echo get_option('wpil_wizard_import_autolink_rules', 0); ?>">
+        <input type="hidden" class="wpil-wizard-loading-dashboard-nonce" value="<?php echo wp_create_nonce($user->ID . 'wpil_dashboard_loading_nonce'); ?>">
+
+        <div class="syns_div wpil_report_need_prepare wpil-report-download-banner wpil-is-tooltipped wpil-no-scale" <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-report-loading-bar'); ?>>
+          <div class="progress_panel relative">
+            <div class="wpil-dashboard-processing-status absolute z-10 w-full">
+              <div class="wpil-report-download-banner-process">
+                <i class="dashicons dashicons-clock" style="width:40px;height:40px;color:#fff;margin:10px;font-size:40px;"></i>
+                <span class="wpil-dashboard-processing-message" style="margin-left:5px; padding:18px 0 !important; position:absolute; font-size:20px; color:#fff;">Scanning Site</span>
+              </div>
+              <div class="wpil-report-download-banner-remaining-time" style="margin-left:5px; padding:18px 0 !important; position:absolute; font-size:20px; color:#fff; right:15px; top:0;">
+                <span class="wpil-dashboard-processing-time-remaining" style="margin-right:10px;">Calculating Time Remaining</span>
+                <span class="wpil-dashboard-processing-clock">--:--:--</span>
+              </div>
+            </div>
+            <div class="progress_count" style="background-color:#2da7fd"><span class="wpil-loading-status"></span></div>
+          </div>
+        </div>
+
+        <div class="syns_div wpil_report_need_prepare wpil-report-autolink-insert-banner wpil-is-tooltipped wpil-no-scale" style="display:none;" <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-report-loading-bar'); ?>>
+          <div class="progress_panel relative">
+            <div class="wpil-dashboard-processing-status absolute z-10 w-full">
+              <div class="wpil-report-autolink-insert-process">
+                <i class="dashicons dashicons-admin-links" style="width:40px;height:40px;color:#fff;margin:10px;font-size:40px;"></i>
+                <span class="wpil-dashboard-processing-message" style="margin-left:5px; padding:18px 0 !important; position:absolute; font-size:20px; color:#fff;">Creating Links!</span>
+              </div>
+              <div class="wpil-report-autolink-insert-remaining-time" style="margin-left:5px; padding:18px 0 !important; position:absolute; font-size:20px; color:#fff; right:15px; top:0;">
+                <span style="margin-right:10px;">Links Created:</span>
+                <span class="wpil-dashboard-processing-autolinks-inserted">0</span>
+              </div>
+            </div>
+            <div class="progress_count" style="width:100%; background-color:#b63ef8;"><span class="wpil-loading-status"></span></div>
+          </div>
+        </div>
+      <?php } ?>
+
+      <!-- Dashboard container -->
+      <div class="mx-auto space-y-8 mt-4">
+
+        <!-- Header -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4" style="display:none">
+          <div>
+            <h2 class="text-3xl font-bold text-gray-900">Dashboard</h2>
+            <p class="text-gray-500 text-sm mt-1">Overview of your site's internal linking structure.</p>
+          </div>
+
+          <div class="flex items-center space-x-4 justify-end">
+            <div class="hidden md:flex flex-col items-end mr-2">
+              <span class="text-xs font-bold text-gray-400 uppercase">AI Credits</span>
+              <span class="text-sm font-bold text-[#7F5AF0]">
+                <!--TO-IMPLEMENT: show real AI credits available -->
+                <?php echo (int) number_format($credits); ?> Available
+              </span>
+            </div>
+
+            <a style="display:none;" href="<?php echo admin_url('admin.php?page=link_whisper&type=links'); ?>"
+               class="bg-white border border-gray-200 text-gray-700 font-medium px-4 py-2.5 rounded-xl shadow-sm hover:bg-gray-50 transition-colors flex items-center">
+              <span>Reports</span>
+              <!--TO-IMPLEMENT: if you want a dropdown, replace this with a menu -->
+            </a>
+
+            <a href="<?php echo admin_url('admin.php?page=link_whisper'); ?>"
+               class="lw-gradient-bg text-white font-bold px-6 py-2.5 rounded-xl shadow-lg hover:shadow-xl hover:opacity-95 transition-all flex items-center">
+              <span>Run New Scan</span>
+              <!--TO-IMPLEMENT: wire to scan start action (wizard kickoff) -->
+            </a>
+          </div>
+        </div>
+        <div class="mx-auto space-y-8 mt-4">
+            <!-- Tabs -->
+            <div class="border-b flex justify-between border-gray-200">
+                <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+                    <a href="<?php echo admin_url('admin.php?page=link_whisper'); ?>"
+                    class="border-[#7F5AF0] text-[#7F5AF0] whitespace-nowrap py-4 px-1 border-b-2 font-bold text-sm">Dashboard</a>
+
+                    <a href="<?php echo admin_url('admin.php?page=link_whisper&type=links'); ?>"
+                    class="border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">Links Report</a>
+
+                    <a href="<?php echo admin_url('admin.php?page=link_whisper&type=domains'); ?>"
+                    class="border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">Domains Report</a>
+
+                    <a href="<?php echo admin_url('admin.php?page=link_whisper&type=clicks'); ?>"
+                    class="border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">Clicks Report</a>
+
+                    <a href="<?php echo htmlspecialchars(admin_url('admin.php?page=link_whisper&type=error' . $codes)); ?>"
+                    class="border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">Broken Links Report</a>
+                
+                    <a href="<?php echo admin_url('admin.php?page=link_whisper&type=sitemaps'); ?>"
+                    class="border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">Visual Sitemaps</a>
+                </nav>
+                <div class="flex items-center space-x-4 justify-end">
+                    <div class="hidden md:flex flex-col items-end mr-2">
+                        <span class="text-xs font-bold text-gray-400 uppercase">AI Credits</span>
+                        <span class="text-sm font-bold text-[#7F5AF0]">
+                            <!--TO-IMPLEMENT: show real AI credits available -->
+                            <?php echo number_format($credits); ?> Available
+                        </span>
                     </div>
-                    <div class="syns_div wpil_report_need_prepare wpil-report-autolink-insert-banner wpil-is-tooltipped wpil-no-scale" style="display:none;" <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-report-loading-bar'); ?>>
-                        <div class="progress_panel" style="position:relative">
-                            <div class="wpil-dashboard-processing-status" style="position: absolute; z-index: 9999; width: 100%;">
-                                <div class="wpil-report-autolink-insert-process">
-                                    <i class="dashicons dashicons-admin-links" style="width: 40px;height: 40px;color: #fff;margin: 10px;font-size: 40px;"></i>
-                                    <span class="wpil-dashboard-processing-message" style="margin-left: 5px; padding: 18px 0px !important;position: absolute; font-size: 20px;color: white;">Creating Links!</span>
-                                </div>
-                                <div class="wpil-report-autolink-insert-remaining-time" style="margin-left: 5px; padding: 18px 0px !important; position: absolute; font-size: 20px; color: white; right: 15px; top: 0;">
-                                    <span style="margin-right:10px;">Links Created:</span>
-                                    <span class="wpil-dashboard-processing-autolinks-inserted">0</span>
-                                </div>
-                            </div>
-                            <div class="progress_count" style="width: 100%; background-color: #b63ef8;"><span class="wpil-loading-status"></span></div>
-                        </div>
-                    </div>
-                    <?php } ?>
-                    <h2 class="dashheadings">Link Insights</h2>
-                    <?php $box_counter = 1; ?>
-                    <div class="reportcontainer topbarhandle">
-                        <a href="<?php echo admin_url('admin.php?page=link_whisper&type=links')?>" target="_blank" class="reportbox clickbox">
-                            <div class="blockdash">
-                                <h3>Posts Crawled</h3>
-                                <div class="wpil-dashboard-infostat" <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-link-stats-widget-posts-crawled-stat'); ?>><span class="wpil-report-stats-posts-crawled"><?=Wpil_Dashboard::getPostCount()?></span></div>
-                            </div>
-                        </a><?php /*
-                        <a href="<?php echo admin_url('admin.php?page=link_whisper&type=links')?>" target="_blank" class="reportbox clickbox">
-                            <div class="blockdash">
-                                <h3>Links Scanned</h3>
-                                <div class="wpil-dashboard-infostat" <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-link-stats-widget-links-found-stat'); ?>><span class="wpil-report-stats-links-found"><?=Wpil_Dashboard::getLinksCount();?></span></div>
-                            </div>
-                        </a>*/ ?>
-                        <div class="reportbox unclickbox">
-                            <div class="blockdash">
-                                <?php 
-                                    $summary = Wpil_Dashboard::get_click_traffic_stats();
-                                    $clicks_30 = $summary['clicks_30'];
-                                    $clicks_old = $summary['clicks_old'];
-                                    $difference = $clicks_30 - $clicks_old;
-                                    $percent_change = $clicks_old != 0 
-                                        ? round(($difference / $clicks_old) * 100, 2) 
-                                        : ($clicks_30 > 0 ? 100 : 0);
-                                    $is_positive = $difference >= 0;
-                                ?>
-                                <h3>Link Clicks Tracked</h3>
-                                <a href="javascript:void(0)"><?php echo number_format($summary['clicks_30']); ?></a>
-                                <div class="percchangeclick">
-                                    <?php if ($is_positive): ?>
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="#2e7d32" viewBox="0 0 24 24">
-                                            <path d="M4 12l1.41 1.41L11 7.83v12.17h2V7.83l5.59 5.58L20 12l-8-8-8 8z"/>
-                                        </svg>
-                                    <?php else: ?>
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="#c62828" viewBox="0 0 24 24">
-                                            <path d="M4 12l1.41-1.41L11 16.17V4h2v12.17l5.59-5.58L20 12l-8 8-8-8z"/>
-                                        </svg>
-                                    <?php endif; ?>
-                                    <span style="margin-left:5px;"><?php echo ($is_positive ? '+' : '') . $percent_change . '%'; ?></span>
-                                </div>
-                            </div>
-                        </div>
-                        <a href="<?php echo admin_url('admin.php?page=link_whisper&type=links&orphaned=1')?>" target="_blank" class="reportbox <?php echo (!empty($orphanedCount)) ? 'clickbox': ''; ?>">
-                            <span class="informativeicons actiondiv">
-                                <img src="<?php echo wpilDashboardgetStatusIcon($orphanedCount); ?>" />
-                            </span>
-                            <div class="blockdash">
-                                <h3>Orphaned Posts</h3>
-                                <?php if($loading){ ?>
-                                    <div class="wpil-dashboard-infostat" <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-link-stats-widget-orphaned-posts-stat'); ?>><div class="wpil-report-dashboard-loading la-ball-clip-rotate la-mid"><div style="border-color: black;border-bottom-color: transparent;"></div></div>
-                                <?php } else { ?>
-                                    <div class="wpil-dashboard-infostat" href="javascript:void(0)" <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-link-stats-widget-orphaned-posts-stat'); ?>><?=Wpil_Dashboard::getOrphanedPostsCount()?>
-                                <?php } ?>
-                                </div>
-                            </div>
-                        </a>
-                        <a href="<?php echo htmlspecialchars(admin_url('admin.php?page=link_whisper&type=error' . $codes)) ?>" target="_blank" class="reportbox <?php echo (!empty($brokenLinksCount)) ? 'clickbox': ''; ?>">
-                            <span class="informativeicons actiondiv">
-                                <img src="<?= wpilDashboardgetStatusIcon($brokenLinksCount); ?>" />
-                            </span>
-                            <div class="blockdash">
-                                <h3>Broken Links</h3>
-                                <div class="wpil-dashboard-infostat" <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-link-stats-widget-broken-links-stat'); ?>><?=Wpil_Dashboard::getBrokenLinksCount()?></div>
-                            </div>
-                        </a>
-                    </div>
-                    <div class="actioncontainer reportcontainer">
-                        <div class="actioncolumn" style="height: 100%;">
-                            <h2 class="dashheadings">Link Health</h2>
-                            <div class="actioncontent">
-                            <div class="actioncard">
-                              <div class="actionheader">
-                                <?php
-                                $link_density = Wpil_Dashboard::get_percent_of_posts_hitting_link_targets();
-                                $density_status = 'tag-positive';
-                                $density_subtext = __('Great', 'wpil');
-                                if (!empty($link_density['percent'])) {
-                                    if ($link_density['percent'] > 80) {
-                                        $density_status = 'tag-positive';
-                                        $density_subtext = __('Great', 'wpil');
-                                    } elseif ($link_density['percent'] > 60) {
-                                        $density_status = 'tag-neutral';
-                                        $density_subtext = __('Ok', 'wpil');
-                                    } else {
-                                        $density_status = 'tag-negative';
-                                        $density_subtext = 'Fix';
-                                    }
-                                }
-
-                                $density_subtext = '<a href="'. admin_url('admin.php?page=link_whisper&type=links&link_density=1') . '" class="actionbook-btn '.$density_status.'" target="_blank">' . $density_subtext .$link_icon.'</a>';
-                                ?>
-                                <div class="actionheader-left">
-                                    <div>Link Coverage: <span class="wpil-report-stats-link-coverage"><?php echo $link_density['percent']; ?>%</span></div>
-                                    <div class="wpil-report-header-container cust-tooltipdash">
-                                        <div class="wpil-report-header-tooltip">
-                                            <div class="wpil_help">
-                                                <i class="dashicons dashicons-editor-help"></i>
-                                                <div class="wpil-help-text" style="display: none;">Link Coverage tells you how many pages are receiving internal links.<br><br>A high coverage means most of your content is connected and discoverable by search engines and users — great for crawlability and SEO.<br><br>It's recommended that each post have at least 1 Inbound Internal link, and 3 Outbound Internal links.</div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="actionprice-book">
-                                    <?php echo $density_subtext; ?>
-                                </div>
-                              </div>
-                            </div>
-                            <br>
-                            <?php
-                                $ai_active = Wpil_Settings::can_do_ai_powered_suggestions(); // if we have a API key and at least some of the embedding data processed
-                                $link_relatedness = 0;
-                                if($ai_active){
-                                    $link_relatedness = Wpil_Dashboard::get_related_link_percentage();
-                                    if($link_relatedness == 0){
-                                        $link_relatedness_status = 'tag-neutral';
-                                        $link_relatedness_button_text = 'OK';
-                                    }elseif($link_relatedness > 79){
-                                        $link_relatedness_status = 'tag-positive';
-                                        $link_relatedness_button_text = 'Great';
-                                    }elseif($link_relatedness > 50){
-                                        $link_relatedness_status = 'tag-neutral';
-                                        $link_relatedness_button_text = 'OK';
-                                    }else{
-                                        $link_relatedness_status = 'tag-negative';
-                                        $link_relatedness_button_text = 'Fix';
-                                    }
-                                    $link_relatedness .= '%';
-                                    $link_relatedness_button_text = '<a href="' . admin_url('admin.php?page=link_whisper&type=links&link_relation=1') . '" class="actionbook-btn '.$link_relatedness_status.'">'.$link_relatedness_button_text.$link_icon.'</a>';
-                                }else{
-                                    $link_relatedness = "Connect to AI for Analysis";
-                                    $link_relatedness_status = 'tag-neutral';
-                                    $link_relatedness_button_text = 'Connect';
-                                    $link_relatedness_button_text = '<a href="' . esc_url(Wpil_AI::get_linkwhisper_ai_auth_url(admin_url('admin.php?page=link_whisper_ai_subscription'))) . '" class="actionbook-btn '.$link_relatedness_status.'">'.$link_relatedness_button_text.$link_icon.'</a>';
-                                }
-                            ?>
-                            <div class="actioncard">
-                              <div class="actionheader">
-                                <div class="actionheader-left">
-                                    <div>Link Quality Score: <span class="wpil-report-stats-relation-score"><?php echo $link_relatedness; ?></span></div>
-                                    <div class="wpil-report-header-container cust-tooltipdash">
-                                        <div class="wpil-report-header-tooltip">
-                                            <div class="wpil_help">
-                                                <i class="dashicons dashicons-editor-help"></i>
-                                                <div class="wpil-help-text" style="display: none;">Link Quality Score measures how topically related the linking source and target pages are.<br><br>A higher score = more on-topic internal linking = good for SEO.<br><br>We recommend having 80% of your links going between related posts.</div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="actionprice-book">
-                                    <?php echo $link_relatedness_button_text; ?>
-                                </div>
-                              </div>
-                            </div>
-                            <br>
-                            <?php
-                                $external_link_emphasis = Wpil_Dashboard::get_external_link_distribution(1);
-                                $external_link_emphasis_percent = 0;
-                                $external_link_tag = 'OK';
-                                if(empty($external_link_emphasis) || !isset($external_link_emphasis[0]->representation)){
-                                    $external_link_emphasis_status = 'tag-neutral';
-                                }else{
-                                    $external_link_emphasis_percent = round($external_link_emphasis[0]->representation, 2) * 100;
-                                    if($external_link_emphasis_percent < 60){
-                                        $external_link_emphasis_status = 'tag-positive';
-                                        $external_link_emphasis_subtext = '';
-                                        $external_link_tag = 'Great';
-                                    }elseif($external_link_emphasis_percent < 70){
-                                        $external_link_emphasis_status = 'tag-neutral';
-                                        $external_link_emphasis_subtext = '';
-                                        $external_link_tag = 'OK';
-                                    }else{
-                                        $external_link_emphasis_status = 'tag-negative';
-                                        $external_link_emphasis_subtext = '';
-                                        $external_link_tag = 'Fix';
-                                    }
-                                }
-
-                                $external_link_tag = '<a href="'. admin_url('admin.php?page=link_whisper&type=domains&domain_focus=1') . '" target="_blank" class="actionbook-btn '.$external_link_emphasis_status.'">'.$external_link_tag.$link_icon.'</a>';
-                            ?>
-                            <div class="actioncard">
-                              <div class="actionheader">
-                                <div class="actionheader-left">
-                                    <div>External Site Focus: <span class="wpil-report-stats-external-focus"><?php echo $external_link_emphasis_percent . '%'; // Display the percentage value ?></span></div>
-                                    <div class="wpil-report-header-container cust-tooltipdash">
-                                        <div class="wpil-report-header-tooltip">
-                                            <div class="wpil_help">
-                                                <i class="dashicons dashicons-editor-help"></i>
-                                                <div class="wpil-help-text" style="display: none;">Best practices recommend having a balanced distribution of external links as this looks most natural to search engines.<br><br>If your site has more than 60% of Outbound External links going to the same site, this can look unnatural.</div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="actionprice-book">
-                                  <?php echo $external_link_tag; ?>
-                                </div>
-                              </div>
-                            </div>
-                            <br>
-                            <?php
-                            
-                                // WE"LL JUST LIFT THE CODE FROM THE EMAIL!
-                                $anchor_word_counts = Wpil_Dashboard::getAnchorPostCounts();
-                                $anchor_word_status = 'tag-neutral';
-                                $anchor_word_button_text = 'OK';
-                                $anchor_word_percent = 'Unknown';
-                                if(!empty($anchor_word_counts['total']) && !empty($anchor_word_counts['filtered'])){
-                                    $percentage = $anchor_word_counts['filtered']/$anchor_word_counts['total'];
-                                    if($percentage > 0.80){
-                                        $anchor_word_status = 'tag-positive';
-                                        $anchor_word_button_text = 'Great';
-                                    }elseif($percentage > 0.60){
-                                        $anchor_word_status = 'tag-neutral';
-                                        $anchor_word_button_text = 'OK';
-                                    }else{
-                                        $anchor_word_status = 'tag-negative';
-                                        $anchor_word_button_text = 'Fix';
-                                    }
-
-                                    $anchor_word_percent = (round($percentage, 2) * 100) . '%';
-                                }
-
-                                $anchor_word_button_text = '<a href="'. admin_url('admin.php?page=link_whisper&type=links&anchor_length=1') . '" target="_blank" class="actionbook-btn '.$anchor_word_status.'">'.$anchor_word_button_text.$link_icon.'</a>';
-                                $anchor_word_button_text = '<a href="#" class="actionbook-btn '.$anchor_word_status.'">Coming Soon</a>';
-                            ?>
-                            <div class="actioncard">
-                              <div class="actionheader">
-                                <div class="actionheader-left">
-                                    <div>Anchor Length Score: <span class="wpil-report-stats-anchor-quality"><?php echo esc_html($anchor_word_percent); ?></span></div>
-                                    <div class="wpil-report-header-container cust-tooltipdash">
-                                        <div class="wpil-report-header-tooltip">
-                                            <div class="wpil_help">
-                                                <i class="dashicons dashicons-editor-help"></i>
-                                                <div class="wpil-help-text" style="display: none;">Best practices recommend that anchors be long enough to convey meaning to a human reader.<br><br>In most cases, this is between 3 and 7 words long.<br><br>We recommend having the score above 60%</div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="actionprice-book">
-                                  <?php echo $anchor_word_button_text; ?>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                            <div class="actioncontent" style="margin-top: 20px;">
-                                <!-- Content for the second column -->
-                                <div <?php echo Wpil_Toolbox::generate_tooltip_text('dashboard-domains-widget'); ?>>
-                                    <h3 class="title">Most Linked To <a href="<?=admin_url('admin.php?page=link_whisper&type=domains')?>">Domains</a></h3>
-                                    <div id="wpil_links_domain_chart" style="width: 320px;height: 320px;margin: 0 auto;"></div>
-                                    <div class="body" id="report_dashboard_domains">
-                                        <?php
-                                        $i = 0;
-                                        $prev = isset($domains[0]->host) ? $domains[0]->host : 0;
-                                        $count = 0; // Initialize counter
-                                    ?>
-                                    <?php foreach ($domains as $domain) : ?>
-                                        <?php 
-                                            if ($count >= 5) break; // Stop after 5 items
-                                            if ($prev != $domain->host) { 
-                                                $i++; 
-                                                $prev = $domain->host; 
-                                            } 
-                                            $count++; // Increment counter
-                                            ?>
-                                            <div class="domainrelatedcontent">
-                                                <div class="count <?php echo 'mltdcount-'.$i; ?>"><?= $domain->cnt ?></div>
-                                                <div class="host <?php echo 'mltdval-'.$i; ?>"><?= $domain->host ?></div>
-
-                                                <div class="line line<?= $i ?>">
-                                                    <span style="width: <?= (($domain->cnt / $top_domain) * 100) ?>%"></span>
-                                                </div>
-                                            </div>
-                                        <?php endforeach; ?>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <?php include 'notification_hub.php'; ?>
-                    </div>
+                    <a href="<?php echo admin_url('admin.php?page=link_whisper'); ?>"
+                    class="lw-gradient-bg text-white font-bold px-6 py-2.5 rounded-xl shadow-lg hover:shadow-xl hover:opacity-95 transition-all flex items-center">
+                    <span>Run Link Scan</span>
+                    <!--TO-IMPLEMENT: wire to scan start action (wizard kickoff) -->
+                    </a>
                 </div>
             </div>
         </div>
-    </div>
+
+        <!-- Stat cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+
+          <!-- Posts Crawled -->
+          <a href="<?php echo admin_url('admin.php?page=link_whisper&type=links'); ?>" target="_blank"
+             class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex flex-col justify-between h-32 relative overflow-hidden group hover:border-purple-200 transition-colors">
+            <div class="absolute right-0 top-0 w-24 h-24 bg-purple-50 rounded-full -mr-8 -mt-8 opacity-50 group-hover:scale-110 transition-transform"></div>
+            <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wide z-10">Posts Crawled</h3>
+            <div class="flex items-end justify-between z-10">
+              <span class="text-4xl font-extrabold text-gray-900 wpil-report-stats-posts-crawled"><?php echo $posts_crawled; ?></span>
+            </div>
+          </a>
+
+          <!-- Link Coverage -->
+          <a href="<?php echo admin_url('admin.php?page=link_whisper&type=links&link_density=1'); ?>" target="_blank" id="wpil-stat-link-coverage"
+             class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex flex-col justify-between h-32 relative overflow-hidden group hover:border-blue-200 transition-colors">
+            <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wide z-10 flex items-center gap-2">
+              Link Coverage
+
+              <span class="wpil-report-header-container cust-tooltipdash relative">
+                <span
+                  class="dashicons dashicons-editor-help wpil-tippy-tooltipped"
+                  data-wpil-tooltip-placement="top"
+                  data-wpil-tooltip-allowhtml="1"
+                  data-wpil-tooltip-content="Link Coverage tells you how many pages are receiving internal links.<br><br>Recommended: at least 1 inbound internal link and 3 outbound internal links.">
+                </span>
+              </span>
+            </h3>
+
+            <div class="flex items-end justify-between z-10">
+              <span class="text-4xl font-extrabold text-gray-900 wpil-report-stats-link-coverage">
+                <?php echo rtrim(rtrim(number_format($link_coverage_percent, 2), '0'), '.'); ?>%
+              </span>
+
+              <div class="w-12 h-12 relative">
+                <svg viewBox="0 0 36 36" class="w-12 h-12 transform -rotate-90">
+                  <path class="text-gray-100"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                        fill="none" stroke="currentColor" stroke-width="4" />
+                  <path class="<?php echo ($link_coverage_percent >= 60 ? 'text-orange-400' : 'text-red-400'); ?>"
+                        stroke-dasharray="<?php echo esc_attr($coverage_dash_str); ?>"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                        fill="none" stroke="currentColor" stroke-width="4" />
+                </svg>
+              </div>
+            </div>
+          </a>
+
+          <!-- Orphaned Posts -->
+          <a href="<?php echo admin_url('admin.php?page=link_whisper&type=links&orphaned=1'); ?>" target="_blank" id="wpil-stat-orphaned-posts"
+             class="bg-white rounded-2xl p-6 shadow-sm border <?php echo ($orphanedCount > 0) ? 'border-red-100' : 'border-gray-100'; ?> flex flex-col justify-between h-32 relative overflow-hidden">
+            <div class="absolute right-0 top-0 w-24 h-24 <?php echo ($orphanedCount > 0) ? 'bg-red-50' : 'bg-gray-50'; ?> rounded-full -mr-8 -mt-8 opacity-50"></div>
+            <h3 class="text-sm font-bold <?php echo ($orphanedCount > 0) ? 'text-red-400' : 'text-gray-400'; ?> uppercase tracking-wide z-10 flex items-center">
+              Orphaned Posts
+              <?php if($orphanedCount > 0){ ?>
+                <span class="ml-2 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+              <?php } ?>
+            </h3>
+            <div class="flex items-end justify-between z-10">
+              <?php if($loading){ ?>
+                <span class="text-4xl font-extrabold text-gray-900">
+                  <span class="wpil-report-dashboard-loading la-ball-clip-rotate la-mid inline-block align-middle">
+                    <span style="border-color: black; border-bottom-color: transparent;"></span>
+                  </span>
+                </span>
+              <?php } else { ?>
+                <span class="text-4xl font-extrabold text-gray-900"><?php echo $orphanedCount; ?></span>
+              <?php } ?>
+              <span class="text-xs font-bold px-2 py-1 rounded-lg <?php echo esc_attr($orphan_badge[1]); ?>">
+                <?php echo esc_html($orphan_badge[0]); ?>
+              </span>
+            </div>
+          </a>
+
+          <!-- Broken Links -->
+          <a href="<?php echo htmlspecialchars(admin_url('admin.php?page=link_whisper&type=error' . $codes)); ?>" target="_blank" id="wpil-stat-broken-links"
+             class="bg-white rounded-2xl p-6 shadow-sm border <?php echo ($brokenLinksCount > 0) ? 'border-orange-100' : 'border-gray-100'; ?> flex flex-col justify-between h-32 relative overflow-hidden">
+            <div class="absolute right-0 top-0 w-24 h-24 <?php echo ($brokenLinksCount > 0) ? 'bg-orange-50' : 'bg-gray-50'; ?> rounded-full -mr-8 -mt-8 opacity-50"></div>
+            <h3 class="text-sm font-bold <?php echo ($brokenLinksCount > 0) ? 'text-orange-400' : 'text-gray-400'; ?> uppercase tracking-wide z-10 flex items-center">
+              Broken Links
+              <?php if($brokenLinksCount > 0){ ?>
+                <span class="ml-2 w-2 h-2 bg-orange-500 rounded-full animate-pulse"></span>
+              <?php } ?>
+            </h3>
+            <div class="flex items-end justify-between z-10">
+              <span class="text-4xl font-extrabold text-gray-900"><?php echo $brokenLinksCount; ?></span>
+              <span class="text-xs font-bold px-2 py-1 rounded-lg <?php echo esc_attr($broken_badge[1]); ?>">
+                <?php echo esc_html($broken_badge[0]); ?>
+              </span>
+            </div>
+          </a>
+
+        </div>
+
+        <!-- Mid row -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+            <!-- Site Health Score -->
+            <div class="bg-white rounded-2xl p-8 shadow-sm border border-gray-100 flex flex-col justify-center items-center text-center relative">
+                <h3 class="text-gray-500 font-bold mb-4">Site Health Score</h3>
+
+                <div class="relative w-40 h-40 mb-4">
+                    <svg class="w-full h-full" viewBox="0 0 100 100">
+                    <circle class="text-gray-100 stroke-current" stroke-width="8" cx="50" cy="50" r="40" fill="transparent"></circle>
+
+                    <circle
+                        class="<?php echo esc_attr($health_meta['ring']); ?> stroke-current"
+                        stroke-width="8"
+                        stroke-linecap="round"
+                        cx="50" cy="50" r="40"
+                        fill="transparent"
+                        style="stroke-dasharray: <?php echo esc_attr($health_dasharray); ?>; stroke-dashoffset: <?php echo esc_attr($health_dashoffset); ?>; transform: rotate(-90deg); transform-origin: 50% 50%;"
+                    ></circle>
+                    </svg>
+
+                    <div class="absolute inset-0 flex flex-col items-center justify-center">
+                    <span class="text-4xl font-extrabold text-gray-900"><?php echo (int) $health['score']; ?></span>
+                    <span class="text-xs text-gray-400 uppercase font-bold"><?php echo esc_html($health_meta['label']); ?></span>
+                    </div>
+                </div>
+
+                <a href="<?php echo esc_url($hint_url); ?>" class="text-sm text-gray-600 px-4 inline-block hover:underline" data-wpil-hint-action-id="<?php echo esc_attr($hint_target); ?>" data-wpil-hint-stat-id="<?php echo esc_attr($hint_stat_id); ?>">
+                    <?php echo esc_html($hint_text); ?>
+                </a>
+            </div>
+
+
+          <!-- Link Distribution (map to existing stats that exist today) -->
+          <div class="lg:col-span-2 bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
+            <div class="flex justify-between items-center mb-6">
+              <h3 class="text-lg font-bold text-gray-900">Link Distribution</h3>
+            </div>
+
+            <div class="space-y-6">
+
+              <!-- Clicks tracked -->
+              <div>
+                <div class="flex justify-between text-sm mb-2">
+                  <span class="font-medium text-gray-600">Internal Links</span>
+                  <span class="font-bold text-gray-900"><?php echo number_format($internal_links); ?></span>
+                </div>
+                <div class="w-full bg-gray-100 rounded-full h-2.5">
+                  <!--TO-IMPLEMENT: decide what this bar represents, currently static -->
+                  <div class="lw-gradient-bg h-2.5 rounded-full animate-fill" style="width: <?php echo (int) min(100, max(0, $internal_percent)); ?>%"></div>
+                </div>
+              </div>
+
+              <!-- External Site Focus -->
+              <div id="wpil-stat-external-links">
+                <div class="flex justify-between text-sm mb-2">
+                  <span class="font-medium text-gray-600">External Links</span>
+                  <span class="font-bold text-gray-900"><?php echo number_format($external_links); ?></span>
+                </div>
+                <div class="w-full bg-gray-100 rounded-full h-2.5">
+                  <div class="bg-blue-300 h-2.5 rounded-full animate-fill" style="width: <?php echo (int) min(100, max(0, $external_percent)); ?>%"></div>
+                </div>
+                <div class="mt-3" style="display: none;">
+                  <a href="<?php echo admin_url('admin.php?page=link_whisper&type=domains&domain_focus=1'); ?>"
+                     class="inline-flex items-center text-xs font-bold text-[#7F5AF0] hover:underline" target="_blank">
+                    View Domains Report →
+                  </a>
+                </div>
+              </div>
+
+              <!-- Anchor Length Score -->
+              <div>
+                <div class="flex justify-between text-sm mb-2">
+                  <span class="font-medium text-gray-600">Anchor Length Score</span>
+                  <span class="font-bold text-gray-900">
+                    <?php echo ($anchor_length_percent === null) ? 'Unknown' : ((int) $anchor_length_percent . '%'); ?>
+                  </span>
+                </div>
+                <div class="w-full bg-gray-100 rounded-full h-2.5">
+                  <div class="bg-yellow-400 h-2.5 rounded-full animate-fill"
+                       style="width: <?php echo ($anchor_length_percent === null) ? 37 : (int) min(100, max(0, $anchor_length_percent)); ?>%"></div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Third row -->
+         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+
+          <!-- Clicks Tracked -->
+          <a href="<?php echo admin_url('admin.php?page=link_whisper&type=clicks'); ?>" target="_blank"
+             class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex flex-col justify-between h-32 relative overflow-hidden group hover:border-purple-200 transition-colors">
+            <div class="absolute right-0 top-0 w-24 h-24 bg-purple-50 rounded-full -mr-8 -mt-8 opacity-50 group-hover:scale-110 transition-transform"></div>
+            <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wide z-10">Clicks Tracked</h3>
+            <div class="flex items-end justify-between z-10">
+              <span class="text-4xl font-extrabold text-gray-900 wpil-report-stats-posts-crawled"><?php echo $clicks_30; ?></span>
+              <span class="text-green-500 text-xs font-bold bg-green-50 px-2 py-1 rounded-lg flex items-center">
+                <?php if($is_positive){ ?>
+                  <span class="mr-1">▲</span>
+                <?php } else { ?>
+                  <span class="mr-1">▼</span>
+                <?php } ?>
+                <?php echo ($is_positive ? '+' : '') . $percent_change; ?>%
+              </span>
+            </div>
+          </a>
+
+          <!-- Link Relation -->
+          <a href="<?php echo admin_url('admin.php?page=link_whisper&type=links&link_relation=1'); ?>" target="_blank" id="wpil-stat-link-quality"
+             class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex flex-col justify-between h-32 relative overflow-hidden group hover:border-blue-200 transition-colors">
+            <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wide z-10 flex items-center gap-2">
+              Link Quality Score
+              <span class="wpil-report-header-container cust-tooltipdash relative">
+                <span
+                  class="dashicons dashicons-editor-help wpil-tippy-tooltipped"
+                  data-wpil-tooltip-placement="top"
+                  data-wpil-tooltip-allowhtml="1"
+                  data-wpil-tooltip-content="Link Quality Score measures how closely related your internal links are based on AI analysis.<br><br>Higher percentages indicate stronger topical relevance.">
+                </span>
+              </span>
+            </h3>
+
+            <div class="flex items-end justify-between z-10">
+              <span class="text-4xl font-extrabold text-gray-900 wpil-report-stats-link-coverage">
+                <?php echo rtrim(rtrim(number_format($link_relatedness, 2), '0'), '.'); ?>%
+              </span>
+
+              <div class="w-12 h-12 relative">
+                <svg viewBox="0 0 36 36" class="w-12 h-12 transform -rotate-90">
+                  <path class="text-gray-100"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                        fill="none" stroke="currentColor" stroke-width="4" />
+                  <path class="<?php echo ($link_relatedness >= 60 ? 'text-orange-400' : 'text-red-400'); ?>"
+                        stroke-dasharray="<?php echo esc_attr($relatedness_dash_str); ?>"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                        fill="none" stroke="currentColor" stroke-width="4" />
+                </svg>
+              </div>
+            </div>
+          </a>
+
+          <!-- Links Inserted -->
+          <div
+             class="bg-white rounded-2xl p-6 shadow-sm border border-blue-100 flex flex-col justify-between h-32 relative overflow-hidden">
+            <div class="absolute right-0 top-0 w-24 h-24 bg-blue-50 rounded-full -mr-8 -mt-8 opacity-50"></div>
+            <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wide z-10 flex items-center">
+              Links Created
+            </h3>
+            <div class="flex items-end justify-between z-10">
+                <span class="text-4xl font-extrabold text-gray-900"><?php echo $links_inserted; ?></span>
+              <span class="text-xs font-bold px-2 py-1 rounded-lg <?php echo esc_attr($insert_badge[1]); ?>">
+                <?php echo esc_html($insert_badge[0]); ?>
+              </span>
+            </div>
+            </div>
+        </div>
+
+        <!-- Bottom row -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 pb-12">
+
+            <!-- Recommended Actions -->
+            <div class="lg:col-span-2 space-y-4">
+            <h3 class="text-lg font-bold text-gray-900 mb-2 flex items-center">
+                Recommended Actions
+                <span class="ml-3 bg-red-100 text-red-600 text-xs font-bold px-2 py-0.5 rounded-full">
+                    <?php echo (int) $serious; ?> Serious
+                </span>
+            </h3>
+
+            <?php
+                // 5) Render actions
+                Wpil_Dashboard::wpil_dash_render_recommended_actions($recommended_actions);
+            ?>
+            </div><!-- /Recommended Actions -->
+
+          <!-- Notification Hub -->
+          <div class="space-y-4">
+            <h3 class="text-lg font-bold text-gray-900 mb-2">Notification Hub</h3>
+
+            <div class="bg-white p-5 rounded-xl border border-gray-200">
+              <?php include 'notification_hub.php'; ?>
+            </div>
+
+            <!-- Optional promo card -->
+            <div class="hidden bg-gradient-to-br from-purple-50 to-blue-50 p-5 rounded-xl border border-purple-100 relative overflow-hidden">
+              <div class="flex items-start space-x-3 relative z-10">
+                <div class="bg-white p-1.5 rounded-lg shadow-sm text-[#7F5AF0]">
+                  <span class="font-black">⚡</span>
+                </div>
+                <div>
+                  <h4 class="font-bold text-gray-900 text-sm">Running low on AI Credits?</h4>
+                  <p class="text-xs text-gray-600 mt-1 leading-relaxed">Power up your content analysis with our new AI models.</p>
+                  <a href="#" class="inline-block mt-3 text-xs font-bold text-[#7F5AF0] hover:underline">Get 50% Off Refill →</a>
+                  <!--TO-IMPLEMENT: real link and logic -->
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div><!-- /max-w-7xl -->
+
 </div>
+</div>
+</div>
+<?php include_once 'fix-modal.php'; ?>
+<?php include_once 'wizard/credits-modal.php'; ?>
+</div>
+<script>
+  window.WPIL_AI_CREDITS = <?php echo (int) Wpil_AI::get_available_ai_credits(); ?>;
+  window.WPIL_AI_FIX_NONCE = '<?php echo esc_js(wp_create_nonce('wpil_ai_fix_nonce')); ?>';
+</script>
+<script>
+(function() {
+  let lastFixContext = null;
+
+  function wpilParseInt(val) {
+    if (val === undefined || val === null) return 0;
+    const s = String(val).replace(/,/g, '').trim();
+    const n = parseInt(s, 10);
+    return isNaN(n) ? 0 : n;
+  }
+
+  function wpilFormatInt(n) {
+    return wpilParseInt(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+
+  function setAll(selector, value) {
+    document.querySelectorAll(selector).forEach(function(el) {
+      el.textContent = value;
+    });
+  }
+
+  function padShortfall(shortfall) {
+    let padded = Math.ceil(shortfall * 1.25);
+    padded = Math.round(padded / 100) * 100;
+    if (padded < shortfall) padded += 100;
+    if (padded < 500) padded = 500;
+    return padded;
+  }
+
+  function openFixModal(ctx) {
+    lastFixContext = ctx;
+
+    const estimate = wpilParseInt(ctx.estimate);
+    const balance = wpilParseInt(ctx.balance);
+
+    document.getElementById('wpil-fix-description').textContent = ctx.description || '';
+    setAll('[data-wpil-fix-estimate]', wpilFormatInt(estimate));
+    setAll('[data-wpil-fix-balance]', wpilFormatInt(balance));
+
+    const enoughCredits = (estimate <= 0) ? true : (balance >= estimate);
+
+    const statusBadge = document.querySelector('[data-role="wpil-fix-status"]');
+    if (statusBadge) {
+      statusBadge.textContent = enoughCredits ? 'Ready' : 'Not enough credits';
+      statusBadge.classList.toggle('is-bad', !enoughCredits);
+    }
+
+    const bar = document.querySelector('[data-role="wpil-fix-bar"]');
+    if (bar) {
+      const pct = (estimate > 0) ? Math.min(100, Math.round((balance / estimate) * 100)) : 100;
+      bar.style.width = pct + '%';
+    }
+
+    document.getElementById('wpil-fix-warning').classList.toggle('hidden', enoughCredits);
+    document.getElementById('wpil-fix-actions-enough').classList.toggle('hidden', !enoughCredits);
+    document.getElementById('wpil-fix-actions-short').classList.toggle('hidden', enoughCredits);
+
+    if (!enoughCredits) {
+      const shortfall = Math.max(0, estimate - balance);
+      const padded = padShortfall(shortfall);
+      setAll('[data-wpil-fix-shortfall]', wpilFormatInt(padded));
+
+      const buyBtn = document.getElementById('wpil-fix-buy');
+      buyBtn.dataset.credits = padded;
+      buyBtn.dataset.quantity = padded;
+    }
+
+    const modal = document.getElementById('wpil-fix-modal');
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeFixModal() {
+    const modal = document.getElementById('wpil-fix-modal');
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
+  }
+
+  document.addEventListener('click', function(e) {
+    const fixBtn = e.target.closest('[data-wpil-fix-type]');
+    if (!fixBtn) return;
+
+    e.preventDefault();
+
+    const ctx = {
+      type: fixBtn.dataset.wpilFixType,
+      itemId: fixBtn.dataset.wpilFixItemId || '',
+      estimate: parseInt(fixBtn.dataset.wpilFixEstimate, 10),
+      description: fixBtn.dataset.wpilFixDescription || '',
+      balance: window.WPIL_AI_CREDITS || 0
+    };
+
+    openFixModal(ctx);
+  });
+
+  document.querySelectorAll('[data-wpil-fix-cancel]').forEach(function(btn) {
+    btn.addEventListener('click', closeFixModal);
+  });
+
+  document.getElementById('wpil-fix-begin')
+    ?.addEventListener('click', function() {
+      closeFixModal();
+
+      // START FIX PROCESS HERE
+      // You already have this pattern in scanning.php
+      if(window.wpilAiFixRunner && typeof window.wpilAiFixRunner.start === 'function'){
+        window.wpilAiFixRunner.start(lastFixContext);
+      }
+    });
+
+  if (window.jQuery) {
+    jQuery(document).on('lwcc:paid', function() {
+      if (!lastFixContext) return;
+
+      const buyBtn = document.getElementById('wpil-fix-buy');
+      const purchase = wpilParseInt(buyBtn ? buyBtn.dataset.credits : 0);
+
+      if (purchase > 0) {
+        window.WPIL_AI_CREDITS = wpilParseInt(window.WPIL_AI_CREDITS) + purchase;
+      }
+
+      lastFixContext.balance = window.WPIL_AI_CREDITS || 0;
+      openFixModal(lastFixContext);
+    });
+  }
+})();
+</script>

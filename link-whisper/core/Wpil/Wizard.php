@@ -10,12 +10,11 @@ class Wpil_Wizard
      */
     public static function init()
     {
-//        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/license.php';
-//        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/about-you.php';
-//        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/automatic-linking.php';
+        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/welcome.php';
+        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/license.php';
+        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/moneypage.php';
         include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/connect-gsc.php';
-        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/connect-openai.php';
-        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/run-setup.php';
+        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/scanning.php';
     }
 
     /**

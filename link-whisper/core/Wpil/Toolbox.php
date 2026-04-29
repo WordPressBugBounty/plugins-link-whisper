@@ -8,6 +8,7 @@ class Wpil_Toolbox
 {
     private static $encryption_possible = null;
     private static $pillar_ids = null;
+    private static $cornerstone_ids = null;
     private static $max_package_size = 0;
 
 
@@ -389,17 +390,31 @@ class Wpil_Toolbox
     }
 
     /**
-     * Checks to see if the current post is a pillar content post.
-     * Currently only checks for Rank Math setting
-     * 
-     * @param int $post_id The id of the post that we're checking
-     * @return bool Is this pillar content?
+     * Gets the Yoast Cornerstone content ids...
      **/
-    public static function check_pillar_content_status($post_id = 0){
+    public static function get_cornerstone_ids(){
         global $wpdb;
         
-        if(empty($post_id) || !defined('RANK_MATH_VERSION')){
-            return false;
+        if(!defined('WPSEO_VERSION')){
+            return [];
+        }
+
+        if(is_null(self::$cornerstone_ids)){
+            $ids = $wpdb->get_col("SELECT DISTINCT `post_id` FROM {$wpdb->postmeta} WHERE `meta_key` = '_yoast_wpseo_is_cornerstone' AND `meta_value` = '1'");
+            self::$cornerstone_ids = (!empty($ids)) ? $ids: array();
+        }
+
+        return self::$cornerstone_ids;
+    }
+
+    /**
+     * Gets the Rank Math pillar content ids
+     **/
+    public static function get_pillar_content_ids(){
+        global $wpdb;
+        
+        if(!defined('RANK_MATH_VERSION')){
+            return [];
         }
 
         if(is_null(self::$pillar_ids)){
@@ -407,7 +422,22 @@ class Wpil_Toolbox
             self::$pillar_ids = (!empty($ids)) ? $ids: array();
         }
 
-        return in_array($post_id, self::$pillar_ids);
+        return self::$pillar_ids;
+    }
+
+    /**
+     * Checks to see if the current post is a pillar content post.
+     * Currently only checks for Rank Math setting
+     * 
+     * @param int $post_id The id of the post that we're checking
+     * @return bool Is this pillar content?
+     **/
+    public static function check_pillar_content_status($post_id = 0){
+        if(empty($post_id)){
+            return false;
+        }
+
+        return in_array($post_id, self::get_pillar_content_ids());
     }
 
     /**
@@ -1480,6 +1510,9 @@ class Wpil_Toolbox
             case 'broken-link-report-table-anchor-col':
                 $text = esc_attr__('The "Anchor" column shows the anchor text for the broken link so you can see what the link\'s text is.', 'wpil');
                 break;
+            case 'broken-link-report-table-recommendation-col':
+                $text = esc_attr__('The "Recommended Action" column shows what Link Whisper suggests for fixing the broken link.', 'wpil') . '<br><br>' . esc_attr__('You can apply these recommendations from the action panel or using the bulk action.', 'wpil');
+                break;
             case 'broken-link-report-table-sentence-col':
                 $text = esc_attr__('The "Sentence" column shows the larger sentence that the broken link is in to give an idea of the context that it exists in.', 'wpil');
                 break;
@@ -1889,7 +1922,7 @@ class Wpil_Toolbox
         $content = $post->getContent();
         
         // replace unicode chars with their decoded forms
-        $replace_unicode = array('\u003c', '\u003', '\u0022');
+        $replace_unicode = array('\u003c', '\u003e', '\u0022');
         $replacements = array('<', '>', '"');
 
         $content = str_ireplace($replace_unicode, $replacements, $content);
@@ -1940,9 +1973,9 @@ class Wpil_Toolbox
         }
 
         // if there are any 'pre' tags, remove them from the content
-        if(false !== strpos($content, '<pre')){
-            $content = mb_ereg_replace('<pre(?:[^>]*)>(.*?)<\/pre>', "\n", $content);
-        }
+//        if(false !== strpos($content, '<pre')){
+//            $content = mb_ereg_replace('<pre(?:[^>]*)>(.*?)<\/pre>', "\n", $content);
+//        }
 
         // remove any shortcodes that the user has defined
         $content = Wpil_Suggestion::removeShortcodes($content);
@@ -2160,5 +2193,108 @@ class Wpil_Toolbox
                 }
             }
         }
+    }
+
+    /**
+     * Retrieves a list of the X number of posts with the most chared terms to the given one.
+     * Uses a bacckoff policy to try to hit the post requirement while being the most shared terms.
+     * 
+     * Since we're talking connected via taxonomy, this only works for posts...
+     * @param Wpil_Model_Post $post
+     * @param int $count How many connected posts are we trying to find?
+     * @return array
+     **/
+    public static function get_most_term_connected_posts($post, $count = 0, $include_counts = true){
+        global $wpdb;
+        $results = [];
+        
+        if(empty($post) || empty($count)){
+            return $results;
+        }
+
+        // get our terms
+        $terms = $post->getPostTerms();
+
+        if(empty($terms)){
+            return $results;
+        }
+
+        $tt_ids = array();
+        foreach($terms as $term){
+            if(!empty($term->term_taxonomy_id)){
+                $tt_ids[] = (int) $term->term_taxonomy_id;
+            }
+        }
+
+        $tt_ids = array_values(array_unique($tt_ids));
+
+        if(empty($tt_ids)){
+            return $results;
+        }
+
+        $in_list = implode(',', $tt_ids);
+
+        // Get candidate posts + how many shared terms they have
+        $query = $wpdb->prepare("SELECT tr.object_id, COUNT(DISTINCT tr.term_taxonomy_id) AS shared_terms
+                                FROM {$wpdb->term_relationships} tr
+                                WHERE tr.term_taxonomy_id IN ($in_list)
+                                AND tr.object_id != %d
+                                GROUP BY tr.object_id
+                                ORDER BY shared_terms DESC, tr.object_id DESC
+                                LIMIT 1000", (int) $post->id);
+        $data = $wpdb->get_results($query);
+
+        if(empty($data)){
+            return $results;
+        }
+
+        $buckets = array();
+        $max_shared = 0;
+
+        // group the terms and find our ceiling
+        foreach($data as $dat){
+            $shared = (int) $dat->shared_terms;
+
+            if($shared <= 0){
+                continue;
+            }
+
+            if(!isset($buckets[$shared])){
+                $buckets[$shared] = array();
+            }
+
+            $buckets[$shared][] = (int) $dat->object_id;
+
+            if($shared > $max_shared){
+                $max_shared = $shared;
+            }
+        }
+
+        // nowww we ccan look to see what are posts are
+        for($s = $max_shared; $s >= 1; $s--){
+            if(empty($buckets[$s])){
+                continue;
+            }
+
+            foreach($buckets[$s] as $oid){
+                $results[$oid] = $s;
+                if(count($results) >= $count){
+                    break 2;
+                }
+            }
+        }
+
+        if(!$include_counts && !empty($results)){
+            $results = array_keys($results);
+        }
+
+        return $results; // at long last, $results may finially have somehtings! HAhahahaahhahahaaa!
+    }
+
+    /**
+     * Checks to see if the current user is an admid
+     **/
+    public static function is_admin(){
+        return (bool)(current_user_can('administrator') || current_user_can('manage_options'));
     }
 }

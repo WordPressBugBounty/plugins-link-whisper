@@ -20,6 +20,7 @@ class Wpil_Error
 //        add_action('wp_ajax_edit_report_link', [$this, 'ajaxEditReportLink']);
         add_action('wp_ajax_wpil_delete_error_links', [$this, 'ajaxDeleteLinks']);
         add_action('wp_ajax_wpil_get_edit_error_links', [$this, 'ajaxGetEditLinks']);
+        add_action('wp_ajax_wpil_apply_broken_link_recommendations', [$this, 'ajaxApplyBrokenLinkRecommendations']);
         add_action('wp_ajax_wpil_delete_error_high_confidence_links', [$this, 'ajaxDeleteHighConfidenceBrokenLinks']);
         add_filter('cron_schedules', [$this, 'addLinkCheckInterval']);
         add_action('admin_init', [$this, 'scheduleLinkCheck']);
@@ -631,6 +632,8 @@ class Wpil_Error
                                         ignore_link tinyint(1) DEFAULT 0,
                                         sentence varchar(255) DEFAULT 0,
                                         anchor text NOT NULL,
+                                        suggested_url_replacement text DEFAULT NULL,
+                                        recommended_action varchar(32) DEFAULT NULL,
                                         PRIMARY KEY  (id),
                                         INDEX (url(512))
                                     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;";

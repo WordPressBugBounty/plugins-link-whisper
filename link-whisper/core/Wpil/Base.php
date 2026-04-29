@@ -45,16 +45,20 @@ class Wpil_Base
         add_action('wp_ajax_wpil_set_use_ai_suggestions', array('Wpil_Settings', 'ajax_set_ai_suggestions_use'));
         add_action('wp_ajax_wpil_wizard_save_settings', array(__CLASS__, 'ajax_save_wizard_settings'));
         add_action('wp_ajax_wpil_wizard_save_oai_key', array(__CLASS__, 'ajax_wizard_save_oai_key'));
+        add_action('wp_ajax_wpil_wizard_prepare_ai_activation', array(__CLASS__, 'ajax_wizard_prepare_ai_activation'));
+        add_action('wp_ajax_wpil_wizard_ai_connection_status', array(__CLASS__, 'ajax_wizard_ai_connection_status'));
+        add_action('wp_ajax_wpil_wizard_reset_ai_activation', array(__CLASS__, 'ajax_wizard_reset_ai_activation'));
         add_action('wp_ajax_wpil_clear_process_tracker', array(__CLASS__, 'ajax_clear_process_tracker'));
         add_action('wp_ajax_wpil_has_run_wizard', array(__CLASS__, 'ajax_has_run_wizard'));
         add_action('wp_ajax_wpil_get_dashboard_scan_loading_data', array('Wpil_Wizard', 'ajax_pull_loading_progress_for_dashboard'));
         add_action('wp_ajax_wpil_wizard_set_completion_flag', array(__CLASS__, 'ajax_set_processing_complete_flag'));
         add_action('wp_ajax_wpil_run_autolink_insert_search', array(__CLASS__, 'ajax_get_wizard_insert_count'));
+        add_action('wp_ajax_wpil_prepare_ai_connection', array('Wpil_Settings', 'ajax_prepare_ai_connection'));
+        add_action('wp_ajax_wpil_get_ai_connection_status', array('Wpil_Settings', 'ajax_get_ai_connection_status'));
         add_action('wp_ajax_user_dismissed_ai_popup', array(__CLASS__, 'ajax_dismiss_ai_popup_banner'), 9);
         add_action('wp_ajax_wpil_update_expanded_details_toggle', array(__CLASS__, 'ajax_update_expanded_details_toggle'), 9);
-        /*add_filter('the_content', array(__CLASS__, 'remove_link_whisper_attrs'));
-        add_filter('the_content', array(__CLASS__, 'add_link_attrs'));
-        add_filter('the_content', array(__CLASS__, 'add_link_icons'), 100, 1);*/
+        add_action('wp_ajax_wpil_link_delay_waitlist_signup', array('Wpil_Dashboard', 'ajax_link_delay_waitlist_signup'));
+        add_action('wp_ajax_wpil_dashboard_experience_feedback', array('Wpil_Dashboard', 'ajax_dashboard_experience_feedback'));
         foreach(Wpil_Settings::getPostTypes() as $post_type){
             add_filter( "manage_{$post_type}_posts_columns", array(__CLASS__, 'add_columns'), 11 );
             add_action( "manage_{$post_type}_posts_custom_column", array(__CLASS__, 'columns_contents'), 11, 2);
@@ -97,6 +101,14 @@ class Wpil_Base
             switch ($_GET['area']) {
                 case 'wpil_export':
                     Wpil_Export::getInstance()->export($post);
+                    break;
+                case 'wpil_export_sitemap_support':
+                    self::verify_nonce('wpil_export_sitemap_for_support');
+                    Wpil_Export::getInstance()->export_sitemap_support();
+                    break;
+                case 'wpil_export_ai_token_use_support':
+                    self::verify_nonce('wpil_export_ai_token_use_for_support');
+                    Wpil_Export::getInstance()->export_ai_token_use_support();
                     break;
                 case 'wpil_excel_export':
                     $post = self::getPost();
@@ -179,7 +191,7 @@ class Wpil_Base
 
         if(WPIL_STATUS_HAS_RUN_SCAN){
             $page_title = __('Internal Links Report', 'wpil');
-            $menu_title = __('Reports', 'wpil');
+            $menu_title = __('Dashboard', 'wpil');
 
             self::$report_menu = add_submenu_page(
                 'link_whisper',
@@ -213,7 +225,7 @@ class Wpil_Base
         self::$report_menu = add_submenu_page(
             'link_whisper',
             'Internal Links Report',
-            'Reports',
+            'Dashboard',
             'edit_posts',
             'link_whisper',
             [Wpil_Report::class, 'init']
@@ -295,7 +307,7 @@ class Wpil_Base
     public static function render_link_health_widget(){
 
         $rows = self::get_dashboard_widget_rows();
-        $logo = plugin_dir_url(__DIR__).'../images/lw-icon.png'
+        $logo = plugin_dir_url(__DIR__).'../images/lw-icon.png';
         ?>
         <style>
             #lw-digest-widget .lw-header { display:flex; gap:16px; align-items:flex-start; margin-bottom:14px; }
@@ -410,7 +422,7 @@ class Wpil_Base
 
         $orphaned_posts = Wpil_Dashboard::getOrphanedPostsCount();
         if(!empty($orphaned_posts)){
-            $orphaned_posts_percentage = round($orphaned_posts/$posts_crawled, 2) * 100;
+            $orphaned_posts_percentage = !empty($posts_crawled) ? round($orphaned_posts / $posts_crawled, 2) * 100 : 0;
             if($orphaned_posts_percentage == 0){
                 $orphaned_posts_status = 'tag-positive';
                 $orphaned_posts_subtext = esc_html__('Awesome! There are no orphaned posts on the site.', 'wpil');
@@ -573,24 +585,37 @@ class Wpil_Base
         return "<p style='float: right'>version <b>".esc_html($plugin_data['Version'])."</b></p>";
     }
 
-    public static function show_tawkto_widget(){
-        if(!empty(get_option('wpil_disable_tawkto_widget', ''))){
+    public static function show_support_widget(){
+        if(!empty(get_option('wpil_disable_support_widget', get_option('wpil_disable_tawkto_widget', '')))){
             return;
         }?>
-        <!--Start of Tawk.to Script-->
+        <!--Start of HelpScout Beacon Script-->
             <script type="text/javascript">
-            var Tawk_API=Tawk_API||{}, Tawk_LoadStart=new Date();
-            (function(){
-            var s1=document.createElement("script"),s0=document.getElementsByTagName("script")[0];
-            s1.async=true;
-            s1.src='https://embed.tawk.to/686b600853ff86190e6b0ab6/1ivhmu817';
-            s1.charset='UTF-8';
-            s1.setAttribute('crossorigin','*');
-            s0.parentNode.insertBefore(s1,s0);
-            })();
+            !function(e,t,n){
+                function a(){
+                    var e=t.getElementsByTagName("script")[0],n=t.createElement("script");
+                    n.type="text/javascript";
+                    n.async=!0;
+                    n.src="https://beacon-v2.helpscout.net";
+                    e.parentNode.insertBefore(n,e);
+                }
+                if(e.Beacon=n=function(t,n,a){
+                    e.Beacon.readyQueue.push({method:t,options:n,data:a});
+                },n.readyQueue=[],"complete"===t.readyState){
+                    return a();
+                }
+                e.attachEvent ? e.attachEvent("onload",a) : e.addEventListener("load",a,!1);
+            }(window,document,window.Beacon||function(){});
             </script>
-        <!--End of Tawk.to Script-->
+            <script type="text/javascript">
+            window.Beacon('init', '9fe52dca-2c60-4179-98f6-25abfcf6927b');
+            </script>
+        <!--End of HelpScout Beacon Script-->
         <?php
+    }
+
+    public static function show_tawkto_widget(){
+        self::show_support_widget();
     }
 
     /**
@@ -835,13 +860,67 @@ class Wpil_Base
             wp_enqueue_script('wpil_admin_settings_script');*/
         }
 
+        if( isset($_GET['page']) && 
+            ($_GET['page'] == 'link_whisper' || $_GET['page'] == 'link_whisper_wizard')
+        ){
+            if(!$added_standard){
+                self::add_standard_admin_scripts();
+                $added_standard = true;
+            }
+
+            wp_enqueue_script('stripe-js', 'https://js.stripe.com/v3/', [], null, true);
+            wp_register_script('wpil_checkout', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/wpil_checkout.js', array('jquery', 'wpil_helper', 'stripe-js'), $ver, true);
+            wp_enqueue_script('wpil_checkout');
+            $current_user = wp_get_current_user();
+            $checkout_user_email = Wpil_Settings::get_linkwhisper_ai_user_email();
+            if(empty($checkout_user_email) && !empty($current_user->user_email)){
+                $checkout_user_email = $current_user->user_email;
+            }
+
+            $payment_params = [
+                'stripePublicKey' => 'pk_live_kSOl38xUgfzKw67PzZDQDipr001O3VFl3p',
+                'apiUrl' => 'https://linkwhisper.com/wp-json/lwasc-checkout/v1',
+                'userEmail' => $checkout_user_email,
+                'connected' => (Wpil_Settings::get_linkwhisper_ai_active() && !empty(Wpil_Settings::get_linkwhisper_ai_user_id()) && !empty(Wpil_Settings::get_linkwhisper_ai_token())) ? 1 : 0,
+                'connectNonce' => wp_create_nonce(get_current_user_id() . 'wpil_prepare_ai_connection'),
+                'statusNonce' => wp_create_nonce(get_current_user_id() . 'wpil_get_ai_connection_status'),
+            ];
+            wp_localize_script('wpil_checkout', 'wpilCheckout', $payment_params);
+
+            if($_GET['page'] == 'link_whisper_wizard'){
+                $path = WP_INTERNAL_LINKING_PLUGIN_URL.'css/wpil_wizard.css';
+                $f_path = WP_INTERNAL_LINKING_PLUGIN_DIR.'css/wpil_wizard.css';
+                wp_register_style('wpil_wizard_style', $path, $deps=[], filemtime($f_path));
+                wp_enqueue_style('wpil_wizard_style');
+            }
+        }
+
         $style_path = 'css/wpil_admin.css';
         $f_path = WP_INTERNAL_LINKING_PLUGIN_DIR.$style_path;
         $ver = filemtime($f_path);
 
-        wp_register_style('wpil_admin_style', WP_INTERNAL_LINKING_PLUGIN_URL.$style_path, array(), $ver);
-        wp_enqueue_style('wpil_admin_style');
+        // if we're NOT on a wizard page!
+        if(!isset($_GET['page']) || $_GET['page'] !== 'link_whisper_wizard'){
+            // enqueue ALLL of the usual styles.
+            wp_register_style('wpil_admin_style', WP_INTERNAL_LINKING_PLUGIN_URL.$style_path, $deps=[], $ver);
+            wp_enqueue_style('wpil_admin_style');
+        }
 
+        // if we're on the Dashboard page!
+        if(isset($_GET['page']) && $_GET['page'] == 'link_whisper' && !isset($_GET['type'])){
+            /*$style_path = 'css/wpil_tailwind.css';
+            $f_path = WP_INTERNAL_LINKING_PLUGIN_DIR.$style_path;
+            $ver = filemtime($f_path);
+            // and the tailwind styles!.
+            wp_register_style('wpil_admin_style2', WP_INTERNAL_LINKING_PLUGIN_URL.$style_path, $deps=[], $ver);
+            wp_enqueue_style('wpil_admin_style2');*/
+
+            wp_register_style('wpil_select2_css', WP_INTERNAL_LINKING_PLUGIN_URL . 'css/select2.min.css');
+            wp_enqueue_style('wpil_select2_css');
+            wp_register_script('wpil_select2', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/select2.full.min.js', array('jquery'), $ver, true);
+            wp_enqueue_script('wpil_select2');
+        }
+        
         $disable_fonts = apply_filters('wpil_disable_fonts', false); // we've only got one font ATM
         if(empty($disable_fonts)){
             $style_path = 'css/wpil_fonts.css';
@@ -882,57 +961,6 @@ class Wpil_Base
 //        $script_params['tours_enabled'] = Wpil_Settings::get_tours_enabled();
 
         $script_params['wpil_timepicker_format'] = Wpil_Toolbox::convert_date_format_for_js();
-/*
-        $script_params['wpil_help_overlay_controls'] =
-        '<div id="wpil-floating-help-menu" class="button-wave-effect" style="display: flex; flex-direction: column; gap: 10px; position: fixed; bottom: 20px; right: 20px;">
-            <input type="hidden" id="wpil-floating-help-menu-nonce" value="' . wp_create_nonce(get_current_user_id() . 'wpil-floating-help-menu-nonce') . '">
-            <span id="wpil-hide-explain-page-x" class="dashicons dashicons-no-alt"></span>
-            <div id="wpil-explain-page-control-wrapper">
-                <div class="wpil-floating-button-container">
-                    <button id="wpil-explain-page-button" class="wpil-floating-button">
-                        Explain Page
-                    </button>
-                </div>
-                <div class="wpil-floating-button-container" style="display:none">
-                    <button id="wpil-explain-part-button" class="wpil-floating-button">
-                        Explain Part
-                    </button>
-                </div>
-                <div id="wpil-help-overlay-controls" style="display:none;">
-                    <div class="wpil-help-overlay-segment-container">
-                        <div class="wpil-help-overlay-segment segments-completed"></div>
-                        <div>OF</div>
-                        <div class="wpil-help-overlay-segment segments-total"></div>
-                    </div>
-                    <div class="wpil-help-overlay-control-container">
-                        <div class="wpil-help-overlay-control wpil-help-backward">
-                            <button>' . self::get_svg_icon('previous-track', false, ['width'=>32]) . '</button>
-                        </div>
-                        <div class="wpil-help-overlay-control wpil-help-pause">
-                            <button>' . self::get_svg_icon('pause', false, ['width'=>32]) . '</button>
-                        </div>
-                        <div class="wpil-help-overlay-control wpil-help-play" style="display:none">
-                            <button>' . self::get_svg_icon('play', false, ['width'=>32]) . '</button>
-                        </div>
-                        <div class="wpil-help-overlay-control wpil-help-forward">
-                            <button>' . self::get_svg_icon('next-track', false, ['width'=>32]) . '</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="wpil-hide-explain-page-option-wrapper" style="display:none;">
-                <div class="wpil-hide-explain-page-control">
-                    <button class="wpil-floating-button wpil-hide-explain-page-button" value="0">Temp Hide</button>
-                </div>
-                <div class="wpil-hide-explain-page-control">
-                    <button class="wpil-floating-button wpil-hide-explain-page-button" value="1">Remove From This Page</button>
-                </div>
-                <div class="wpil-hide-explain-page-control">
-                    <button class="wpil-floating-button wpil-hide-explain-page-button" value="2">Remove From All Pages</button>
-                </div>
-            </div>
-        </div>';
-*/
 
         $script_params['wpil_help_overlay_controls'] =
         '<div id="wpil-floating-help-menu" style="display: flex; flex-direction: column; gap: 10px; position: fixed; bottom: 20px; right: 20px;height: 0px;width: 0px; padding:0px;">
@@ -1005,6 +1033,15 @@ class Wpil_Base
             }
             wp_register_script('wpil_wizard', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/wpil_wizard.js', array('jquery', 'wpil_base64', 'wpil_tippy', 'wpil_popper', 'wpil_helper'), $ver, true);
             wp_enqueue_script('wpil_wizard');
+        }
+
+        if (isset($_GET['page']) && $_GET['page'] == 'link_whisper_maintenance') {
+            if(!$added_standard){
+                self::add_standard_admin_scripts();
+                $added_standard = true;
+            }
+            wp_register_script('wpil_maintenance', WP_INTERNAL_LINKING_PLUGIN_URL . 'js/wpil_maintenance.js', array('jquery', 'wpil_base64', 'wpil_tippy', 'wpil_popper', 'wpil_helper'), $ver, true);
+            wp_enqueue_script('wpil_maintenance');
         }
 
         if($added_standard){
@@ -1202,8 +1239,8 @@ class Wpil_Base
      **/
     public static function addEmailSignupNotice(){
         $page = get_current_screen();
-        if(empty($page) || !isset($page->base) || (false === strpos($page->base, 'link-whisper') && false === strpos($page->base, 'link_whisper'))){
-//            return;
+        if(empty($page) || !isset($page->base) || ('dashboard' !== $page->base && false === strpos($page->base, 'link-whisper') && false === strpos($page->base, 'link_whisper'))){
+            return;
         }
 
         include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/dashboard_email_signup_notice.php';
@@ -1285,6 +1322,11 @@ class Wpil_Base
             return false;
         }
 
+        // don't show the review on the linkwhisper dashboard
+        if(isset($_GET['page']) && $_GET['page'] === 'link_whisper' && !isset($_GET['type'])){
+            return;
+        }
+
         $install_time = get_option('wpil_free_install_date', current_time('mysql', true));
         $current_time = current_time('timestamp', true);
         $update_count = get_option('wpil_free_update_count', 0);
@@ -1321,8 +1363,8 @@ class Wpil_Base
      **/
     public static function add_notice_for_review(){
         $page = get_current_screen();
-        if(empty($page) || !isset($page->base) || (false === strpos($page->base, 'link-whisper') && false === strpos($page->base, 'link_whisper'))){
-//            return;
+        if(empty($page) || !isset($page->base) || ('dashboard' !== $page->base && false === strpos($page->base, 'link-whisper') && false === strpos($page->base, 'link_whisper'))){
+            return;
         }
 
         include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/dashboard_review_request_notice.php';
@@ -1402,8 +1444,13 @@ class Wpil_Base
             update_option('wpil_free_install_date', current_time('mysql', true));
         }
 
-        // disabling in 2.5.6... Shouldn't need this anymore since it's been ~4 years since the class has been used.
-        //Wpil_Link::removeLinkClass();
+        if('' === get_option('wpil_free_update_count', '')){
+            // start counting the updates
+            update_option('wpil_free_update_count', 0);
+        }else{
+            $update_count = get_option('wpil_free_update_count', 0);
+            update_option('wpil_free_update_count', $update_count += 1);
+        }
 
         // temp cleanup function, remove when we get to 2.7.0
         Wpil_AI::clear_duplicate_calculated_embeddings();
@@ -1461,6 +1508,7 @@ class Wpil_Base
         $ai_suggestion_sentence_tbl = $wpdb->prefix . "wpil_ai_processed_sentences";
         $ai_suggested_anchor_tbl = $wpdb->prefix . "wpil_ai_suggested_anchors";
         $ai_credit_tbl = $wpdb->prefix . "wpil_ai_token_use_data";
+        $relation_map_tbl = $wpdb->prefix . 'wpil_relation_mapping';
 
         $fresh_install = get_option('wpil_fresh_install', false);
 
@@ -2150,6 +2198,244 @@ class Wpil_Base
             update_option('wpil_site_db_version', '1.46');
         }
 
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.47 || $force_update){
+            $error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$broken_link_tbl}'");
+            if(!empty($error_tbl_exists)){
+                // find out if the table has a suggested_url_replacement col
+                $col = $wpdb->query("SHOW COLUMNS FROM {$broken_link_tbl} LIKE 'suggested_url_replacement'");
+                if (empty($col)) {
+                    // if it doesn't, update it with the "suggested_url_replacement" column
+                    $update_table = "ALTER TABLE {$broken_link_tbl} ADD `suggested_url_replacement` TEXT NULL DEFAULT NULL AFTER `anchor`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.47');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.48 || $force_update){
+            $ai_linking_table = $wpdb->prefix . 'wpil_ai_linking';
+            $ai_linking_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_linking_table}'");
+            if(!empty($ai_linking_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_linking_table} LIKE 'ai_relation_score'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$ai_linking_table} ADD COLUMN ai_relation_score DOUBLE UNSIGNED NOT NULL DEFAULT '0' AFTER `sentence_with_anchor_text`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            $error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$broken_link_tbl}'");
+            if(!empty($error_tbl_exists)){
+                $col = $wpdb->query("SHOW COLUMNS FROM {$broken_link_tbl} LIKE 'recommended_action'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$broken_link_tbl} ADD `recommended_action` VARCHAR(32) NULL DEFAULT NULL AFTER `suggested_url_replacement`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            // Warm the AI subscription cache on older installs so the new account data is ready to go.
+            if(class_exists('Wpil_AI') && method_exists('Wpil_AI', 'check_ai_subscription')){
+                $ai_id = Wpil_Settings::get_linkwhisper_ai_user_id();
+                if(!empty($ai_id) && false === get_transient('wpil_user_ai_subscription')){
+                    Wpil_AI::check_ai_subscription(true, false);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.48');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.49 || $force_update){
+            $ai_token_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_credit_tbl}'");
+            if(!empty($ai_token_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_credit_tbl} LIKE 'query_id'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$ai_credit_tbl} ADD COLUMN query_id VARCHAR(128) NULL DEFAULT NULL AFTER `token_index`, ADD INDEX (`query_id`)";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.49');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.50 || $force_update){
+            $ai_linking_table = $wpdb->prefix . 'wpil_ai_linking';
+            $ai_linking_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_linking_table}'");
+            if(!empty($ai_linking_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_linking_table} LIKE 'sentence_id'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_linking_table} ADD COLUMN sentence_id VARCHAR(168) DEFAULT '' AFTER `sentence_text`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_linking_table} LIKE 'process_key'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_linking_table} ADD COLUMN process_key VARCHAR(64) DEFAULT '' AFTER `inserted`";
+                    $wpdb->query($update_table);
+                }
+
+                $has_sentence_index = $wpdb->get_var("SHOW INDEX FROM {$ai_linking_table} WHERE Key_name = 'sentence_id'");
+                if(empty($has_sentence_index)){
+                    $wpdb->query("ALTER TABLE {$ai_linking_table} ADD INDEX (`sentence_id`)");
+                }
+
+                $has_index = $wpdb->get_var("SHOW INDEX FROM {$ai_linking_table} WHERE Key_name = 'process_key'");
+                if(empty($has_index)){
+                    $wpdb->query("ALTER TABLE {$ai_linking_table} ADD INDEX (`process_key`)");
+                }
+
+                $wpdb->query("UPDATE {$ai_linking_table} SET sentence_id = MD5(sentence_text) WHERE (sentence_id IS NULL OR sentence_id = '') AND sentence_text IS NOT NULL AND sentence_text != ''");
+            }
+
+            update_option('wpil_site_db_version', '1.50');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.51 || $force_update){
+            $ai_token_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_credit_tbl}'");
+            if(!empty($ai_token_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_credit_tbl} LIKE 'transaction_type'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_credit_tbl} ADD COLUMN transaction_type VARCHAR(24) NOT NULL DEFAULT 'usage' AFTER `query_id`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_credit_tbl} LIKE 'transaction_ref'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_credit_tbl} ADD COLUMN transaction_ref VARCHAR(128) NULL DEFAULT NULL AFTER `transaction_type`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_credit_tbl} LIKE 'transaction_note'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_credit_tbl} ADD COLUMN transaction_note VARCHAR(64) NULL DEFAULT NULL AFTER `transaction_ref`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_credit_tbl} LIKE 'credits_added'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_credit_tbl} ADD COLUMN credits_added DECIMAL(10,4) UNSIGNED NOT NULL DEFAULT 0.0000 AFTER `credits_used`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_credit_tbl} LIKE 'process_key'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_credit_tbl} ADD COLUMN process_key VARCHAR(64) NOT NULL DEFAULT '' AFTER `process_used`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$ai_credit_tbl} LIKE 'process_id'");
+                if(empty($col)){
+                    $update_table = "ALTER TABLE {$ai_credit_tbl} ADD COLUMN process_id INT(10) UNSIGNED NOT NULL DEFAULT 0 AFTER `process_key`";
+                    $wpdb->query($update_table);
+                }
+
+                $has_index = $wpdb->get_var("SHOW INDEX FROM {$ai_credit_tbl} WHERE Key_name = 'transaction_type'");
+                if(empty($has_index)){
+                    $wpdb->query("ALTER TABLE {$ai_credit_tbl} ADD INDEX (`transaction_type`)");
+                }
+
+                $has_index = $wpdb->get_var("SHOW INDEX FROM {$ai_credit_tbl} WHERE Key_name = 'transaction_ref'");
+                if(empty($has_index)){
+                    $wpdb->query("ALTER TABLE {$ai_credit_tbl} ADD INDEX (`transaction_ref`)");
+                }
+
+                $has_index = $wpdb->get_var("SHOW INDEX FROM {$ai_credit_tbl} WHERE Key_name = 'credit_transaction_ref'");
+                if(empty($has_index)){
+                    $wpdb->query("ALTER TABLE {$ai_credit_tbl} ADD UNIQUE KEY credit_transaction_ref (`transaction_type`, `transaction_ref`)");
+                }
+
+                $has_index = $wpdb->get_var("SHOW INDEX FROM {$ai_credit_tbl} WHERE Key_name = 'process_key_id_time'");
+                if(empty($has_index)){
+                    $wpdb->query("ALTER TABLE {$ai_credit_tbl} ADD INDEX process_key_id_time (`process_key`, `process_id`, `process_time`)");
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.51');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.52 || $force_update){
+            $report_links_exists = $wpdb->query("SHOW TABLES LIKE '{$report_links_tbl}'");
+            if(!empty($report_links_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'url_slug_word_count'");
+                if(empty($col)){
+                    $wpdb->query("ALTER TABLE {$report_links_tbl} ADD COLUMN url_slug_word_count INT(10) UNSIGNED NOT NULL DEFAULT 0 AFTER `anchor_word_count`");
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'anchor_slug_positional_match'");
+                if(empty($col)){
+                    $wpdb->query("ALTER TABLE {$report_links_tbl} ADD COLUMN anchor_slug_positional_match DOUBLE UNSIGNED NOT NULL DEFAULT 0 AFTER `url_slug_word_count`");
+                }
+            }
+
+            $relation_map_exists = $wpdb->query("SHOW TABLES LIKE '{$relation_map_tbl}'");
+            if(!empty($relation_map_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$relation_map_tbl} LIKE 'post_id'");
+                if(empty($col)){
+                    $wpdb->query("ALTER TABLE {$relation_map_tbl} ADD COLUMN post_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 AFTER `process_key`");
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$relation_map_tbl} LIKE 'work_scope'");
+                if(empty($col)){
+                    $wpdb->query("ALTER TABLE {$relation_map_tbl} ADD COLUMN work_scope VARCHAR(24) NOT NULL DEFAULT 'default' AFTER `process_key`");
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$relation_map_tbl} LIKE 'post_type'");
+                if(empty($col)){
+                    $wpdb->query("ALTER TABLE {$relation_map_tbl} ADD COLUMN post_type VARCHAR(24) NOT NULL DEFAULT '' AFTER `post_id`");
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$relation_map_tbl} LIKE 'is_pillar'");
+                if(empty($col)){
+                    $wpdb->query("ALTER TABLE {$relation_map_tbl} ADD COLUMN is_pillar TINYINT(1) NOT NULL DEFAULT 0 AFTER `post_type`");
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$relation_map_tbl} LIKE 'item_processed'");
+                if(empty($col)){
+                    $wpdb->query("ALTER TABLE {$relation_map_tbl} ADD COLUMN item_processed TINYINT(1) NOT NULL DEFAULT 0 AFTER `is_pillar`");
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$relation_map_tbl} LIKE 'ai_processed'");
+                if(empty($col)){
+                    $wpdb->query("ALTER TABLE {$relation_map_tbl} ADD COLUMN ai_processed TINYINT(1) NOT NULL DEFAULT 0 AFTER `item_processed`");
+                }
+
+                $legacy_unique_keys = $wpdb->get_results("SHOW INDEX FROM {$relation_map_tbl} WHERE Column_name = 'process_key' AND Non_unique = 0");
+                if(!empty($legacy_unique_keys)){
+                    foreach($legacy_unique_keys as $key){
+                        if(empty($key->Key_name) || $key->Key_name === 'PRIMARY' || $key->Key_name === 'process_key_scope_post_id_type'){
+                            continue;
+                        }
+
+                        $wpdb->query("ALTER TABLE {$relation_map_tbl} DROP INDEX `{$key->Key_name}`");
+                    }
+                }
+
+                $has_index = $wpdb->get_var("SHOW INDEX FROM {$relation_map_tbl} WHERE Key_name = 'process_key_post_id_type'");
+                if(!empty($has_index)){
+                    $wpdb->query("ALTER TABLE {$relation_map_tbl} DROP INDEX `process_key_post_id_type`");
+                }
+
+                $has_index = $wpdb->get_var("SHOW INDEX FROM {$relation_map_tbl} WHERE Key_name = 'process_key_scope_post_id_type'");
+                if(empty($has_index)){
+                    $wpdb->query("ALTER TABLE {$relation_map_tbl} ADD UNIQUE KEY process_key_scope_post_id_type (`process_key`, `work_scope`, `post_id`, `post_type`)");
+                }
+
+                $has_index = $wpdb->get_var("SHOW INDEX FROM {$relation_map_tbl} WHERE Key_name = 'process_key_item_processed'");
+                if(empty($has_index)){
+                    $wpdb->query("ALTER TABLE {$relation_map_tbl} ADD INDEX process_key_item_processed (`process_key`, `item_processed`)");
+                }
+
+                $has_index = $wpdb->get_var("SHOW INDEX FROM {$relation_map_tbl} WHERE Key_name = 'process_key_scope_queue'");
+                if(empty($has_index)){
+                    $wpdb->query("ALTER TABLE {$relation_map_tbl} ADD INDEX process_key_scope_queue (`process_key`, `work_scope`, `item_processed`, `ai_processed`, `is_pillar`, `id`)");
+                }
+
+                if((float)WPIL_STATUS_SITE_DB_VERSION < 1.52){
+                    $wpdb->query("TRUNCATE TABLE {$relation_map_tbl}");
+                }
+            }
+            update_option('wpil_site_db_version', '1.52');
+        }
+
         // todo create a database index for click tracking's user_ip column if people find that it takes too long to load the user_ip view
 /*
         if((float)WPIL_STATUS_SITE_DB_VERSION < 1.23 || $force_update){
@@ -2186,7 +2472,17 @@ class Wpil_Base
      * @return $actions
      **/
     public static function modify_list_row_actions( $actions, $object ) {
-        $type = is_a($object, 'WP_Post') ? $object->post_type: $object->taxonomy;
+        if(!is_array($actions)){
+            $actions = array();
+        }
+
+        if(is_a($object, 'WP_Post')){
+            $type = $object->post_type;
+        }elseif(is_object($object) && isset($object->taxonomy)){
+            $type = $object->taxonomy;
+        }else{
+            return $actions;
+        }
 
         if(!in_array($type, Wpil_Settings::getAllTypes())){
             return $actions;
@@ -2195,14 +2491,17 @@ class Wpil_Base
         $page = (isset($_GET['paged']) && !empty($_GET['paged'])) ? '&paged=' . (int)$_GET['paged']: '';
 
         if(is_a($object, 'WP_Post')){
-            //$actions['wpil-add-inbound-links'] = '<a target=_blank href="' . admin_url("admin.php?post_id={$object->ID}&page=link_whisper&type=inbound_suggestions_page&ret_url=" . base64_encode(admin_url("edit.php?post_type={$type}{$page}&direct_return=1"))) . '">Add Inbound Links</a>';
+            $actions['wpil-add-inbound-links'] = '<a target=_blank href="' . admin_url("admin.php?post_id={$object->ID}&page=link_whisper&type=inbound_suggestions_page&ret_url=" . base64_encode(admin_url("edit.php?post_type={$type}{$page}&direct_return=1"))) . '">Add Inbound Links</a>';
         }else{
-            $update_count = get_option('wpil_free_update_count', 0);
-            update_option('wpil_free_update_count', $update_count += 1);
+            global $wp_taxonomies;
+
+            if(isset($wp_taxonomies[$type], $wp_taxonomies[$type]->object_type) && is_array($wp_taxonomies[$type]->object_type)){
+                $post_type = reset($wp_taxonomies[$type]->object_type);
+                $actions['wpil-add-inbound-links'] = '<a target=_blank href="' . admin_url("admin.php?term_id={$object->term_id}&page=link_whisper&type=inbound_suggestions_page&ret_url=" . base64_encode(admin_url("edit-tags.php?taxonomy={$type}{$page}&post_type={$post_type}&direct_return=1"))) . '">Add Inbound Links</a>';
+            }
         }
 
-        // disabling in 0.7.8... Shouldn't need this anymore since it's been ~4 years since the class has been used.
-        //Wpil_Link::removeLinkClass();
+        return $actions;
     }
 
 	/**
@@ -2272,174 +2571,38 @@ class Wpil_Base
 	}
 
     /**
-     * Gets SVG icon content so that we can use the HTML in PHP
-     * 
+     * Filters the post content to make links open in new tabs if they don't already.
+     * Differentiates between internal and external links.
+     * @param string $content 
+     * @return string $content 
      **/
-    public static function get_svg_icon($name = '', $return_reference = false, $styles = array()){
-        if(empty($name)){
-            return '';
+    public static function open_links_in_new_tabs($content = ''){
+
+        $open_all_intrnl = !empty(get_option('wpil_open_all_internal_new_tab', false));
+        $open_all_extrnl = !empty(get_option('wpil_open_all_external_new_tab', false));
+
+        if($open_all_intrnl || $open_all_extrnl){
+            preg_match_all( '/<(a\s[^>]*?href=[\'"]([^\'"]*?)[\'"][^>]*?)>/', $content, $matches );
+
+            foreach($matches[0] as $key => $link){
+                // if the link already opens in a new tab, skip to the next link
+                if(false !== strpos($link, 'target="_blank"')){
+                    continue;
+                }
+
+                $internal = Wpil_Link::isInternal($matches[2][$key]);
+
+                if($internal && $open_all_intrnl){
+                    $new_link = str_replace($matches[1][$key], $matches[1][$key] . ' target="_blank"', $link);
+                    $content = mb_ereg_replace(preg_quote($link), $new_link, $content);
+                }elseif(!$internal && $open_all_extrnl){
+                    $new_link = str_replace($matches[1][$key], $matches[1][$key] . ' target="_blank"', $link);
+                    $content = mb_ereg_replace(preg_quote($link), $new_link, $content);
+                }
+            }
         }
 
-        $path = '';
-        $id = '';
-        $viewbox = '';
-        $svg = '';
-        switch ($name){
-            case 'new-tab-1':
-                $path = '<g id="wpil-svg-new-tab-1-icon-path">
-                            <g fill-rule="evenodd" stroke="none" stroke-width="1" transform="matrix(0.27272726,0,0,0.27272726,-1.6363636,-1.6363636)">
-                                <g>
-                                <path d="m 45.5,14 h 33 7.5 v 7.5 33 7.5 h -8 v 8 h 8 c 4.418278,0 8,-3.590712 8,-8 V 54.5 21.5 14 C 94,9.581722 90.409288,6 86,6 H 78.5 45.5 38 c -4.418278,0 -8,3.5907123 -8,8 v 8 h 8 V 14 Z M 6,38.008515 C 6,33.585535 9.578055,30 14.008515,30 h 47.98297 C 66.414466,30 70,33.578055 70,38.008515 v 47.98297 C 70,90.414466 66.421945,94 61.991485,94 H 14.008515 C 9.5855345,94 6,90.421945 6,85.991485 Z M 42,46 H 34 V 58 H 22 v 8 h 12 v 12 h 8 V 66 H 54 V 58 H 42 Z" />
-                                </g>
-                            </g>
-                        </g>';
-                $id = 'wpil-svg-new-tab-1-icon-path';
-                break;
-            case 'new-tab-2':
-                $path = '<g id="wpil-svg-new-tab-2-icon-path" transform="translate(0,-4.8755901)">
-                            <path d="M 23.707456,18.327668 V 15.405081 H 13.462555 c -0.807816,0 -1.463142,-0.654761 -1.463142,-1.461874 V 6.6300173 c 0,-0.8079967 -0.654445,-1.4618817 -1.461967,-1.4618817 H 3.2185296 c -0.8078122,0 -1.4631363,0.65476 -1.4631363,1.4618817 v 7.3123117 c 0,0.806825 -0.6541545,1.461584 -1.4628478,1.461584 v 2.923755 z" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="0.585091" />
-                            <path d="m 23.707456,15.403913 c -0.807816,0 -1.463141,-0.653593 -1.463141,-1.461584 V 8.8232713 c 0,-0.80712 -0.655325,-1.461879 -1.464309,-1.461879 h -7.317451 c -0.808986,0 -1.463142,0.654759 -1.463142,1.461879 v 5.1190577 c 0,0.807991 0.655326,1.461584 1.464019,1.461584 z" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="0.585091" />
-                            <path d="M 17.121717,9.5546463 V 13.20978 Z" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="0.585094" />
-                            <path d="m 15.292428,11.382361 h 3.658577 z" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="0.585094" />
-                        </g>';
-                $id = 'wpil-svg-new-tab-2-icon-path';
-                break;
-            case 'outbound-1':
-                $path = '<g id="wpil-svg-outbound-1-icon-path" transform="matrix(0.046875,0,0,0.046875,0.0234375,0.02343964)">
-                            <path d="M 473.563,227.063 407.5,161 262.75,305.75 c -25,25 -49.563,41 -74.5,16 -25,-25 -9,-49.5 16,-74.5 L 349,102.5 283.937,37.406 c -14.188,-14.188 -2,-37.906 19,-37.906 h 170.625 c 20.938,0 37.938,16.969 37.938,37.906 v 170.688 c 0,20.937 -23.687,33.187 -37.937,18.969 z M 63.5,447.5 h 320 V 259.313 l 64,64 V 447.5 c 0,35.375 -28.625,64 -64,64 h -320 c -35.375,0 -64,-28.625 -64,-64 v -320 c 0,-35.344 28.625,-64 64,-64 h 124.188 l 64,64 H 63.5 Z" />
-                        </g>';
-                $id = 'wpil-svg-outbound-1-icon-path';
-                break;
-            case 'outbound-2':
-                $path = '<g id="wpil-svg-outbound-2-icon-path" transform="matrix(1.2,0,0,1.2,-2.4,-2.4)">
-                            <path d="m 20,18 c 0,1.103 -0.897,2 -2,2 H 6 C 4.897,20 4,19.103 4,18 V 6 C 4,4.897 4.897,4 6,4 h 7 V 2 H 6 C 3.794,2 2,3.794 2,6 v 12 c 0,2.206 1.794,4 4,4 h 12 c 2.206,0 4,-1.794 4,-4 v -7 h -2 z"/>
-                            <polygon points="22,9 21.999,2 15,2 15,4 18.586,4 13.465,9.121 14.879,10.535 20,5.415 20,9 " />
-                        </g>';
-                $id = 'wpil-svg-outbound-2-icon-path';
-                break;
-            case 'outbound-3':
-                $path = '<g id="wpil-svg-outbound-3-icon-path">
-                            <g transform="matrix(0.92307697,0,0,0.92307697,-209.5794,-43.317149)">
-                                <g fill-rule="evenodd" id="action" stroke="none" stroke-width="1" transform="translate(225.04432,44.926904)">
-                                    <g transform="translate(-224.99998,-44.999995)">
-                                        <g transform="translate(227,47)">
-                                            <path d="m 21,12 c 0.552285,0 1,-0.447715 1,-1 V 5 C 22,4.4477152 21.552285,4 21,4 h -6 c -0.552285,0 -1,0.4477152 -1,1 0,0.5522847 0.447715,1 1,1 h 3.580002 l -6.287109,6.292893 c -0.390524,0.390524 -0.390524,1.02369 0,1.414214 0.390524,0.390524 1.02369,0.390524 1.414214,0 L 20,7.4190674 V 11 c 0,0.552285 0.447715,1 1,1 z" />
-                                            <path d="m 20,18 v 6.008845 C 20,25.108529 19.110326,26 18.008845,26 H 1.991155 C 0.89147046,26 0,25.110326 0,24.008845 V 7.991155 C 0,6.8914705 0.88967395,6 1.991155,6 H 8 V 8 H 2 v 16 h 16 v -6 z" />
-                                            <path d="M 24.008845,0 C 25.108529,0 26,0.88967395 26,1.991155 v 16.01769 C 26,19.108529 25.110326,20 24.008845,20 H 7.991155 C 6.8914705,20 6,19.110326 6,18.008845 V 1.991155 C 6,0.89147046 6.8896739,0 7.991155,0 Z M 8,2 H 24 V 18 H 8 Z" />
-                                        </g>
-                                    </g>
-                                </g>
-                            </g>
-                        </g>';
-                $id = 'wpil-svg-outbound-3-icon-path';
-                break;
-            case 'outbound-4':
-                $path = '<g id="wpil-svg-outbound-4-icon-path">
-                            <g fill-rule="evenodd" id="action" stroke="none" stroke-width="1" transform="matrix(0.92307696,0,0,0.92307696,-1.8461539,-1.8461539)">
-                                <g transform="translate(-270,-45)">
-                                    <g transform="translate(272,47)">
-                                        <path d="m 20,22 v 2.008845 C 20,25.108529 19.110326,26 18.008845,26 H 16 v -2 h 2 v -2 z m 0,-2 v -2 h -2 v 2 z m -6,6 h -3 v -2 h 3 z M 9,26 H 6 V 24 H 9 Z M 4,26 H 1.991155 C 0.89147046,26 0,25.110326 0,24.008845 V 22 h 2 v 2 H 4 Z M 0,20 v -3 h 2 v 3 z m 0,-5 v -3 h 2 v 3 z M 0,10 V 7.991155 C 0,6.8914705 0.88967395,6 1.991155,6 H 4 V 8 H 2 v 2 z M 6,6 H 8 V 8 H 6 Z" />
-                                        <path d="M 24.008845,0 C 25.108529,0 26,0.88967395 26,1.991155 v 16.01769 C 26,19.108529 25.110326,20 24.008845,20 H 7.991155 C 6.8914705,20 6,19.110326 6,18.008845 V 1.991155 C 6,0.89147046 6.8896739,0 7.991155,0 Z M 8,2 H 24 V 18 H 8 Z" />
-                                        <path d="m 21,12 c 0.552285,0 1,-0.447715 1,-1 V 5 C 22,4.4477152 21.552285,4 21,4 h -6 c -0.552285,0 -1,0.4477152 -1,1 0,0.5522847 0.447715,1 1,1 h 3.580002 l -6.287109,6.292893 c -0.390524,0.390524 -0.390524,1.02369 0,1.414214 0.390524,0.390524 1.02369,0.390524 1.414214,0 L 20,7.4190674 V 11 c 0,0.552285 0.447715,1 1,1 z" />
-                                    </g>
-                                </g>
-                            </g>
-                        </g>';
-                $id = 'wpil-svg-outbound-4-icon-path';
-                break;
-            case 'outbound-5':
-                $path = '<g id="wpil-svg-outbound-5-icon-path">
-                            <g transform="matrix(0.3,0,0,0.3,-2.4,-2.4)">
-                                <path d="M 73.788323,16 44.56401,45.224313 c -1.715534,1.715534 -1.718018,4.503944 2.89e-4,6.222251 1.71481,1.71481 4.504103,1.718436 6.222251,2.89e-4 L 80,22.233402 v 9.769759 C 80,34.20588 81.790861,36 84,36 c 2.204644,0 4,-1.789446 4,-3.996839 V 11.996839 C 88,10.896005 87.552712,9.8972231 86.829463,9.173436 86.105113,8.4484102 85.10633,8 84.003161,8 H 63.996839 C 61.79412,8 60,9.790861 60,12 c 0,2.204644 1.789446,4 3.996839,4 z M 88,56 V 36.985151 78.029699 C 88,83.536144 84.032788,88 79.132936,88 H 16.867063 C 11.96992,88 8,83.527431 8,78.029699 V 17.970301 C 8,12.463856 11.967212,8 16.867063,8 H 59.566468 40 c 2.209139,0 4,1.790861 4,4 0,2.209139 -1.790861,4 -4,4 H 18.277794 C 17.005287,16 16,17.194737 16,18.668519 V 77.331481 C 16,78.778664 17.019803,80 18.277794,80 H 77.722206 C 78.994713,80 80,78.805263 80,77.331481 V 56 c 0,-2.209139 1.790861,-4 4,-4 2.209139,0 4,1.790861 4,4 z" />
-                            </g>
-                        </g>';
-                $id = 'wpil-svg-outbound-5-icon-path';
-                break;
-            case 'outbound-6':
-                $path = '<g id="wpil-svg-outbound-6-icon-path">
-                            <g fill-rule="evenodd" transform="matrix(0.5959368,0,0,0.5959368,-2.3837472,-2.2212188)">
-                                <path d="m 40,24.965598 c 0,-0.552285 0.447715,-1 1,-1 0.552285,0 1,0.447715 1,1 0,3.469059 -0.129275,6.918922 -0.387834,10.349539 -0.334407,4.436897 -3.860867,7.963515 -8.297748,8.298115 C 29.895466,43.871087 26.457309,44 23,44 19.540669,44 16.100512,43.870937 12.679584,43.6128 8.2429399,43.278024 4.7167289,39.751579 4.3822446,35.314912 4.127407,31.934695 4,28.519214 4,25.068519 4,21.588185 4.1296049,18.127086 4.3888246,14.685273 4.723001,10.248145 8.2495818,6.7212457 12.68668,6.3866649 16.10527,6.128885 19.543061,6 23,6 23.552285,6 24,6.4477152 24,7 24,7.5522847 23.552285,8 23,8 19.593137,8 16.205509,8.1270043 12.837064,8.381003 9.3859872,8.6412326 6.6430914,11.384376 6.3831764,14.835476 6.1277288,18.227205 6,21.638202 6,25.068519 6,28.469267 6.1255362,31.834597 6.3765849,35.164557 6.6367394,38.615298 9.3793476,41.358088 12.830071,41.61847 16.200821,41.87282 19.590779,42 23,42 c 3.407228,0 6.795216,-0.127032 10.164018,-0.381085 3.450907,-0.260245 6.19371,-3.00317 6.453804,-6.454089 C 39.872604,31.784331 40,28.384605 40,24.965598 Z M 40.834267,5.7513115 c -0.09391,-0.015809 -0.190403,-0.024039 -0.288813,-0.024039 H 30.543365 c -0.552285,0 -1,-0.4477152 -1,-1 0,-0.5522847 0.447715,-1 1,-1 h 10.002089 c 2.058516,0 3.727273,1.6687569 3.727273,3.7272728 v 9.9999997 c 0,0.552285 -0.447715,1 -1,1 -0.552285,0 -1,-0.447715 -1,-1 V 7.4545455 c 0,-0.098534 -0.0083,-0.1951415 -0.0241,-0.2891685 L 30.340158,19.070833 C 29.397229,20.013522 27.983195,18.59913 28.926123,17.65644 Z" fill-rule="nonzero" />
-                            </g>
-                        </g>';
-                $id = 'wpil-svg-outbound-6-icon-path';
-                break;
-            case 'outbound-7':
-                $path = '<g id="wpil-svg-outbound-7-icon-path" fill="none" clip-path="url(#clip0_31_188)">
-                            <path d="M9.16724 14.8891L20.1672 3.88908" stroke-linecap="round"/>
-                            <path d="M13.4497 3.53554L20.5208 3.53554L20.5208 10.6066" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M17.5 13.5L17.5 16.26C17.5 17.4179 17.5 17.9968 17.2675 18.4359C17.0799 18.7902 16.7902 19.0799 16.4359 19.2675C15.9968 19.5 15.4179 19.5 14.26 19.5L7.74 19.5C6.58213 19.5 6.0032 19.5 5.56414 19.2675C5.20983 19.0799 4.92007 18.7902 4.73247 18.4359C4.5 17.9968 4.5 17.4179 4.5 16.26L4.5 9.74C4.5 8.58213 4.5 8.0032 4.73247 7.56414C4.92007 7.20983 5.20982 6.92007 5.56414 6.73247C6.0032 6.5 6.58213 6.5 7.74 6.5L11 6.5" stroke-linecap="round"/>
-                        </g>
-                        <defs>
-                            <clipPath id="clip0_31_188">
-                                <rect fill="white" height="24" width="24"/>
-                            </clipPath>
-                        </defs>';
-                $id = 'wpil-svg-outbound-7-icon-path';
-                break;
-            case 'outbound-8':
-                $path = '<g id="wpil-svg-outbound-8-icon-path">
-                            <path d="M 19.318245,10.90244 H 17.12283 V 8.429854 L 13.552391,12.000586 12.000586,10.44761 15.569855,6.87922 H 13.097562 V 4.6840981 h 5.488683 c 0.402439,0 0.732,0.3286829 0.732,0.7308291 z" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="0.585367" />
-                            <path d="M 21.512196,0.29268351 H 9.8054636 c -1.211999,0 -2.195122,0.98312199 -2.195122,2.19512209 V 14.195708 c 0,1.212 0.983123,2.195122 2.195122,2.195122 H 21.512196 c 1.212293,0 2.195122,-0.983122 2.195122,-2.195122 V 2.4878056 c 0,-1.2120001 -0.982829,-2.19512209 -2.195122,-2.19512209 z m 0,13.53687849 c 0,0.201073 -0.164488,0.366146 -0.364976,0.366146 H 10.171611 c -0.2016594,0 -0.3661474,-0.165073 -0.3661474,-0.366146 V 2.8539517 c 0,-0.2007804 0.164488,-0.3661461 0.3661474,-0.3661461 H 21.14722 c 0.200781,0 0.364976,0.1653657 0.364976,0.3661461 z" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="0.585367" />
-                            <path d="m 14.195708,16.39083 v 4.75639 c 0,0.200781 -0.164487,0.364976 -0.365853,0.364976 H 2.8539517 c -0.2007804,0 -0.3661461,-0.164488 -0.3661461,-0.364976 V 10.17161 c 0,-0.2007804 0.1653657,-0.3661464 0.3661461,-0.3661464 H 7.6100496 V 7.610342 h -5.122244 c -1.2120001,0 -2.19512209,0.9831219 -2.19512209,2.1951216 V 21.512196 c 0,1.212293 0.98312199,2.195122 2.19512209,2.195122 H 14.195708 c 1.212,0 2.195122,-0.982829 2.195122,-2.195122 V 16.39083 Z" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="0.585367" />
-                        </g>';
-                $id = 'wpil-svg-outbound-8-icon-path';
-                break;
-            case 'previous-track':
-                $path = '<g id="wpil-svg-previous-track-icon-path">
-                            <path d="M51.617,7.497c-1.029-0.525-2.271-0.429-3.206,0.25L22.829,26.328c-0.796,0.578-1.269,1.505-1.269,2.489   c0,0.987,0.47,1.913,1.269,2.491L48.411,49.89c0.534,0.389,1.171,0.588,1.808,0.588c0.479,0,0.957-0.109,1.398-0.336   c1.03-0.525,1.682-1.584,1.682-2.742V10.24C53.299,9.083,52.647,8.021,51.617,7.497z"/>
-                            <path d="M14.512,7.357H6.744c-0.947,0-1.716,0.769-1.716,1.716v39.918c0,0.949,0.769,1.717,1.716,1.717h7.768   c0.947,0,1.717-0.768,1.717-1.717V9.073C16.229,8.125,15.459,7.357,14.512,7.357z"/>
-                        </g>';
-                $id = 'wpil-svg-previous-track-icon-path';
-                $viewbox = '0 0 56 56';
-                break;
-            case 'pause':
-                $path = '<g id="wpil-svg-pause-icon-path">
-                            <path d="M21.765,8.138h-7.768c-0.947,0-1.716,0.768-1.716,1.716v39.918c0,0.947,0.769,1.717,1.716,1.717h7.768   c0.947,0,1.717-0.77,1.717-1.717V9.854C23.481,8.906,22.712,8.138,21.765,8.138z"/>
-                            <path d="M43.044,8.138h-7.767c-0.948,0-1.717,0.768-1.717,1.716v39.918c0,0.947,0.769,1.717,1.717,1.717h7.767   c0.948,0,1.717-0.77,1.717-1.717V9.854C44.761,8.906,43.992,8.138,43.044,8.138z"/>
-                        </g>';
-                $id = 'wpil-svg-pause-icon-path';
-                $viewbox = '0 0 56 56';
-                break;
-            case 'play':
-                $path = '<g id="wpil-svg-play-icon-path" transform="scale(-1, 1) translate(-56, 0)">
-                            <path d="M42.102,7.123c-1.051-0.535-2.322-0.438-3.279,0.259L12.657,26.385c-0.815,0.592-1.298,1.54-1.298,2.547  c0,1.01,0.48,1.956,1.298,2.547l26.165,19.006c0.547,0.398,1.199,0.604,1.85,0.604c0.49,0,0.979-0.115,1.43-0.344  c1.055-0.539,1.721-1.623,1.721-2.807V9.929C43.822,8.745,43.156,7.661,42.102,7.123z"/>
-                        </g>';
-                $id = 'wpil-svg-play-icon-path';
-                $viewbox = '0 0 56 56';
-                break;
-            case 'next-track':
-                $path = '<g id="wpil-svg-next-track-icon-path">
-                            <path d="M34.66,26.426L9.078,7.846C8.144,7.167,6.9,7.069,5.872,7.595C4.841,8.121,4.19,9.18,4.19,10.338v37.161   c0,1.156,0.65,2.217,1.682,2.742c0.441,0.227,0.92,0.336,1.398,0.336c0.637,0,1.273-0.201,1.808-0.588L34.66,31.405   c0.798-0.578,1.269-1.504,1.269-2.488C35.929,27.931,35.456,27.004,34.66,26.426z"/>
-                            <path d="M50.744,7.456h-7.767c-0.948,0-1.717,0.769-1.717,1.716v39.919c0,0.947,0.769,1.715,1.717,1.715h7.767   c0.948,0,1.716-0.768,1.716-1.715V9.171C52.46,8.224,51.692,7.456,50.744,7.456z"/>
-                        </g>';
-                $id = 'wpil-svg-next-track-icon-path';
-                $viewbox = '0 0 56 56';
-                break;
-        }
-
-        if(!empty($path)){
-            $custom_style = '';
-            if(!empty($styles)){
-                $custom_style = Wpil_Toolbox::validate_inline_styles($styles, true);
-            }
-
-            if(!empty($viewbox) && !empty($custom_style)){
-                // width="auto" height="auto"
-                $style = ' ' . $custom_style . ' viewBox="'.$viewbox.'"';
-            }else{
-                $style = 'width="24" height="24" ' . $custom_style . ' viewBox="0 0 24 24"';
-            }
-
-            $svg = '<svg ' . $style . ' version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg">';
-            if($return_reference){
-                $svg .= '<use href="#' . $id . '"></use>';
-            }else{
-                $svg .= $path;
-            }
-            $svg .= '</svg>';
-        }
-
-        return $svg;
+        return $content;
     }
 
     public static function fixCollation($table)
@@ -2708,6 +2871,7 @@ class Wpil_Base
         Wpil_Sitemap::prepare_table();
         Wpil_Report::prepare_link_tracking_table();
         Wpil_Telemetry::prepare_table();
+        Wpil_LinkMapping::prepare_table();
 
         // search console table not included because it's explicitly activated by the user
         // linked site data table also not included because it's explicitly activated by the user
@@ -2904,7 +3068,7 @@ class Wpil_Base
         $settings = get_option('wpil_wizard_settings_selected');
         $preconfigured = array(
             'wpil_add_destination_title' => '1',
-            'wpil_ignore_tags_from_linking' => array('code'),
+            'wpil_ignore_tags_from_linking' => array('code', 'pre'),
             'wpil_ignore_latest_posts' => '1',
             'wpil_update_reusable_block_links' => '1',
             'wpil_override_global_post_during_scan' => '1',
@@ -2966,7 +3130,161 @@ class Wpil_Base
         wp_send_json(array('status' => 'valid'));
     }
 
+    public static function ajax_wizard_prepare_ai_activation(){
+        Wpil_Base::verify_nonce('wpil_wizard_save_nonce');
+
+        $current_user_id = get_current_user_id();
+        $email = isset($_POST['email']) ? sanitize_email(wp_unslash($_POST['email'])): '';
+        if(empty($email) || !is_email($email)){
+            wp_send_json(array(
+                'status' => 'invalid',
+                'message' => __('Please enter a valid email address to connect Link Whisper AI.', 'wpil')
+            ));
+        }
+
+        update_user_meta($current_user_id, 'wpil_wizard_ai_user_email', $email);
+
+        $ai_id = Wpil_Settings::get_linkwhisper_ai_user_id();
+        if(!empty($ai_id) && Wpil_Settings::get_linkwhisper_ai_active()){
+            $connected_email = Wpil_Settings::get_linkwhisper_ai_user_email();
+
+            delete_user_meta($current_user_id, 'wpil_wizard_ai_user_email');
+            delete_user_meta($current_user_id, 'wpil_wizard_ai_activation_token');
+            wp_send_json(array(
+                'status' => 'connected',
+                'auth_url' => '',
+                'email' => !empty($connected_email) ? $connected_email : $email,
+                'connected' => 1,
+                'verification_required' => 0,
+                'message' => __('Link Whisper AI is already connected on this site.', 'wpil'),
+            ));
+        }
+
+        $response = Wpil_AI::start_wizard_free_activation($email);
+        if(empty($response['email'])){
+            $response['email'] = $email;
+        }
+
+        if('verification_required' === $response['status'] && !empty($response['activation_token'])){
+            update_user_meta(get_current_user_id(), 'wpil_wizard_ai_activation_token', $response['activation_token']);
+        }elseif('verification_required' === $response['status']){
+            $response['status'] = 'invalid';
+            $response['message'] = __('We could not start the email verification just now. Please try again.', 'wpil');
+            delete_user_meta(get_current_user_id(), 'wpil_wizard_ai_activation_token');
+        }else{
+            delete_user_meta(get_current_user_id(), 'wpil_wizard_ai_activation_token');
+        }
+
+        if('auth_ready' === $response['status'] && empty($response['auth_url'])){
+            $response['auth_url'] = Wpil_AI::get_wizard_ai_auth_url($response['email']);
+        }
+
+        wp_send_json(array(
+            'status' => $response['status'],
+            'auth_url' => !empty($response['auth_url']) ? $response['auth_url'] : '',
+            'email' => $response['email'],
+            'connected' => 0,
+            'verification_required' => ('verification_required' === $response['status']) ? 1 : 0,
+            'message' => !empty($response['message']) ? $response['message'] : '',
+        ));
+    }
+
+    public static function ajax_wizard_ai_connection_status(){
+        Wpil_Base::verify_nonce('wpil_wizard_save_nonce');
+
+        $current_user_id = get_current_user_id();
+        $ai_id = Wpil_Settings::get_linkwhisper_ai_user_id();
+        $is_connected = (!empty($ai_id) && Wpil_Settings::get_linkwhisper_ai_active());
+        $wizard_email = sanitize_email((string) get_user_meta($current_user_id, 'wpil_wizard_ai_user_email', true));
+        $connected_email = $is_connected ? sanitize_email((string) Wpil_Settings::get_linkwhisper_ai_user_email()) : '';
+        $email = $is_connected ? $connected_email : $wizard_email;
+
+        if($is_connected){
+            if(empty($connected_email) && !empty($wizard_email) && is_email($wizard_email)){
+                $connected_email = Wpil_Settings::set_linkwhisper_ai_user_email($wizard_email);
+                $email = $connected_email;
+            }
+
+            delete_user_meta($current_user_id, 'wpil_wizard_ai_user_email');
+            delete_user_meta($current_user_id, 'wpil_wizard_ai_activation_token');
+            wp_send_json(array(
+                'status' => 'connected',
+                'connected' => 1,
+                'verification_required' => 0,
+                'ai_id' => $ai_id,
+                'email' => $email,
+                'auth_url' => '',
+                'message' => __('Link Whisper AI is already connected on this site.', 'wpil'),
+            ));
+        }
+
+        $activation_token = get_user_meta($current_user_id, 'wpil_wizard_ai_activation_token', true);
+        $response = Wpil_AI::check_wizard_free_activation($activation_token, $email);
+
+        if(empty($response['email'])){
+            $response['email'] = $email;
+        }else{
+            $email = sanitize_email($response['email']);
+            $response['email'] = $email;
+            update_user_meta($current_user_id, 'wpil_wizard_ai_user_email', $email);
+        }
+
+        if('expired' === $response['status'] && !empty($response['email'])){
+            $response = Wpil_AI::start_wizard_free_activation($response['email']);
+
+            if(empty($response['email'])){
+                $response['email'] = $email;
+            }else{
+                $email = sanitize_email($response['email']);
+                $response['email'] = $email;
+                update_user_meta($current_user_id, 'wpil_wizard_ai_user_email', $email);
+            }
+        }
+
+        if('verification_required' === $response['status'] && !empty($response['activation_token'])){
+            update_user_meta($current_user_id, 'wpil_wizard_ai_activation_token', $response['activation_token']);
+        }elseif(in_array($response['status'], array('expired', 'invalid', 'blocked', 'auth_ready', 'connected'), true)){
+            delete_user_meta($current_user_id, 'wpil_wizard_ai_activation_token');
+        }
+
+        if('auth_ready' === $response['status'] && empty($response['auth_url'])){
+            $response['auth_url'] = Wpil_AI::get_wizard_ai_auth_url($response['email']);
+        }
+
+        wp_send_json(array(
+            'status' => $response['status'],
+            'connected' => 0,
+            'verification_required' => ('verification_required' === $response['status']) ? 1 : 0,
+            'ai_id' => '',
+            'email' => $response['email'],
+            'auth_url' => !empty($response['auth_url']) ? $response['auth_url'] : '',
+            'message' => !empty($response['message']) ? $response['message'] : '',
+        ));
+    }
+
+    public static function ajax_wizard_reset_ai_activation(){
+        Wpil_Base::verify_nonce('wpil_wizard_save_nonce');
+
+        $current_user_id = get_current_user_id();
+
+        Wpil_Settings::disconnect_linkwhisper_ai();
+        delete_user_meta($current_user_id, 'wpil_wizard_ai_user_email');
+        delete_user_meta($current_user_id, 'wpil_wizard_ai_activation_token');
+        delete_user_meta($current_user_id, 'wpil_ai_access_user_email');
+        delete_user_meta($current_user_id, 'wpil_ai_access_user_id');
+
+        wp_send_json(array(
+            'status' => 'reset',
+            'connected' => 0,
+            'verification_required' => 0,
+            'email' => '',
+            'message' => __('Enter your email again to start the Link Whisper AI connection over.', 'wpil'),
+        ));
+    }
+
     public static function ajax_clear_process_tracker(){
+        delete_option('wpil_ai_linking_process_key');
+        delete_transient('wpil_review_served_' . get_current_user_id());
         delete_transient('wpil_loading_progress_tracker');
         delete_transient('wpil_wizard_has_completed');
         delete_transient('wpil_wizard_inserting_autolinks');

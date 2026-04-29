@@ -28,12 +28,18 @@ class Wpil_Query
      * @param string $table
      * @return string
      */
-    public static function postTypes($table = '')
+    public static function postTypes($table = '', $do_expanded_search = false)
     {
         $query = "";
-        $post_types = Wpil_Settings::getPostTypes();
+        if($do_expanded_search){
+            $post_types = Wpil_Settings::getReasonablyActivePostTypes(); // pulls basically everything that is registered as active on the site, excepting things like images
+        }else{
+            $post_types = Wpil_Settings::getPostTypes();
+        }
+
         if (!empty($post_types)) {
-            $query = " AND " . ((!empty($table)) ? $table . ".post_type" : "`post_type`") . " IN ('" . implode("', '", $post_types) . "') ";
+            $col = (!empty($table)) ? $table . '.post_type' : '`post_type`';
+            $query = " AND {$col} IN ('" . implode("','", array_map('esc_sql', $post_types)) . "') ";
         }
 
         return $query;
@@ -50,7 +56,7 @@ class Wpil_Query
         $query = "";
         $taxonomies = Wpil_Settings::getTermTypes();
         if (!empty($taxonomies)) {
-            $query = " AND taxonomy IN ('" . implode("', '", $taxonomies) . "')";
+            $query = "AND " . ((!empty($table)) ? $table . ".taxonomy": "`taxonomy`") . " IN ('" . implode("', '", $taxonomies) . "')";
         }
 
         return $query;
@@ -239,11 +245,11 @@ class Wpil_Query
         return !empty($ids) ? " AND p.ID NOT IN (" . implode(',', $ids) . ")" : "";
     }
 
-    public static function ignoredTermIds(){
+    public static function ignoredTermIds($table = 't', $return_ids = false){
         $post_ids = Wpil_Settings::getAllIgnoredPosts();
 
         if(empty($post_ids)){
-            return '';
+            return ($return_ids) ? array(): '';
         }
 
         $ids = array();
@@ -253,7 +259,11 @@ class Wpil_Query
             }
         }
 
-        return !empty($ids) ? " AND t.term_id NOT IN (" . implode(',', $ids) . ")" : "";
+        if($return_ids){
+            return $ids;
+        }
+
+        return !empty($ids) ? " AND " .((!empty($table)) ? $table . ".term_id": "`term_id`"). " NOT IN (" . implode(',', $ids) . ")" : "";
     }
 
     public static function ignoredExternalPostIds(){

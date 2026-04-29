@@ -73,6 +73,7 @@
         var selectedCategory = (urlParams.selected_category) ? urlParams.selected_category[0].split(',') : '';
         var sameTag = (urlParams.same_tag) ? urlParams.same_tag[0] : '';
         var selectedTag = (urlParams.selected_tag) ? urlParams.selected_tag[0].split(',') : '';
+        var linkToCategoryPages = (urlParams.link_to_category_pages) ? urlParams.link_to_category_pages[0] : '';
         var selectPostTypes = (urlParams.select_post_types) ? urlParams.select_post_types[0] : '';
         var selectedPostTypes = (urlParams.selected_post_types) ? urlParams.selected_post_types[0].split(',') : '';
         var aiRelatednessThreshold = (urlParams.ai_relatedness_threshold) ? urlParams.ai_relatedness_threshold[0]: '';
@@ -101,6 +102,7 @@
                 selected_category: selectedCategory,
                 same_tag: sameTag,
                 selected_tag: selectedTag,
+                link_to_category_pages: linkToCategoryPages,
                 select_post_types: selectPostTypes,
                 selected_post_types: selectedPostTypes,
                 ai_relatedness_threshold: aiRelatednessThreshold,
@@ -109,8 +111,6 @@
             },
             success: function(response){
                 globalSuggestionProgressTracker.errorCount = 0;
-                console.log({response, count});
-
                 if(!isJSON(response)){
                     response = extractAndValidateJSON(response, ['error', 'info', 'message', 'batch_size', 'post_count', 'finish']);
                 }
@@ -140,9 +140,35 @@
 
 				if((count * response.batch_size) < response.post_count && !forceFinish){
 					ajaxGetSuggestionsOutbound($el, url, response.count, response.post_count, key);
+				}else if( (sameCategory || sameTag || linkToCategoryPages) || (0 == wpil_ajax.site_linking_enabled) ){
+					if(undefined !== response.ai_score && response.ai_score){
+						return ajaxPerformAiSuggestionScoring($el, url, 'outbound_suggestions', key);
+					}else{
+						// if we're doing same tag or cat matching, skip the external sites.
+						return updateSuggestionDisplay(
+                            post_id, 
+                            term_id, 
+                            nonce, 
+                            $el, 
+                            'outbound_suggestions', 
+                            linkOrphaned, 
+                            sameParent, 
+                            sameCategory, 
+                            key, 
+                            selectedCategory, 
+                            sameTag, 
+                            selectedTag, 
+                            linkToCategoryPages,
+                            null,
+                            selectPostTypes, 
+                            selectedPostTypes, 
+                            aiRelatednessThreshold,
+                            keywords
+                        );
+					}
 				}else{
 					// if we're doing same tag or cat matching, skip the external sites.
-					return updateSuggestionDisplay(post_id, term_id, nonce, $el, 'outbound_suggestions', linkOrphaned, sameParent, sameCategory, key, selectedCategory, sameTag, selectedTag, selectPostTypes, selectedPostTypes);
+					return updateSuggestionDisplay(post_id, term_id, nonce, $el, 'outbound_suggestions', linkOrphaned, sameParent, sameCategory, key, selectedCategory, sameTag, selectedTag, linkToCategoryPages, null, selectPostTypes, selectedPostTypes, aiRelatednessThreshold, keywords);
 				}
 			},
             error: function(jqXHR, textStatus, errorThrown){
@@ -161,8 +187,10 @@
         });
     }
 
-	function updateSuggestionDisplay(postId, termId, nonce, $el, type = 'outbound_suggestions', linkOrphaned, sameParent, sameCategory = '', key = null, selectedCategory, sameTag, selectedTag, selectPostTypes, selectedPostTypes){
-		jQuery.ajax({
+	function updateSuggestionDisplay(postId, termId, nonce, $el, type = 'outbound_suggestions', linkOrphaned, sameParent, sameCategory = '', key = null, selectedCategory, sameTag, selectedTag, linkToCategoryPages = '', linkFromCategoryPages = '', selectPostTypes, selectedPostTypes, aiRelatednessThreshold, keywords = ''){
+                                    
+        
+        jQuery.ajax({
 			type: 'POST',
 			url: ajaxurl,
 			data: {
@@ -178,6 +206,8 @@
                 selected_category: selectedCategory,
                 same_tag: sameTag,
                 selected_tag: selectedTag,
+                link_to_category_pages: linkToCategoryPages,
+                link_from_category_pages: linkFromCategoryPages,
                 select_post_types: selectPostTypes,
                 selected_post_types: selectedPostTypes
             },
@@ -232,7 +262,9 @@
             var url = container.attr('data-wpil-ajax-container-url');
             var urlParams = parseURLParams(url);
             var linkOrphaned = container.find('#field_link_orphaned').prop('checked');
+            var linkToCategoryPages = container.find('#field_link_to_category_pages').prop('checked');
             var sameParent = container.find('#field_same_parent').prop('checked');
+            var linkFromCategoryPages = container.find('#field_link_from_category_pages').prop('checked');
             var sameCategory = container.find('#field_same_category').prop('checked');
             var selectedCategories = container.find('select[name="wpil_selected_category"]').val();
             var sameTag = container.find('#field_same_tag').prop('checked');
@@ -245,16 +277,26 @@
             var keywords = container.find('textarea[name="keywords"]').val();
 
             // remove any active filtering settings
-            url = url.replace(new RegExp("(&link_orphaned[^&]*)|(&same_parent[^&]*)|(&same_category[^&]*)|(&same_tag[^&]*)|(&select_post_types[^&]*)|(&selected_category[^&]*)|(&selected_tag[^&]*)|(&selected_post_types[^&]*)|(&keywords[^&]*)", 'ig'), '');
+            url = url.replace(new RegExp("(&link_orphaned[^&]*)|(&link_to_category_pages[^&]*)|(&same_parent[^&]*)|(&link_from_category_pages[^&]*)|(&same_category[^&]*)|(&same_tag[^&]*)|(&select_post_types[^&]*)|(&selected_category[^&]*)|(&selected_tag[^&]*)|(&selected_post_types[^&]*)|(&keywords[^&]*)", 'ig'), '');
 
             //link to orphaned
             if (linkOrphaned) {
                 url += "&link_orphaned=true";
             }
 
+            // only link to category pages
+            if (linkToCategoryPages) {
+                url += "&link_to_category_pages=true";
+            }
+
             //same parent
             if (sameParent) {
                 url += "&same_parent=true";
+            }
+
+            //only link from category pages
+            if (linkFromCategoryPages) {
+                url += "&link_from_category_pages=true";
             }
 
             //category
@@ -302,7 +344,7 @@
         }
     });
 
-    $(document).on('change', '#field_link_orphaned, #field_same_parent, #field_same_category, #field_same_tag, #field_select_post_types, select[name="wpil_selected_category"], select[name="wpil_selected_tag"], select[name="selected_post_types"], #wpil_use_ai_suggestions, .wpil-suggestions-can-be-regenerated', function(){
+    $(document).on('change', '#field_link_orphaned, #field_link_to_category_pages, #field_same_parent, #field_link_from_category_pages, #field_same_category, #field_same_tag, #field_select_post_types, select[name="wpil_selected_category"], select[name="wpil_selected_tag"], select[name="selected_post_types"], .wpil-suggestions-can-be-regenerated, #wpil_use_ai_suggestions', function(){
         var inputs = $('.wpil-suggestion-input');
         var changed = false;
         inputs.each(function(index, element){
@@ -338,7 +380,7 @@
 		}
     });
 
-    $(document).on('change', 'input[name="wpil_sitemap_embedding_relatedness_threshold"],input[name="ai_relatedness_threshold"],input[name="wpil_suggestion_relatedness_threshold"]', function(){
+    $(document).on('input change', 'input[name="wpil_sitemap_embedding_relatedness_threshold"],input[name="ai_relatedness_threshold"],input[name="wpil_suggestion_relatedness_threshold"],input[name="wpil_ai_auto_insert_relatedness_threshold"]', function(){
         var level = $(this).val();
         $(this).parent().find('.wpil-embedding-relatedness-threshold').text((parseFloat((level) * 100).toPrecision(3)) + '%');
     });
@@ -4194,6 +4236,950 @@
     });
 
     /** \Report page actions and activity **/
+
+    /*** Dashboard AI Fix runner (stub) ***/
+    var wpilAiFixJobs = {};
+    var wpilAiFixRunnerHooks = {};
+
+    function wpilAiFixParseInt(val){
+        var parsed = parseInt(val, 10);
+        return isNaN(parsed) ? 0 : parsed;
+    }
+
+    function wpilAiFixNormalizeContext(ctx){
+        ctx = ctx || {};
+
+        return {
+            type: (ctx.type || '').toString(),
+            itemId: (ctx.itemId !== undefined && ctx.itemId !== null)
+                ? String(ctx.itemId)
+                : ((ctx.item_id !== undefined && ctx.item_id !== null) ? String(ctx.item_id) : ''),
+            estimate: wpilAiFixParseInt(ctx.estimate || 0),
+            startId: (ctx.startId || ctx.start_id || '').toString(),
+            processKey: (ctx.processKey || ctx.process_key || '').toString(),
+            specialOptions: ctx.specialOptions || ctx.special_options || null,
+            description: (ctx.description || '').toString(),
+            balance: wpilAiFixParseInt(ctx.balance || 0)
+        };
+    }
+
+    function wpilAiFixGetJobKey(ctx){
+        var normalized = wpilAiFixNormalizeContext(ctx);
+        if(!normalized.type){
+            return '';
+        }
+
+        return normalized.type + ':' + normalized.itemId;
+    }
+
+    function wpilAiFixCallHook(name, args){
+        if($.isFunction(wpilAiFixRunnerHooks[name])){
+            return wpilAiFixRunnerHooks[name].apply(window, args || []);
+        }
+
+        return null;
+    }
+
+    function wpilAiFixResolveProcessKey(ctx){
+        var normalized = wpilAiFixNormalizeContext(ctx);
+        if(normalized.processKey){
+            return normalized.processKey;
+        }
+
+        var processKey = wpilAiFixCallHook('getProcessKey', [normalized]);
+        return processKey ? String(processKey) : '';
+    }
+
+    function wpilAiFixResolveLinkMode(){
+        var mode = wpilAiFixCallHook('getLinkMode', []);
+        return (mode === 'review' || mode === 'manual_select') ? 'review' : 'auto';
+    }
+
+    function wpilAiFixResolveSpecialOptions(ctx){
+        var normalized = wpilAiFixNormalizeContext(ctx);
+        if(normalized.specialOptions){
+            return normalized.specialOptions;
+        }
+
+        var options = wpilAiFixCallHook('getSpecialOptions', [normalized]);
+        return options || {};
+    }
+
+    function wpilAiFixGetPendingStartKey(ctx){
+        var normalized = wpilAiFixNormalizeContext(ctx);
+        if(!normalized.type){
+            return '';
+        }
+
+        return 'wpil_fix_pending_start:' + normalized.type + ':' + normalized.itemId;
+    }
+
+    function wpilAiFixSavePendingStart(ctx){
+        var key = wpilAiFixGetPendingStartKey(ctx);
+        if(!key || !window.localStorage){
+            return;
+        }
+
+        var normalized = wpilAiFixNormalizeContext(ctx);
+        normalized.processKey = wpilAiFixResolveProcessKey(normalized);
+
+        try{
+            window.localStorage.setItem(key, JSON.stringify({
+                type: normalized.type,
+                itemId: normalized.itemId,
+                estimate: normalized.estimate,
+                processKey: normalized.processKey,
+                savedAt: Date.now()
+            }));
+        }catch(e){}
+    }
+
+    function wpilAiFixClearPendingStart(ctx){
+        var key = wpilAiFixGetPendingStartKey(ctx);
+        if(!key || !window.localStorage){
+            return;
+        }
+
+        try{
+            window.localStorage.removeItem(key);
+        }catch(e){}
+    }
+
+    function wpilAiFixGetPendingStarts(){
+        if(!window.localStorage){
+            return [];
+        }
+
+        var pending = [];
+        try{
+            for(var i = 0; i < window.localStorage.length; i++){
+                var key = window.localStorage.key(i);
+                if(!key || key.indexOf('wpil_fix_pending_start:') !== 0){
+                    continue;
+                }
+
+                var raw = window.localStorage.getItem(key);
+                if(!raw){
+                    continue;
+                }
+
+                var parsed = JSON.parse(raw);
+                if(!parsed || !parsed.type){
+                    continue;
+                }
+
+                if((Date.now() - wpilAiFixParseInt(parsed.savedAt)) > (15 * 60 * 1000)){
+                    window.localStorage.removeItem(key);
+                    continue;
+                }
+
+                pending.push({
+                    type: parsed.type,
+                    itemId: parsed.itemId || '',
+                    estimate: wpilAiFixParseInt(parsed.estimate),
+                    processKey: parsed.processKey || ''
+                });
+            }
+        }catch(e){}
+
+        return pending;
+    }
+
+    function wpilAiFixEmit(eventName, args){
+        $(document).trigger(eventName, args || []);
+    }
+
+    function wpilAiFixClearJobTimer(job){
+        if(job && job.timer){
+            window.clearTimeout(job.timer);
+            job.timer = null;
+        }
+    }
+
+    function wpilAiFixRegisterJob(ctx, overrides){
+        var normalized = wpilAiFixNormalizeContext(ctx);
+        var jobKey = wpilAiFixGetJobKey(normalized);
+        if(!jobKey){
+            return null;
+        }
+
+        var existing = wpilAiFixJobs[jobKey] || null;
+        var job = existing || {
+            key: jobKey,
+            ctx: normalized,
+            timer: null,
+            lastData: null,
+            failures: 0,
+            transportMode: 'run'
+        };
+
+        job.ctx = $.extend({}, job.ctx || {}, normalized);
+        job.ctx.processKey = wpilAiFixResolveProcessKey(job.ctx);
+        job.transportMode = job.transportMode || 'run';
+
+        if(overrides){
+            $.extend(job, overrides);
+        }
+
+        wpilAiFixJobs[jobKey] = job;
+        return job;
+    }
+
+    function wpilAiFixBuildPayload(ctx, step){
+        var normalized = wpilAiFixNormalizeContext(ctx);
+        normalized.processKey = wpilAiFixResolveProcessKey(normalized);
+
+        var payload = {
+            action: 'wpil_ai_fix_process',
+            nonce: (window.WPIL_AI_FIX_NONCE || ''),
+            fix_type: normalized.type,
+            item_id: normalized.itemId,
+            estimate: normalized.estimate,
+            start_id: normalized.startId || '',
+            process_key: normalized.processKey,
+            link_mode: wpilAiFixResolveLinkMode(),
+            step: step || 'run'
+        };
+
+        if(payload.step === 'start'){
+            payload.special_options = wpilAiFixResolveSpecialOptions(normalized);
+        }
+
+        return payload;
+    }
+
+    function wpilAiFixParseJsonError(xhr, textStatus){
+        var message = 'Unable to continue the AI fix.';
+        var retryable = true;
+        var code = 'request_failed';
+        var status = (xhr && xhr.status) ? xhr.status : 0;
+
+        if(xhr && xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message){
+            message = xhr.responseJSON.data.message;
+        }else if(xhr && xhr.responseText){
+            try{
+                var parsed = JSON.parse(xhr.responseText);
+                if(parsed && parsed.data && parsed.data.message){
+                    message = parsed.data.message;
+                }
+            }catch(e){}
+        }else if(textStatus){
+            message = textStatus;
+        }
+
+        if(status === 403 || status === 400){
+            retryable = false;
+        }else if(status >= 500 || status === 0){
+            retryable = true;
+        }
+
+        if(status === 403){
+            code = 'forbidden';
+        }else if(status === 400){
+            code = 'bad_request';
+        }else if(status >= 500){
+            code = 'server_error';
+        }
+
+        return {
+            code: code,
+            message: message,
+            retryable: retryable,
+            status: status
+        };
+    }
+
+    function wpilAiFixFinalizeJob(jobKey, data){
+        var job = wpilAiFixJobs[jobKey];
+        if(!job){
+            return;
+        }
+
+        wpilAiFixClearJobTimer(job);
+        job.lastData = data || job.lastData || {
+            status: 'idle',
+            progress: 0,
+            message: 'No active job'
+        };
+        wpilAiFixClearPendingStart(job.ctx);
+
+        delete wpilAiFixJobs[jobKey];
+
+        wpilAiFixEmit('wpil:fix_finished', [job.ctx, job.lastData, job]);
+        wpilAiFixCallHook('onFinish', [job.ctx, job.lastData, job]);
+
+        if(job.lastData.status === 'cancelled'){
+            wpilAiFixEmit('wpil:fix_cancelled', [job.ctx, job.lastData, job]);
+            wpilAiFixCallHook('onCancelled', [job.ctx, job.lastData, job]);
+        }
+    }
+
+    function wpilAiFixSchedule(job, step, delay){
+        if(!job || !wpilAiFixJobs[job.key]){
+            return;
+        }
+
+        wpilAiFixClearJobTimer(job);
+        job.timer = window.setTimeout(function(){
+            wpilAiFixRequest(job, step);
+        }, Math.max(0, wpilAiFixParseInt(delay)));
+    }
+
+    function wpilAiFixHandleRetryableError(job, step, error){
+        if(!job || !wpilAiFixJobs[job.key]){
+            return;
+        }
+
+        job.failures = wpilAiFixParseInt(job.failures) + 1;
+        wpilAiFixEmit('wpil:fix_error', [job.ctx, error, job, step]);
+        wpilAiFixCallHook('onError', [job.ctx, error, job, step]);
+
+        if(!error.retryable){
+            wpilAiFixFinalizeJob(job.key, $.extend({}, job.lastData || {}, {
+                status: 'error',
+                message: error.message || 'Unable to continue the AI fix.'
+            }));
+            return;
+        }
+
+        if(step === 'start' || step === 'run'){
+            job.transportMode = 'status';
+        }
+
+        wpilAiFixSchedule(job, 'status', Math.min(4000, 1500 + (job.failures * 400)));
+    }
+
+    function wpilAiFixHandleSuccess(job, step, res){
+        if(!job || !wpilAiFixJobs[job.key]){
+            return;
+        }
+
+        if(!res || !res.success || !res.data){
+            wpilAiFixHandleRetryableError(job, step, {
+                code: 'invalid_response',
+                message: 'Unexpected AI fix response.',
+                retryable: true,
+                status: 200
+            });
+            return;
+        }
+
+        var data = res.data;
+        if(data.process_key){
+            job.ctx.processKey = String(data.process_key);
+        }
+        job.lastData = data;
+        job.failures = 0;
+
+        if(step === 'start' && data.status === 'running'){
+            wpilAiFixClearPendingStart(job.ctx);
+        }
+
+        wpilAiFixEmit('wpil:fix_updated', [job.ctx, data, job, step, !!res.skip]);
+        wpilAiFixCallHook('onUpdate', [job.ctx, data, job, step, !!res.skip]);
+
+        if(data.status === 'complete' || data.status === 'cancelled' || data.status === 'idle' || data.status === 'error'){
+            wpilAiFixFinalizeJob(job.key, data);
+            return;
+        }
+
+        if(res.skip){
+            job.transportMode = 'status';
+        }else if(step === 'status' && data.status === 'running'){
+            job.transportMode = 'run';
+        }
+
+        wpilAiFixSchedule(job, (job.transportMode === 'status') ? 'status' : 'run', (job.transportMode === 'status') ? 1500 : 1200);
+    }
+
+    function wpilAiFixRequest(job, step){
+        if(!job || !job.ctx || !job.ctx.type || typeof ajaxurl === 'undefined'){
+            return;
+        }
+
+        $.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            dataType: 'json',
+            data: wpilAiFixBuildPayload(job.ctx, step)
+        }).done(function(res){
+            wpilAiFixHandleSuccess(job, step, res);
+        }).fail(function(xhr, textStatus){
+            wpilAiFixHandleRetryableError(job, step, wpilAiFixParseJsonError(xhr, textStatus));
+        });
+    }
+
+    function wpilAiFixCheckStatus(ctx, callback){
+        var normalized = wpilAiFixNormalizeContext(ctx);
+        if(!normalized.type || typeof ajaxurl === 'undefined'){
+            if($.isFunction(callback)){
+                callback({
+                    success: false,
+                    data: null,
+                    error: {
+                        code: 'missing_context',
+                        message: 'Missing AI fix context.',
+                        retryable: false,
+                        status: 0
+                    }
+                });
+            }
+            return;
+        }
+
+        $.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            dataType: 'json',
+            data: wpilAiFixBuildPayload(normalized, 'status')
+        }).done(function(res){
+            if($.isFunction(callback)){
+                callback({
+                    success: !!(res && res.success && res.data),
+                    data: (res && res.success && res.data) ? res.data : null,
+                    skip: !!(res && res.skip),
+                    error: (res && res.success && res.data) ? null : {
+                        code: 'invalid_response',
+                        message: 'Unexpected AI fix status response.',
+                        retryable: true,
+                        status: 200
+                    }
+                });
+            }
+        }).fail(function(xhr, textStatus){
+            if($.isFunction(callback)){
+                callback({
+                    success: false,
+                    data: null,
+                    error: wpilAiFixParseJsonError(xhr, textStatus)
+                });
+            }
+        });
+    }
+
+    function wpilAiFixStart(ctx){
+        var normalized = wpilAiFixNormalizeContext(ctx);
+        var jobKey = wpilAiFixGetJobKey(normalized);
+        if(!jobKey){
+            return null;
+        }
+
+        if(wpilAiFixJobs[jobKey]){
+            return wpilAiFixJobs[jobKey];
+        }
+
+        normalized.processKey = wpilAiFixResolveProcessKey(normalized);
+        if(!normalized.startId){
+            normalized.startId = 'wpil_fix_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        }
+        var job = wpilAiFixRegisterJob(normalized, {
+            transportMode: 'run',
+            lastData: {
+                status: 'running',
+                progress: 0,
+                message: 'Starting...',
+                process_key: normalized.processKey
+            }
+        });
+
+        wpilAiFixSavePendingStart(normalized);
+        wpilAiFixEmit('wpil:fix_started', [job.ctx, job]);
+        wpilAiFixCallHook('onStart', [job.ctx, job]);
+        wpilAiFixRequest(job, 'start');
+
+        return job;
+    }
+
+    function wpilAiFixResume(ctx, statusData, options){
+        var normalized = wpilAiFixNormalizeContext(ctx);
+        var jobKey = wpilAiFixGetJobKey(normalized);
+        if(!jobKey){
+            return null;
+        }
+
+        var existed = !!wpilAiFixJobs[jobKey];
+        if(statusData && statusData.process_key){
+            normalized.processKey = String(statusData.process_key);
+        }else{
+            normalized.processKey = wpilAiFixResolveProcessKey(normalized);
+        }
+
+        var job = wpilAiFixRegisterJob(normalized, {
+            transportMode: (options && options.transportMode === 'status') ? 'status' : 'run'
+        });
+
+        if(statusData){
+            job.lastData = statusData;
+            wpilAiFixEmit('wpil:fix_updated', [job.ctx, statusData, job, 'hydrate', false]);
+            wpilAiFixCallHook('onUpdate', [job.ctx, statusData, job, 'hydrate', false]);
+        }
+
+        if(!existed){
+            wpilAiFixEmit('wpil:fix_started', [job.ctx, job]);
+            wpilAiFixCallHook('onStart', [job.ctx, job]);
+        }
+
+        if(statusData && statusData.status && statusData.status !== 'running'){
+            wpilAiFixFinalizeJob(job.key, statusData);
+            return job;
+        }
+
+        wpilAiFixClearPendingStart(job.ctx);
+        wpilAiFixSchedule(job, (job.transportMode === 'status') ? 'status' : 'run', (options && options.delay !== undefined) ? options.delay : 25);
+        return job;
+    }
+
+    function wpilAiFixFindContext(type, itemId){
+        var normalizedItemId = (itemId === undefined || itemId === null) ? '' : String(itemId);
+        var matched = null;
+
+        $.each(wpilAiFixJobs, function(jobKey, job){
+            if(matched || !job || !job.ctx || job.ctx.type !== type){
+                return;
+            }
+
+            var ctxItemId = (job.ctx.itemId === undefined || job.ctx.itemId === null) ? '' : String(job.ctx.itemId);
+            if(normalizedItemId !== '' && ctxItemId !== normalizedItemId){
+                return;
+            }
+
+            matched = $.extend({}, job.ctx);
+        });
+
+        if(matched){
+            return matched;
+        }
+
+        return {
+            type: type || '',
+            itemId: normalizedItemId,
+            estimate: 0,
+            processKey: ''
+        };
+    }
+
+    function wpilAiFixCancel(ctx, callback){
+        var normalized = wpilAiFixNormalizeContext(ctx);
+        if(!normalized.type || typeof ajaxurl === 'undefined'){
+            return;
+        }
+
+        normalized.processKey = wpilAiFixResolveProcessKey(normalized);
+
+        $.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            dataType: 'json',
+            data: wpilAiFixBuildPayload(normalized, 'cancel')
+        }).done(function(res){
+            if(!res || !res.success || !res.data){
+                var invalidError = {
+                    code: 'invalid_response',
+                    message: 'Unexpected AI fix cancel response.',
+                    retryable: false,
+                    status: 200
+                };
+                wpilAiFixEmit('wpil:fix_error', [normalized, invalidError, null, 'cancel']);
+                wpilAiFixCallHook('onError', [normalized, invalidError, null, 'cancel']);
+                if($.isFunction(callback)){
+                    callback({
+                        success: false,
+                        data: null,
+                        error: invalidError
+                    });
+                }
+                return;
+            }
+
+            wpilAiFixClearPendingStart(normalized);
+
+            var jobKey = wpilAiFixGetJobKey(normalized);
+            if(wpilAiFixJobs[jobKey]){
+                wpilAiFixFinalizeJob(jobKey, res.data);
+            }else{
+                wpilAiFixEmit('wpil:fix_finished', [normalized, res.data, null]);
+                wpilAiFixCallHook('onFinish', [normalized, res.data, null]);
+                wpilAiFixEmit('wpil:fix_cancelled', [normalized, res.data, null]);
+                wpilAiFixCallHook('onCancelled', [normalized, res.data, null]);
+            }
+
+            if($.isFunction(callback)){
+                callback({
+                    success: true,
+                    data: res.data,
+                    error: null
+                });
+            }
+        }).fail(function(xhr, textStatus){
+            var error = wpilAiFixParseJsonError(xhr, textStatus);
+            wpilAiFixEmit('wpil:fix_error', [normalized, error, null, 'cancel']);
+            wpilAiFixCallHook('onError', [normalized, error, null, 'cancel']);
+
+            if($.isFunction(callback)){
+                callback({
+                    success: false,
+                    data: null,
+                    error: error
+                });
+            }
+        });
+    }
+
+    function wpilAiFixHydrateRunningJobs(jobs){
+        $.each((jobs && typeof jobs === 'object') ? jobs : {}, function(jobKey, job){
+            var ctx = {
+                type: (job && job.type) ? job.type : '',
+                itemId: (job && job.itemId !== undefined) ? job.itemId : '',
+                estimate: wpilAiFixParseInt(job && job.estimate),
+                processKey: (job && job.processKey) ? job.processKey : ''
+            };
+
+            if(!ctx.type){
+                return;
+            }
+
+            wpilAiFixCheckStatus(ctx, function(result){
+                if(!result || !result.success || !result.data){
+                    return;
+                }
+
+                if(result.data.status === 'running'){
+                    wpilAiFixResume(ctx, result.data, { transportMode: 'run' });
+                }
+            });
+        });
+    }
+
+    function wpilAiFixHydratePendingStarts(){
+        $.each(wpilAiFixGetPendingStarts(), function(index, ctx){
+            if(wpilAiFixJobs[wpilAiFixGetJobKey(ctx)]){
+                return;
+            }
+
+            wpilAiFixCheckStatus(ctx, function(result){
+                if(!result){
+                    return;
+                }
+
+                if(result.success && result.data && result.data.status === 'running'){
+                    wpilAiFixResume(ctx, result.data, { transportMode: 'run' });
+                    return;
+                }
+
+                if(result.success && result.data && result.data.status !== 'running'){
+                    wpilAiFixClearPendingStart(ctx);
+                }
+            });
+        });
+    }
+
+    window.wpilAiFixRunner = {
+        configure: function(options){
+            wpilAiFixRunnerHooks = $.extend({}, wpilAiFixRunnerHooks, options || {});
+            return this;
+        },
+        getJobKey: function(ctx){
+            return wpilAiFixGetJobKey(ctx);
+        },
+        getJob: function(ctx){
+            var key = wpilAiFixGetJobKey(ctx);
+            return key && wpilAiFixJobs[key] ? wpilAiFixJobs[key] : null;
+        },
+        getActiveJobs: function(){
+            return wpilAiFixJobs;
+        },
+        start: function(ctx){
+            return wpilAiFixStart(ctx);
+        },
+        resume: function(ctx, statusData, options){
+            return wpilAiFixResume(ctx, statusData, options || {});
+        },
+        checkStatus: function(ctx, callback){
+            wpilAiFixCheckStatus(ctx, callback);
+        },
+        cancel: function(ctx, callback){
+            wpilAiFixCancel(ctx, callback);
+        },
+        cancelByType: function(type, itemId, callback){
+            wpilAiFixCancel(wpilAiFixFindContext(type, itemId), callback);
+        },
+        hydrateRunningJobs: function(jobs){
+            wpilAiFixHydrateRunningJobs(jobs);
+        },
+        hydratePendingStarts: function(){
+            wpilAiFixHydratePendingStarts();
+        }
+    };
+
+    function wpilAiHistoryGetShell(){
+        return $('[data-wpil-ai-history-shell]').first();
+    }
+
+    function wpilAiHistoryGetViewMode($shell){
+        var $panel = $shell.find('[data-wpil-ai-history-panel]').first();
+        if($panel.length){
+            var $toggle = $panel.find('[data-wpil-ai-history-view-toggle]');
+            if($toggle.length){
+                return $toggle.is(':checked') ? 'task' : 'individual';
+            }
+
+            return ($panel.attr('data-current-view') === 'task') ? 'task' : 'individual';
+        }
+
+        return 'task';
+    }
+
+    function wpilAiHistoryGetFilters($shell, page){
+        var $panel = $shell.find('[data-wpil-ai-history-panel]').first();
+        var filters = {
+            nonce: $shell.data('nonce'),
+            ai_usage_from: $shell.data('default-from') || '',
+            ai_usage_to: $shell.data('default-to') || '',
+            ai_usage_page: page || 1,
+            ai_usage_view: 'task',
+            ai_usage_events: []
+        };
+
+        if($panel.length){
+            filters.ai_usage_from = $panel.find('[name="ai_usage_from"]').val() || filters.ai_usage_from;
+            filters.ai_usage_to = $panel.find('[name="ai_usage_to"]').val() || filters.ai_usage_to;
+            filters.ai_usage_view = wpilAiHistoryGetViewMode($shell);
+            filters.ai_usage_events = $panel.find('[name="ai_usage_events[]"]').val() || [];
+            if(!page){
+                filters.ai_usage_page = parseInt($panel.attr('data-current-page'), 10) || 1;
+            }
+        }
+
+        return filters;
+    }
+
+    function wpilAiHistoryInitSelect2($shell){
+        var $select = $shell.find('[data-wpil-ai-history-events]');
+        if(!$select.length || typeof $.fn.select2 !== 'function'){
+            return;
+        }
+
+        var placeholder = (wpilAiHistoryGetViewMode($shell) === 'task') ? 'All AI tasks' : 'All AI events';
+
+        $select.each(function(){
+            var $el = $(this);
+            if($el.hasClass('select2-hidden-accessible')){
+                $el.select2('destroy');
+            }
+
+            $el.select2({
+                width: '100%',
+                placeholder: placeholder,
+                closeOnSelect: false,
+                dropdownParent: $shell.find('[data-wpil-ai-history-body]')
+            });
+        });
+    }
+
+    function wpilAiHistoryRenderEventOptions($shell, options, selected){
+        var $select = $shell.find('[data-wpil-ai-history-events]');
+        if(!$select.length){
+            return;
+        }
+
+        selected = $.isArray(selected) ? selected : [];
+        if($select.hasClass('select2-hidden-accessible')){
+            $select.select2('destroy');
+        }
+
+        $select.empty();
+        $.each(options || {}, function(value, label){
+            $('<option />')
+                .val(String(value))
+                .text(label)
+                .prop('selected', $.inArray(String(value), $.map(selected, function(item){ return String(item); })) !== -1)
+                .appendTo($select);
+        });
+
+        wpilAiHistoryInitSelect2($shell);
+    }
+
+    function wpilAiHistoryRefreshEventOptions($shell){
+        if(!$shell.length || $shell.data('events-loading')){
+            return;
+        }
+
+        $shell.data('events-loading', true);
+        $.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            dataType: 'json',
+            data: $.extend({
+                action: 'wpil_get_ai_credit_history_events'
+            }, wpilAiHistoryGetFilters($shell, 1))
+        }).done(function(response){
+            if(response && response.success && response.data){
+                wpilAiHistoryRenderEventOptions($shell, response.data.options || {}, response.data.selected || []);
+            }
+        }).always(function(){
+            $shell.data('events-loading', false);
+        });
+    }
+
+    function wpilAiHistoryClearLoading($shell){
+        var $body = $shell.find('[data-wpil-ai-history-body]');
+        $body.removeClass('is-loading');
+        $body.find('.ai-usage-loading-overlay').remove();
+    }
+
+    function wpilAiHistorySetLoading($shell, message, isError){
+        var $body = $shell.find('[data-wpil-ai-history-body]');
+        var hasPanel = $body.find('[data-wpil-ai-history-panel]').length > 0;
+        var classes = 'ai-usage-loading';
+        if(isError){
+            classes += ' is-error';
+        }
+
+        if(hasPanel && !isError){
+            $body.addClass('is-loading');
+            if(!$body.find('.ai-usage-loading-overlay').length){
+                $body.append('<div class="ai-usage-loading-overlay"><div class="ai-usage-loading-chip">' + (message || 'Loading AI credit history...') + '</div></div>');
+            }else{
+                $body.find('.ai-usage-loading-chip').text(message || 'Loading AI credit history...');
+            }
+            return;
+        }
+
+        $body.html('<div class="' + classes + '">' + (message || 'Loading AI credit history...') + '</div>');
+    }
+
+    function wpilAiHistoryLoad($shell, page){
+        if(!$shell.length || $shell.data('loading')){
+            return;
+        }
+
+        $shell.data('loading', true);
+        wpilAiHistorySetLoading($shell, 'Loading AI credit history...');
+
+        $.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            dataType: 'json',
+            data: $.extend({
+                action: 'wpil_get_ai_credit_history_panel'
+            }, wpilAiHistoryGetFilters($shell, page))
+        }).done(function(response){
+            if(response && response.success && response.data && response.data.html !== undefined){
+                $shell.find('[data-wpil-ai-history-body]').html(response.data.html);
+                $shell.data('loaded', true);
+                wpilAiHistoryInitSelect2($shell);
+            }else{
+                wpilAiHistorySetLoading($shell, 'We couldn\'t load the AI credit history just now.', true);
+            }
+        }).fail(function(){
+            wpilAiHistorySetLoading($shell, 'We couldn\'t load the AI credit history just now.', true);
+        }).always(function(){
+            wpilAiHistoryClearLoading($shell);
+            $shell.data('loading', false);
+        });
+    }
+
+    $(document).on('click', '[data-wpil-ai-history-toggle]', function(){
+        var $shell = $(this).closest('[data-wpil-ai-history-shell]');
+        var $body = $shell.find('[data-wpil-ai-history-body]');
+        var isOpen = $shell.hasClass('is-open');
+
+        if(isOpen){
+            $shell.removeClass('is-open');
+            $(this).attr('aria-expanded', 'false');
+            $body.attr('hidden', true);
+            return;
+        }
+
+        $shell.addClass('is-open');
+        $(this).attr('aria-expanded', 'true');
+        $body.attr('hidden', false);
+
+        if(!$shell.data('loaded')){
+            wpilAiHistoryLoad($shell, 1);
+        }
+    });
+
+    $(document).on('click', '[data-wpil-ai-history-apply]', function(){
+        var $shell = $(this).closest('[data-wpil-ai-history-shell]');
+        wpilAiHistoryLoad($shell, 1);
+    });
+
+    $(document).on('change', '[data-wpil-ai-history-panel] [name="ai_usage_from"], [data-wpil-ai-history-panel] [name="ai_usage_to"]', function(){
+        var $shell = $(this).closest('[data-wpil-ai-history-shell]');
+        wpilAiHistoryRefreshEventOptions($shell);
+    });
+
+    $(document).on('change', '[data-wpil-ai-history-view-toggle]', function(){
+        var $shell = $(this).closest('[data-wpil-ai-history-shell]');
+        wpilAiHistoryLoad($shell, 1);
+    });
+
+    $(document).on('click', '[data-wpil-ai-history-page]', function(){
+        var $shell = $(this).closest('[data-wpil-ai-history-shell]');
+        var page = parseInt($(this).attr('data-wpil-ai-history-page'), 10) || 1;
+        wpilAiHistoryLoad($shell, page);
+    });
+
+    $(document).on('click', '[data-wpil-ai-history-sync]', function(){
+        var $shell = $(this).closest('[data-wpil-ai-history-shell]');
+        var $button = $(this);
+
+        if(!$shell.length || $button.data('loading')){
+            return;
+        }
+
+        $button.data('loading', true).addClass('is-active');
+        wpilAiHistorySetLoading($shell, 'Checking for recent AI credit purchases...');
+
+        $.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            dataType: 'json',
+            data: $.extend({
+                action: 'wpil_refresh_ai_credit_purchases'
+            }, wpilAiHistoryGetFilters($shell, 1))
+        }).done(function(response){
+            if(response && response.success){
+                wpilAiHistoryLoad($shell, 1);
+                return;
+            }
+
+            wpilAiHistoryClearLoading($shell);
+            window.alert((response && response.data && response.data.message) ? response.data.message : 'We couldn\'t refresh the AI credit purchases just now.');
+        }).fail(function(){
+            wpilAiHistoryClearLoading($shell);
+            window.alert('We couldn\'t refresh the AI credit purchases just now.');
+        }).always(function(){
+            $button.data('loading', false).removeClass('is-active');
+        });
+    });
+
+    $(document).on('click', '[data-wpil-ai-history-export]', function(){
+        var $shell = $(this).closest('[data-wpil-ai-history-shell]');
+        var $button = $(this);
+        if(!$shell.length || $button.data('loading')){
+            return;
+        }
+
+        $button.data('loading', true).text('Preparing...');
+        $.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            dataType: 'json',
+            data: $.extend({
+                action: 'wpil_get_ai_credit_history_export_url'
+            }, wpilAiHistoryGetFilters($shell, 1))
+        }).done(function(response){
+            if(response && response.success && response.data && response.data.url){
+                window.location = response.data.url;
+            }
+        }).always(function(){
+            $button.data('loading', false).text('Export CSV');
+        });
+    });
+
+    /*** \Dashboard AI Fix runner ***/
 
 
 

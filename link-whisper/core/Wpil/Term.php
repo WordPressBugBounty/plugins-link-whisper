@@ -142,6 +142,12 @@ class Wpil_Term
             return false;
         }
 
+        // clean up the slug just in case the permalink was ugly
+        if(false !== strpos($slug, '=')){
+            $bits = explode('=', trim($slug, '?'));
+            $slug = end($bits);
+        }
+
         // First, try to get the term directly by slug with taxonomy context from URL
         // If we have a URL, try to extract taxonomy context first
         if (!empty($url)) {
@@ -187,11 +193,19 @@ class Wpil_Term
 
         // If no terms found, try direct database query
         if (empty($terms) || is_wp_error($terms)) {
+            $collation = "COLLATE utf8mb4_unicode_ci";
+            $post_charset = 'utf8mb4';
+            $table_data = $wpdb->get_row("SELECT table_name, table_collation, SUBSTRING_INDEX(table_collation, '_', 1) AS character_set FROM information_schema.tables WHERE table_schema = '{$wpdb->dbname}' AND table_name = '{$wpdb->posts}'");
+            if(!empty($table_data) && isset($table_data->table_collation)){
+                $collation = "COLLATE " . $table_data->table_collation;
+                $post_charset = $table_data->character_set;
+            }
+
             $terms = $wpdb->get_results($wpdb->prepare(
                 "SELECT t.*, tt.* 
                 FROM $wpdb->terms AS t 
                 INNER JOIN $wpdb->term_taxonomy AS tt ON t.term_id = tt.term_id 
-                WHERE t.slug = %s 
+                WHERE CONVERT(t.slug USING {$post_charset}) {$collation} = CONVERT(%s USING {$post_charset}) {$collation}
                 AND tt.taxonomy IN ('" . implode("','", array_map('esc_sql', array_values($taxonomies))) . "')
                 LIMIT 100",
                 $slug

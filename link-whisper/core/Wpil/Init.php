@@ -25,6 +25,7 @@ final class Wpil_Init
             Wpil_Email::class,
             Wpil_Notification::class,
             Wpil_Telemetry::class,
+            Wpil_Maintenance::class
         ];
     }
 

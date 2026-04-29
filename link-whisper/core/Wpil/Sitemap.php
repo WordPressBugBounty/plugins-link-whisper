@@ -567,6 +567,10 @@ class Wpil_Sitemap
                             $is_home = (trim($site_domain) === trim($post_id)) ? true: false;
                         }
 
+                        if(!empty($dat) && is_string($dat)){
+                            $dat = Wpil_Toolbox::json_decompress($dat); // just in case...
+                        }
+
                         if(!empty($dat)){
                             foreach($dat as $d_id => $d){
 

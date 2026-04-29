@@ -122,6 +122,103 @@
         });
     });
 
+    $(document).on('click', '#wpil-export-sitemap-support-trigger', function(e){
+        e.preventDefault();
+        var button = $(this);
+        var downloadUrl = button.attr('href');
+
+        if(!downloadUrl){
+            return;
+        }
+
+        triggerDebugExportDownload(downloadUrl, button);
+    });
+
+    $(document).on('click', '#wpil-ai-token-export-trigger', function(){
+        var button = $(this),
+            from = $('#wpil-ai-token-export-from').val(),
+            to = $('#wpil-ai-token-export-to').val(),
+            base = button.data('export-base'),
+            nonce = button.data('export-nonce'),
+            params = new URLSearchParams();
+
+        if(!base || !nonce){
+            return;
+        }
+
+        params.set('area', 'wpil_export_ai_token_use_support');
+        params.set('nonce', nonce);
+        if(from){
+            params.set('from', from);
+        }
+        if(to){
+            params.set('to', to);
+        }
+
+        triggerDebugExportDownload(base + '?' + params.toString(), button);
+    });
+
+    function setDebugExportButtonLoading(button, isLoading){
+        if(!button || !button.length){
+            return;
+        }
+
+        if(isLoading){
+            button.addClass('wpil_button_is_active');
+            button.attr('aria-busy', 'true');
+            button.css({'pointer-events': 'none', 'cursor': 'wait'});
+        }else{
+            button.removeClass('wpil_button_is_active');
+            button.removeAttr('aria-busy');
+            button.css({'pointer-events': '', 'cursor': ''});
+        }
+    }
+
+    function triggerDebugExportDownload(url, button){
+        setDebugExportButtonLoading(button, true);
+        if(!window.fetch || !window.URL || !window.URL.createObjectURL){
+            window.location.href = url;
+            window.setTimeout(function(){
+                setDebugExportButtonLoading(button, false);
+            }, 10000);
+            return;
+        }
+
+        window.fetch(url, {credentials: 'same-origin'})
+            .then(function(response){
+                if(!response.ok){
+                    throw new Error('Export request failed.');
+                }
+
+                return Promise.all([response.blob(), response.headers.get('content-disposition')]);
+            })
+            .then(function(result){
+                var blob = result[0];
+                var disposition = result[1] || '';
+                var filename = 'export.json';
+                var fileNameMatch = disposition.match(/filename\*=UTF-8''([^;]+)|filename=\"?([^\";]+)\"?/i);
+
+                if(fileNameMatch){
+                    filename = decodeURIComponent(fileNameMatch[1] || fileNameMatch[2] || filename);
+                }
+
+                var downloadUrl = window.URL.createObjectURL(blob);
+                var downloadLink = document.createElement('a');
+                downloadLink.href = downloadUrl;
+                downloadLink.download = filename;
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+                window.URL.revokeObjectURL(downloadUrl);
+            })
+            .catch(function(){
+                window.location.href = url;
+            })
+            .finally(function(){
+                setDebugExportButtonLoading(button, false);
+            });
+    }
+
     /** Related Posts Settings **/
     $(document).on('change', '[name^=wpil_related_post]', updateRelatedPostSettingsWait);
     $(document).on('click', '.wpil-related-posts-clear-colorpicker, .wpil-related-posts-clear-number', updateRelatedPostSettingsWait);
@@ -630,6 +727,60 @@
             }
         });
     }
+
+    $(document).on('click', '.wpil-clear-ai-linking-process-data', clearAILinkingProcessData);
+    function clearAILinkingProcessData(e){
+        e.preventDefault();
+        var button = this;
+
+        if($(button).hasClass('button-disabled')){
+            return;
+        }
+
+        wpil_swal({
+            title: 'Please Confirm',
+            text: "Please confirm that you want to delete all AI Linking process data for One Click Setup and Dashboard Fix with AI actions.",
+            icon: 'info',
+            buttons: ['Cancel', 'Delete Data'],
+        }).then((begin) => {
+            if (begin) {
+                $(button).addClass('wpil_button_is_active');
+                ajaxClearAILinkingProcessData(button);
+            }
+        });
+    }
+
+    function ajaxClearAILinkingProcessData(button){
+        var nonce = $(button).data('nonce');
+        jQuery.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            data: {
+                action: 'wpil_clear_ai_linking_process_data',
+                nonce: nonce,
+            },
+            error: function (jqXHR, textStatus, errorThrown) {
+                var wrapper = document.createElement('div');
+                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                $(wrapper).append(jqXHR.responseText);
+                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+            },
+            success: function(response){
+                if(response.error){
+                    wpil_swal(response.error.title, response.error.text, 'error');
+                    return;
+                }else if(response.success){
+                    wpil_swal(response.success.title, response.success.text, 'success').then(() => {
+                        location.reload();
+                    });
+                }
+            },
+            complete: function(){
+                $(button).removeClass('wpil_button_is_active');
+            }
+        });
+    }
+
     function ajaxClearAIData(button){
         var nonce = $(button).data('nonce');
         jQuery.ajax({
@@ -637,6 +788,124 @@
             url: ajaxurl,
             data: {
                 action: 'wpil_clear_ai_data',
+                nonce: nonce,
+            },
+            error: function (jqXHR, textStatus, errorThrown) {
+                var wrapper = document.createElement('div');
+                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                $(wrapper).append(jqXHR.responseText);
+                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+            },
+            success: function(response){
+                console.log(response);
+                // if there was an error
+                if(response.error){
+                    // output the error message
+                    wpil_swal(response.error.title, response.error.text, 'error');
+                    // and exit
+                    return;
+                }else if(response.success){
+                    wpil_swal(response.success.title, response.success.text, 'success').then(() => {
+                        location.reload();
+                    });
+                }
+            },
+            complete: function(){
+                // in any case, deanimate the button
+                $(button).removeClass('wpil_button_is_active');
+            }
+        });
+    }
+
+    $(document).on('click', '.wpil-clear-ai-relation-data', clearAIRelationData);
+    function clearAIRelationData(e){
+        e.preventDefault();
+        var button = this;
+
+        if($(button).hasClass('button-disabled')){
+            return;
+        }
+
+        wpil_swal({
+            title: 'Please Confirm',
+            text: "Please confirm that you want to delete all of Link Whisper's AI Relation Analysis data.",
+            icon: 'info',
+            buttons: ['Cancel', 'Delete Data'],
+        }).then((begin) => {
+            if (begin) {
+                // animate the button
+                $(button).addClass('wpil_button_is_active');
+                // and start the process
+                ajaxClearAIRelationData(button);
+            }
+        });
+    }
+    function ajaxClearAIRelationData(button){
+        var nonce = $(button).data('nonce');
+        jQuery.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            data: {
+                action: 'wpil_clear_ai_relation_data',
+                nonce: nonce,
+            },
+            error: function (jqXHR, textStatus, errorThrown) {
+                var wrapper = document.createElement('div');
+                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                $(wrapper).append(jqXHR.responseText);
+                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+            },
+            success: function(response){
+                console.log(response);
+                // if there was an error
+                if(response.error){
+                    // output the error message
+                    wpil_swal(response.error.title, response.error.text, 'error');
+                    // and exit
+                    return;
+                }else if(response.success){
+                    wpil_swal(response.success.title, response.success.text, 'success').then(() => {
+                        location.reload();
+                    });
+                }
+            },
+            complete: function(){
+                // in any case, deanimate the button
+                $(button).removeClass('wpil_button_is_active');
+            }
+        });
+    }
+
+    $(document).on('click', '.wpil-clear-ai-keyword-data', clearAIKeywordData);
+    function clearAIKeywordData(e){
+        e.preventDefault();
+        var button = this;
+
+        if($(button).hasClass('button-disabled')){
+            return;
+        }
+
+        wpil_swal({
+            title: 'Please Confirm',
+            text: "Please confirm that you want to delete all of Link Whisper's AI Generated Keyword data.",
+            icon: 'info',
+            buttons: ['Cancel', 'Delete Data'],
+        }).then((begin) => {
+            if (begin) {
+                // animate the button
+                $(button).addClass('wpil_button_is_active');
+                // and start the process
+                ajaxClearAIKeywordData(button);
+            }
+        });
+    }
+    function ajaxClearAIKeywordData(button){
+        var nonce = $(button).data('nonce');
+        jQuery.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            data: {
+                action: 'wpil_clear_ai_keyword_data',
                 nonce: nonce,
             },
             error: function (jqXHR, textStatus, errorThrown) {

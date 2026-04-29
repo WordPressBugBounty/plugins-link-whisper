@@ -5,6 +5,7 @@ class Wpil_Notification
     const CACHE_KEY = 'wpil_notifications_data';
     const CACHE_DURATION = 6 * HOUR_IN_SECONDS; // 6 hours
     const BASE_API_URL = 'https://linkwhisper.com';
+    const DASHBOARD_SEEN_META_KEY = 'wpil_dashboard_seen_notifications';
 
     /**
      * Fetch notification data from API with caching
@@ -343,6 +344,7 @@ class Wpil_Notification
     public function register()
     {
         add_action('wp_ajax_wpil_load_notifications', [$this, 'ajax_load_notifications']);
+        add_action('wp_ajax_wpil_mark_dashboard_notifications_seen', [$this, 'ajax_mark_dashboard_notifications_seen']);
     }
 
     /**
@@ -378,5 +380,174 @@ class Wpil_Notification
         wp_send_json_success([
             'html' => $html,
         ]);
+    }
+
+    /**
+     * Builds compact notification data for dashboard dropdown.
+     *
+     * @param int $limit
+     * @return array
+     */
+    public static function get_dashboard_dropdown_notifications($limit = 3)
+    {
+        $limit = max(1, (int) $limit);
+        $notifications = self::get_notifications();
+        $items = [];
+        $seen = self::get_seen_notification_keys();
+        $unread_count = 0;
+
+        if (!empty($notifications['data']) && is_array($notifications['data'])) {
+            $data = array_slice($notifications['data'], 0, $limit);
+
+            foreach ($data as $index => $notification) {
+                $key = self::get_notification_key($notification);
+                $is_seen = in_array($key, $seen, true);
+
+                if(!$is_seen){
+                    $unread_count++;
+                }
+
+                $items[] = [
+                    'key' => $key,
+                    'title' => !empty($notification['title']) ? sanitize_text_field($notification['title']) : __('Notification', 'wpil'),
+                    'description' => !empty($notification['description']) ? sanitize_text_field($notification['description']) : '',
+                    'action_url' => !empty($notification['action_url']) ? esc_url_raw($notification['action_url']) : '',
+                    'position' => (int) $index,
+                    'seen' => $is_seen ? 1 : 0,
+                ];
+            }
+        }
+
+        return [
+            'items' => $items,
+            'unread_count' => $unread_count,
+            'notification_count' => count($items),
+        ];
+    }
+
+    /**
+     * AJAX handler for marking dashboard notifications as seen.
+     */
+    public function ajax_mark_dashboard_notifications_seen()
+    {
+        if(!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wpil_dashboard_notifications_seen')){
+            wp_send_json_error('Invalid nonce');
+            return;
+        }
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+            return;
+        }
+
+        $keys = [];
+        if(isset($_POST['keys'])){
+            $raw = wp_unslash($_POST['keys']);
+            if(is_string($raw)){
+                $decoded = json_decode($raw, true);
+                if(is_array($decoded)){
+                    $keys = $decoded;
+                }
+            }elseif(is_array($raw)){
+                $keys = $raw;
+            }
+        }
+
+        $saved = self::mark_dashboard_notifications_seen($keys);
+        if(!$saved){
+            wp_send_json_error('Unable to save seen notifications');
+            return;
+        }
+
+        wp_send_json_success([
+            'unread_count' => 0,
+        ]);
+    }
+
+    /**
+     * Gets a unique key for a notification payload.
+     *
+     * @param array $notification
+     * @return string
+     */
+    public static function get_notification_key($notification)
+    {
+        if(!is_array($notification)){
+            return '';
+        }
+
+        $id = '';
+        if(!empty($notification['id'])){
+            $id = (string) $notification['id'];
+        }elseif(!empty($notification['notification_id'])){
+            $id = (string) $notification['notification_id'];
+        }
+
+        if(!empty($id)){
+            return sanitize_key('n_' . $id);
+        }
+
+        $signature = implode('|', [
+            isset($notification['title']) ? (string)$notification['title'] : '',
+            isset($notification['description']) ? (string)$notification['description'] : '',
+            isset($notification['action_url']) ? (string)$notification['action_url'] : '',
+            isset($notification['valid_from']) ? (string)$notification['valid_from'] : '',
+            isset($notification['valid_until']) ? (string)$notification['valid_until'] : '',
+        ]);
+
+        return 'h_' . md5($signature);
+    }
+
+    /**
+     * Gets seen notification keys for the current user.
+     *
+     * @return array
+     */
+    public static function get_seen_notification_keys()
+    {
+        $user_id = get_current_user_id();
+        if(empty($user_id)){
+            return [];
+        }
+
+        $keys = get_user_meta($user_id, self::DASHBOARD_SEEN_META_KEY, true);
+        if(!is_array($keys)){
+            return [];
+        }
+
+        return array_values(array_filter(array_map('sanitize_text_field', $keys)));
+    }
+
+    /**
+     * Marks dashboard notifications as seen for the current user.
+     *
+     * @param array $keys
+     * @return bool
+     */
+    public static function mark_dashboard_notifications_seen($keys = [])
+    {
+        $user_id = get_current_user_id();
+        if(empty($user_id)){
+            return false;
+        }
+
+        if(!is_array($keys)){
+            return false;
+        }
+
+        $keys = array_values(array_filter(array_map('sanitize_text_field', $keys)));
+        if(empty($keys)){
+            return true;
+        }
+
+        $seen = self::get_seen_notification_keys();
+        $merged = array_values(array_unique(array_merge($seen, $keys)));
+
+        // Keep user meta bounded in case of long-running installations.
+        if(count($merged) > 300){
+            $merged = array_slice($merged, -300);
+        }
+
+        return (bool) update_user_meta($user_id, self::DASHBOARD_SEEN_META_KEY, $merged);
     }
 }

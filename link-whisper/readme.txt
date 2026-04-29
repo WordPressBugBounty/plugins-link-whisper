@@ -2,8 +2,8 @@ Link Whisper Free
 Contributors: sreenathlw, mattbissett, linkwhspr
 Tags: links, SEO, internal linking, link building, orphan content
 Requires at least: 4.6
-Tested up to: 6.9.1
-Stable Tag: 0.9.2
+Tested up to: 6.9.4
+Stable Tag: 0.9.3
 Requires PHP: 5.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -196,6 +196,93 @@ We are confident that you’ll be happy with Link Whisper Premium. However, if y
 15. [Premium] The URL Changer allows you to update old links to point to new URLs.
 
 == Changelog ==
+= 0.9.3 =
+* [NEW FEATURE] Creating a new Dashboard interface with improved link health stats, recommended actions, and clearer processing feedback.
+* [NEW FEATURE] Creating a new setup wizard with AI connection, Google Search Console connection, money page selection, AI credit handling, scanning progress.
+* [NEW FEATURE] Adding an AI Credit History report with filtering, pagination, credit totals, and CSV export.
+* [NEW FEATURE] Adding the ability to search Money Pages by URL and include terms in Money Page selection.
+* [NEW FEATURE] Adding a setting to help prevent Target Keyword cannibalization when creating links.
+* [NEW FEATURE] Adding a setting to ignore external links when checking outbound link limits.
+* [IMPROVEMENT] Adding controls for clearing specific types of AI data. (Viz. The Relation Analysis and the Target Keyword data)
+* [IMPROVEMENT] Improving AI relation scoring so highly targeted keyword links are weighted more strongly.
+* [IMPROVEMENT] Improving AI linking credit estimates and credit refresh handling.
+* [IMPROVEMENT] Increasing the AI processing concurrency ceiling and batch size for Link Whisper AI sites.
+* [IMPROVEMENT] Adding dedupe checks to prevent duplicate AI calls.
+* [IMPROVEMENT] Caching the site model for improved AI processing efficiency.
+* [IMPROVEMENT] Adding phrase-level AI preparation for suggestion requests.
+* [IMPROVEMENT] Improving AI embedding and token usage handling for more response formats.
+* [IMPROVEMENT] Improving the AI connection flow in the setup wizard and checkout.
+* [IMPROVEMENT] Improving the AI account email fallback system so checkout and connection status are more reliable.
+* [IMPROVEMENT] Improving AI checkout handling, minimum credit purchases, and credit padding.
+* [IMPROVEMENT] Improving the restart process after purchasing AI credits.
+* [IMPROVEMENT] Improving link saving to reduce duplicate links.
+* [IMPROVEMENT] Improving post checks so AI processes skip invalid, hidden, untitled, numeric-only, redirected, and non-processable posts more reliably.
+* [IMPROVEMENT] Improving URL tracing for ugly term permalinks and Custom Permalinks setups.
+* [IMPROVEMENT] Improving orphan ignored-post handling when an ignored URL has to be traced by ugly permalink. (Sometimes we need to fall back to that if the permalink structure is very messy)
+* [IMPROVEMENT] Improving broad URL lookup by ignoring attachments and prioritizing actively used post types.
+* [IMPROVEMENT] Improving redirect handling so term URLs are less likely to be treated as false positives.
+* [IMPROVEMENT] Improving broken link checks by ignoring cache where needed and simplifying retry checks.
+* [IMPROVEMENT] Improving broken link detection to reduce false positives.
+* [IMPROVEMENT] Improving the Broken Link Report with search and check-link styling.
+* [IMPROVEMENT] Improving the Link Relation stat so ignored posts and disabled categories are scored more accurately.
+* [IMPROVEMENT] Improving the Dashboard's broken link code filtering so it only shows the default list of broken links and not the full list which includes temporary broken links. (EX: Target site had a 500 error that's since been resolved, the break was only temporary)
+* [IMPROVEMENT] Improving Search Console, dashboard, and wizard processing order so AI scanning waits for link scanning when needed.
+* [IMPROVEMENT] Improving automatic linking so empty rules can be cleaned up faster.
+* [IMPROVEMENT] Improving autolinking's ability to insert and delete links inside ACF Gutenberg blocks.
+* [IMPROVEMENT] Improving ACF support by adding processing for fields and fixing field searching.
+* [IMPROVEMENT] Improving content processing by adding safer shortcode and theme-content rendering.
+* [IMPROVEMENT] Making "pre" tag skipping for suggestions optional. (It's now off by default, but you can turn it back on from the settings)
+* [IMPROVEMENT] Improving Cornerstone, Muffin, Oxygen, and Themify content checks.
+* [IMPROVEMENT] Enabling link gathering from the Posts 2 Posts plugin.
+* [IMPROVEMENT] Improving Related Posts widget handling when AI data is being used.
+* [IMPROVEMENT] Ignoring trashed SEOPress redirects. (Sometimes a trashed redirect would make the URL tracing functionality pull up the wrong post)
+* [IMPROVEMENT] Adding further checks to prevent links to posts that are already linked.
+* [IMPROVEMENT] Adding more title checks when selecting and processing posts.
+* [IMPROVEMENT] Adding more details to suggestion diagnostics when no suggestions are found.
+* [IMPROVEMENT] Adding more flexible post type query building.
+* [IMPROVEMENT] Replacing Tawk.to support chat with HelpScout Beacon.
+* [UX/UI] Improving link coverage scoring so it cannot exceed 100%.
+* [UX/UI] Changing the color scheme for buttons and loaders from light blue to a blue-purple gradient. B)
+* [UX/UI] Updating setup wizard screens, scripts, buttons, loaders, and scanning visuals.
+* [UX/UI] Adding clearer AI setup, AI credit, and AI processing messages.
+* [UX/UI] Updating setup wizard text to make it clearer that AI suggestions are optional.
+* [UX/UI] Adding the option to continue setup without AI linking.
+* [UX/UI] Hiding other plugin notices on the setup wizard.
+* [UX/UI] Improving the AI credit purchase popup so it doesn't appear more than once.
+* [UX/UI] Adding a blocking notice and improved checkout messaging when checkout requests are blocked.
+* [UX/UI] Making the Posts Crawled dashboard panel clickable.
+* [UX/UI] Adding a Dashboard feedback form.
+* [UX/UI] Updating Dashboard notifications for the new Dashboard.
+* [UX/UI] Improving spacing and layout consistency in suggestion options.
+* [UX/UI] Updating supported related-post widget tooltip wording.
+* [UX/UI] Making sure hamburger menus don't pick up the standard button color.
+* [UX/UI] Adding AI token usage export functionality for support and reporting.
+* [SECURITY] Adding more sanitization to REST variables, return URLs, AI subscription input, AI authentication data, and output shown in admin areas.
+* [COMPATIBILITY] Adding a fallback for the Link Whisper AI autoconnect flow.
+* [COMPATIBILITY] Adding checks for nullable values to better support PHP 5.6 and reduce notices.
+* [COMPATIBILITY] Removing a redundant __autoload definition from the scoped autoloader.
+* [COMPATIBILITY] Ensuring database collations match between term and taxonomy tables.
+* [COMPATIBILITY] Fixing possible errors on sites with non-standard post archive pages.
+* [BUGFIX] Fixing cancellation bugs that allowed AI processes to continue running after cancellation.
+* [BUGFIX] Fixing bugs in the AI process runner, process updating, and duplicate process handling.
+* [BUGFIX] Fixing bugs that could keep AI processing paused after purchasing more credits.
+* [BUGFIX] Fixing bugs that could keep the Review Links button from enabling or updating when results came in.
+* [BUGFIX] Fixing a bug that could keep the manual review panel from completing if all suggestions were inserted early.
+* [BUGFIX] Fixing a bug in the AI Relation Score setting display.
+* [BUGFIX] Fixing a bug that allowed link coverage scores greater than 100%.
+* [BUGFIX] Fixing a bug that caused valid posts to be skipped during scan preparation.
+* [BUGFIX] Fixing a bug that could keep links from being inserted into unpublished posts.
+* [BUGFIX] Fixing a bug that could keep post titles hidden on the Target Keyword page.
+* [BUGFIX] Fixing a bug that kept the Error Report from being filtered by post type.
+* [BUGFIX] Fixing minor notices in AI processing, dashboard row actions, and missing path data.
+* [BUGFIX] Fixing possible null property, null variable, missing array, and unexpected data type errors.
+* [BUGFIX] Fixing possible edge cases where AI maps would not decode.
+* [BUGFIX] Fixing Unicode decoding bugs.
+* [BUGFIX] Fixing styling bugs in dashboard, wizard, target keyword, and tooltip displays.
+* [BUGFIX] Fixing a typo in ACF field searching.
+* [BUGFIX] Fixing checkout display and parsing bugs in the AI credit modal.
+* [BUGFIX] Fixing duplicate AI maintenance process calls by adding short process waiters.
+
 = 0.9.2 =
 * [NEW LANGUAGE] Adding support for Turkish!!!
 * [IMPROVEMENT] Adding search function for the broken link report!

@@ -6,6 +6,8 @@
 class Wpil_TargetKeyword{
 
     public static $has_stored_keywords = null;
+    public static $keyword_map = null;
+    private static $site_model = null;
 
     /**
      * Show table page
@@ -107,13 +109,17 @@ class Wpil_TargetKeyword{
      * Updates Yoast and Rank Math keywords on post save.
      **/
     public static function update_keywords_on_post_save($post_id, $post = null, $updated = null){
+        if(wp_is_post_revision($post_id)){
+            return;
+        }
+
         $selected_keyword_sources = self::get_active_keyword_sources();
         $post_keywords = self::get_active_keywords_by_post_ids($post_id);
 
         // if yoast is active
         if(in_array('yoast', $selected_keyword_sources, true)){
             // delete the existing yoast keywords
-    //        self::delete_keyword_by_type($post_id, 'post', 'yoast-keyword');
+    //        self::delete_keyword_from_post_by_type($post_id, 'post', 'yoast-keyword');
             // obtain the current post keywords
             $yoast_keywords = self::get_yoast_post_keywords_by_id($post_id, 'post');
             // remove any yoast keywords that no longer exist
@@ -140,7 +146,7 @@ class Wpil_TargetKeyword{
         // if rank math is active
         if(in_array('rank-math', $selected_keyword_sources, true)){
             // delete the existing rank math keywords
-    //        self::delete_keyword_by_type($post_id, 'post', 'rank-math-keyword');
+    //        self::delete_keyword_from_post_by_type($post_id, 'post', 'rank-math-keyword');
             // obtain the current post keywords
             $rm_keywords = self::get_rank_math_post_keywords_by_id($post_id, 'post');
             // remove any rank math keywords that no longer exist
@@ -167,7 +173,7 @@ class Wpil_TargetKeyword{
         // if All In One SEO is active
         if(in_array('aioseo', $selected_keyword_sources, true)){
             // delete the existing AIOSEO keywords
-//            self::delete_keyword_by_type($post_id, 'post', 'aioseo-keyword');
+//            self::delete_keyword_from_post_by_type($post_id, 'post', 'aioseo-keyword');
             // obtain the current post keywords
             $aio_keywords = self::get_aioseo_post_keywords_by_id($post_id, 'post');
             // remove any AIOSEO keywords that no longer exist
@@ -194,7 +200,7 @@ class Wpil_TargetKeyword{
         // if SEOPress is active
         if(in_array('seopress', $selected_keyword_sources, true)){
             // delete the existing SEOPress keywords
-//            self::delete_keyword_by_type($post_id, 'post', 'seopress-keyword');
+//            self::delete_keyword_from_post_by_type($post_id, 'post', 'seopress-keyword');
             // obtain the current post keywords
             $seopress_keywords = self::get_seopress_post_keywords_by_id($post_id, 'post');
             // remove any SEOPress keywords that no longer exist
@@ -221,7 +227,7 @@ class Wpil_TargetKeyword{
         // if Squirrly SEO is active
         if(in_array('squirrly', $selected_keyword_sources, true)){
             // delete the existing Squirrly keywords
-//            self::delete_keyword_by_type($post_id, 'post', 'squirrly-keyword');
+//            self::delete_keyword_from_post_by_type($post_id, 'post', 'squirrly-keyword');
             // obtain the current post keywords
             $squirrly_keywords = self::get_squirrly_post_keywords_by_id($post_id, 'post');
             // remove any Squirrly keywords that no longer exist
@@ -248,7 +254,7 @@ class Wpil_TargetKeyword{
         // if Post Content keywords are active
         if(in_array('post-content', $selected_keyword_sources, true)){
             // delete the existing Post Content keywords
-//            self::delete_keyword_by_type($post_id, 'post', 'post-content-keyword');
+//            self::delete_keyword_from_post_by_type($post_id, 'post', 'post-content-keyword');
             // obtain the current post keywords
             $post_content_keywords = self::get_post_content_keywords_by_id($post_id, 'post');
             // remove any post content keywords that no longer exist
@@ -283,7 +289,7 @@ class Wpil_TargetKeyword{
         // if yoast is active
         if(in_array('yoast', $selected_keyword_sources, true)){
             // delete the existing yoast keywords
-//            self::delete_keyword_by_type($term_id, 'term', 'yoast-keyword');
+//            self::delete_keyword_from_post_by_type($term_id, 'term', 'yoast-keyword');
             // obtain the current post keywords
             $yoast_keywords = self::get_yoast_post_keywords_by_id($term_id, 'term');
             // remove any Yaost keywords that no longer exist
@@ -310,7 +316,7 @@ class Wpil_TargetKeyword{
         // if rank math is active
         if(in_array('rank-math', $selected_keyword_sources, true)){
             // delete the existing rank math keywords
-//            self::delete_keyword_by_type($term_id, 'term', 'rank-math-keyword');
+//            self::delete_keyword_from_post_by_type($term_id, 'term', 'rank-math-keyword');
             // obtain the current post keywords
             $rm_keywords = self::get_rank_math_post_keywords_by_id($term_id, 'term');
             // remove any Rank Math keywords that no longer exist
@@ -337,7 +343,7 @@ class Wpil_TargetKeyword{
         // if aioseo is active
         if(in_array('aioseo', $selected_keyword_sources, true)){
             // delete the existing rank math keywords
-//            self::delete_keyword_by_type($term_id, 'term', 'aioseo-keyword');
+//            self::delete_keyword_from_post_by_type($term_id, 'term', 'aioseo-keyword');
             // obtain the current post keywords
             $aio_keywords = self::get_aioseo_post_keywords_by_id($term_id, 'term');
             // remove any AIOSEO keywords that no longer exist
@@ -366,7 +372,7 @@ class Wpil_TargetKeyword{
         // if Squirrly SEO is active
         if(in_array('squirrly', $selected_keyword_sources, true)){
             // delete the existing rank math keywords
-//            self::delete_keyword_by_type($term_id, 'term', 'squirrly-keyword');
+//            self::delete_keyword_from_post_by_type($term_id, 'term', 'squirrly-keyword');
             // obtain the current post keywords
             $squirrly_keywords = self::get_squirrly_post_keywords_by_id($term_id, 'term');
             // remove any Squirrly keywords that no longer exist
@@ -393,7 +399,7 @@ class Wpil_TargetKeyword{
         // if Post Content keywords are active
         if(in_array('post-content', $selected_keyword_sources, true)){
             // delete the existing Post Content keywords
-//            self::delete_keyword_by_type($term_id, 'term', 'post-content-keyword');
+//            self::delete_keyword_from_post_by_type($term_id, 'term', 'post-content-keyword');
             // obtain the current post keywords
             $post_keywords = self::get_post_content_keywords_by_id($term_id, 'term');
             // remove any post content keywords that no longer exist
@@ -834,10 +840,10 @@ class Wpil_TargetKeyword{
             // clear any cron transients and reset the cron schedule
             self::reset_cron_process();
             // set a flag to show when the keywords have been reset
-            update_option('wpil_keyword_reset_last_run_time', date('Y-m-d H:i:s', (time())));
+            update_option('wpil_keyword_reset_last_run_time', date('Y-m-d H:i:s', (time())), false);
             // clear the processing flags
-            update_option('wpil_gsc_processed_profiles', array());
-            update_option('wpil_current_gsc_process_profile', false);
+            update_option('wpil_gsc_processed_profiles', array(), false);
+            update_option('wpil_current_gsc_process_profile', false, false);
             // create an estimate of how many posts need to be processed
             self::get_estimated_keyword_posts(true);
         }
@@ -917,7 +923,7 @@ class Wpil_TargetKeyword{
             delete_option('wpil_target_keyword_processing_data');
             wp_send_json(array('finish' => true, 'estimate' => array('total' => $data['estimate']['total'], 'total' => $data['estimate']['completed'])));
         }else{
-            update_option('wpil_target_keyword_processing_data', $data);
+            update_option('wpil_target_keyword_processing_data', $data, false);
             wp_send_json($data);
         }
     }
@@ -1050,7 +1056,7 @@ class Wpil_TargetKeyword{
             $processed_dates['oldest'] = $time->format('Y-m-d');
         }
 
-        update_option('wpil_keyword_query_dates', $processed_dates);
+        update_option('wpil_keyword_query_dates', $processed_dates, false);
     }
 
     /**
@@ -1182,8 +1188,8 @@ class Wpil_TargetKeyword{
                     // if there aren't, move on to processing
                     $data['state'] = 'gsc_process';
                     // and clear the processing flags
-                    update_option('wpil_gsc_processed_profiles', array());
-                    update_option('wpil_current_gsc_process_profile', false);
+                    update_option('wpil_gsc_processed_profiles', array(), false);
+                    update_option('wpil_current_gsc_process_profile', false, false);
                 }
 
                 break;
@@ -3865,7 +3871,7 @@ class Wpil_TargetKeyword{
      * 
      * @return array $keyword_data an array of the keywords that have been found.
      **/
-    public static function get_all_active_keywords($ignore_ids = array(), $ignore_item_types = array()){
+    public static function get_all_active_keywords($ignore_ids = array(), $ignore_item_types = array(), $ignore_keyword_types = array()){
         global $wpdb;
         $target_keywords = $wpdb->prefix . 'wpil_target_keyword_data';
 
@@ -3891,8 +3897,14 @@ class Wpil_TargetKeyword{
             }
         }
 
+        $active = self::get_active_keyword_sources(true);
+        if(!empty($ignore_keyword_types)){
+            $active = array_diff($active, $ignore_keyword_types);
+        }
+        $include = " AND `keyword_type` IN ('" . implode('\', \'', $active) . "')";
+
         $autochecked = (!empty(Wpil_Settings::get_if_autotag_gsc_keywords())) ? "OR `auto_checked` = 1": '';
-        $keyword_data = $wpdb->get_results("SELECT * FROM {$target_keywords} WHERE (`checked` = 1 $autochecked) {$ignore}");
+        $keyword_data = $wpdb->get_results("SELECT * FROM {$target_keywords} WHERE (`checked` = 1 $autochecked) {$include} {$ignore}");
 
         if(!empty($keyword_data)){
             return $keyword_data;
@@ -4021,7 +4033,7 @@ class Wpil_TargetKeyword{
      * 
      * @return bool Return True on success, False on failure.
      **/
-    public static function delete_keyword_by_type($post_id = 0, $post_type = 'post', $keyword_type = ''){
+    public static function delete_keyword_from_post_by_type($post_id = 0, $post_type = 'post', $keyword_type = ''){
         global $wpdb;
         $target_keywords = $wpdb->prefix . 'wpil_target_keyword_data';
         
@@ -4032,6 +4044,26 @@ class Wpil_TargetKeyword{
         $post_type = ($post_type === 'term') ? 'term': 'post';
 
         $deleted = $wpdb->delete($target_keywords, array('post_id' => (int)$post_id, 'post_type' => $post_type, 'keyword_type' => $keyword_type));
+
+        return (bool) $deleted;
+    }
+
+    /**
+     * Deletes a specific type of keyword from the database!
+     * 
+     * @param string $keyword_type The type of keyword that we're removing from the post.
+     * 
+     * @return bool Return True on success, False on failure.
+     **/
+    public static function delete_keyword_by_type($keyword_type = ''){
+        global $wpdb;
+        $target_keywords = $wpdb->prefix . 'wpil_target_keyword_data';
+        
+        if(empty($keyword_type)){
+            return false;
+        }
+
+        $deleted = $wpdb->delete($target_keywords, array('keyword_type' => $keyword_type));
 
         return (bool) $deleted;
     }
@@ -4366,6 +4398,410 @@ class Wpil_TargetKeyword{
         if(isset($_POST['nonce']) && wp_verify_nonce($_POST['nonce'], 'wpil-inbound-show-link-stats-nonce') && isset($_POST['visible'])){
             update_user_meta(get_current_user_id(), 'wpil_inbound_show_link_stats_visible', (int)$_POST['visible']);
         }
+    }
+
+    /**
+     * Gets the full list of keyword texts for the supplied post ids.
+     * Returns a list of the keyword texts indexed by the post id that they belong to.
+     * Only searches for checked keywords for posts
+     **/
+    public static function get_keyword_list_by_posts($ids = []){
+        global $wpdb;
+        $table = $wpdb->prefix . 'wpil_target_keyword_data';
+        $data = [];
+
+        if(empty($ids)){
+            return $data;
+        }
+
+        if(!is_array($ids)){
+            $ids = [$ids];
+        }
+
+        // sanitize
+        $ids = array_filter(array_map(function($id){ return (int) $id; }, $ids));
+
+        if(empty($ids)){
+            return $data;
+        }
+
+        // compress
+        $ids = implode(',', $ids);
+
+        // get keywords
+        $keywords = $wpdb->get_results("SELECT `post_id`, `keywords` FROM {$table} WHERE `checked` = 1 AND `post_type` = 'post' AND `post_id` IN ($ids)");
+
+        // if keywords
+        if(!empty($keywords)){
+            foreach($keywords as $dat){
+                if(!isset($data[$dat->post_id])){
+                    $data[$dat->post_id] = [];
+                }
+                
+                $data[$dat->post_id][] = $dat->keywords;
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * 
+     * @param object $focus_post Wpil_Model_Post
+     **/
+    public static function get_keyword_map(){
+        global $wpdb;
+        $table = $wpdb->prefix . 'wpil_target_keyword_data';
+
+        if(!is_null(self::$keyword_map)){
+            return self::$keyword_map;
+        }
+
+        $keywords = $wpdb->get_results("SELECT `post_id`, `keywords` FROM {$table} WHERE `checked` = 1 AND `post_type` = 'post' LIMIT 500000");
+
+        // if we have keywords
+        if(!empty($keywords)){
+            // assemble them into a mapp
+            $mapp = array();
+            foreach($keywords as $keyword){
+                $id = /*'post_' . */$keyword->post_id;
+                if(!isset($mapp[$id])){
+                    $mapp[$id] = array();
+                }
+
+                $mapp[$id][] = $keyword->keywords;
+            }
+
+            self::$keyword_map = $mapp;
+        }else{
+            self::$keyword_map = [];
+        }
+
+        return self::$keyword_map;
+    }
+
+    /**
+     * Build a reusable “model” for a site (stopword sets + IDF).
+     * @param array $postKeywordsMap
+     * @param bool $useBigrams
+     */
+    public static function build_site_model($postKeywordsMap, $useBigrams = true){
+        if(!is_null(self::$site_model) && self::$site_model['useBigrams'] === $useBigrams){
+            return self::$site_model;
+        }
+
+        [$stopRaw, $stopStem] = self::build_stopword_sets();
+
+        [$df, $N] = self::build_document_frequency($postKeywordsMap, $stopRaw, $stopStem, $useBigrams);
+        $idf = self::compute_idf($df, $N);
+
+        self::$site_model = [
+            'stopRaw'    => $stopRaw,
+            'stopStem'   => $stopStem,
+            'idf'        => $idf,
+            'useBigrams' => $useBigrams,
+            'N'          => $N,
+        ];
+
+        return self::$site_model;
+    }
+
+    /**
+     * Score a keyword-phrase list into a TF-IDF vector using the site model.
+     * @param array $keyword_phrases
+     * @param array $model
+     */
+    public static function vectorize_keywords($keyword_phrases, $model){
+        $counts = self::feature_counts_from_phrases(
+            $keyword_phrases, $model['stopRaw'], $model['stopStem'], (bool) $model['useBigrams']
+        );
+
+        return self::tfidf_vector($counts, $model['idf']);
+    }
+
+    /**
+     * Determines what posts are most related to the given post and returns a subset of posts with a simliar relation level based on keywords.
+     * Keeps results where score >= max($floor, bestScore * $keepRatio), then return top K number of posts.
+     * So if best is 85% match, it will widen it's search range to allow posts that are atleast 75% as good of matches (yes thats 64%) into the mix
+     *
+     * @param array $currentKeywords      ['kw phrase', ...] for the current post
+     * @param array $candidateKeywordsMap [post_id => ['kw phrase', ...], ...]
+     * @param array $model               from build_site_model()
+     * @param int   $topK
+     * @param float $floor               absolute minimum score to show anything
+     * @param float $keepRatio           fraction of best score to keep
+     *
+     * @return array list of ['post_id' => (int), 'score' => (float)]
+     */
+    public static function score_keyword_relations($currentKeywords, $candidateKeywordsMap, $model, $topK = 10, $floor = 0.35, $keepRatio = 0.75){
+        $topK = max(1, (int)$topK);
+        $floor = max(0.0, min(1.0, (float)$floor));
+        $keepRatio = max(0.0, min(1.0, (float)$keepRatio));
+
+        $currentVec = self::vectorize_keywords($currentKeywords, $model);
+        if(!$currentVec){
+            return [];
+        }
+
+        $scored = [];
+        $best = 0.0;
+
+        foreach($candidateKeywordsMap as $postId => $phrases){
+            $candVec = self::vectorize_keywords((array)$phrases, $model);
+            if(!$candVec){
+                continue;
+            }
+
+            $score = self::cosine_similarity($currentVec, $candVec);
+            if($score <= 0){
+                continue;
+            }
+
+            $scored[] = ['post_id' => (int)$postId, 'score' => $score];
+            if($score > $best){
+                $best = $score;
+            }
+        }
+
+        if(!$scored){
+            return [];
+        }
+
+        usort($scored, static function($a, $b){
+            return $b['score'] <=> $a['score'];
+        });
+
+        $cutoff = max($floor, $best * $keepRatio);
+
+        $out = [];
+        foreach($scored as $row){
+            if($row['score'] < $cutoff){
+                continue;
+            }
+            $pid = 'post_' . $row['post_id'];
+            $out[$pid] = $row['score'];
+            if(count($out) >= $topK){
+                break;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Calculates the most related posts to the current one based on keyword similiarity
+     * 
+     * @param int $post_id
+     * @param int $topK
+     * @param float $floor
+     * @param float $keepRatio
+     * @param bool $useBigrams
+     */
+    public static function calculate_keyword_relations($post_id, $topK = 10, $floor = 0.35, $keepRatio = 0.75, $useBigrams = true){
+        $results = [];
+
+        $mapp = self::get_keyword_map();
+        $model = self::build_site_model($mapp, $useBigrams);
+
+        if(!isset($mapp[$post_id]) || empty($mapp[$post_id])){
+            return $results;
+        }
+
+        $keywords = $mapp[$post_id];
+
+        // remove the current post from the mix
+        unset($mapp[$post_id]);
+
+        return self::score_keyword_relations($keywords, $mapp, $model, $topK, $floor, $keepRatio);
+    }
+
+    private static function normalize_keyword($s){
+        return trim(mb_strtolower($s, 'UTF-8'));
+    }
+
+    /**
+     * Build two stopword sets:
+     *  - raw stopwords (normalized)
+     *  - stemmed stopwords (normalized after stemming)
+     */
+    private static function build_stopword_sets(){
+        $stopwords = Wpil_Settings::getIgnoreWords();
+        $stemmed_stopwords = Wpil_Settings::getStemmedIgnoreWords();
+        $raw = [];
+        $stemmed = [];
+
+        foreach($stopwords as $w){
+            $w = self::normalize_keyword($w);
+            if($w === ''){ 
+                continue;
+            }
+
+            $raw[$w] = true;
+        }
+
+        foreach($stemmed_stopwords as $sw){
+            $sw = self::normalize_keyword($sw);
+            if($sw !== ''){ 
+                $stemmed[$sw] = true;
+            };
+        }
+
+        return [$raw, $stemmed];
+    }
+
+    /**
+     * Tokenize a phrase, remove stopwords, stem tokens, remove stemmed stopwords.
+     */
+    private static function tokens_from_phrase($phrase, $stop_raw, $stop_stem){
+        $phrase = self::normalize_keyword($phrase);
+        if ($phrase === '') return [];
+
+        $parts = preg_split('/\s+/u', $phrase, -1, PREG_SPLIT_NO_EMPTY);
+        if (!$parts) return [];
+
+        $out = [];
+
+        foreach ($parts as $t) {
+            if($t === '' || isset($stop_raw[$t])){
+                continue;
+            }
+
+            $t = self::normalize_keyword(Wpil_Stemmer::Stem($t)); // TODO: MAKE THE STEMMING MORE EFFIECNTEN! STEMM THE KEYWORDS WHEN THEY"RE SAYVED!
+            if($t === '' || isset($stop_stem[$t])){
+                continue;
+            }
+
+            $out[] = $t;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Build feature counts from keyword phrases.
+     * Features are stemmed unigrams and optional stemmed bigrams.
+     * @param array $keywordPhrases
+     * @param array $stopRaw
+     * @param array $stopStem
+     * @param bool $useBigrams
+     */
+    private static function feature_counts_from_phrases($keywordPhrases, $stopRaw, $stopStem, $useBigrams = true){
+        $counts = [];
+
+        foreach ($keywordPhrases as $phrase) {
+            $tokens = self::tokens_from_phrase((string) $phrase, $stopRaw, $stopStem);
+            $n = count($tokens);
+
+            // unigrams
+            for ($i = 0; $i < $n; $i++) {
+                $k = $tokens[$i];
+                $counts[$k] = (isset($counts[$k]) ? $counts[$k] : 0) + 1;
+            }
+        
+            // bigrams
+            if ($useBigrams) {
+                for ($i = 0; $i < $n - 1; $i++) {
+                    $bg = $tokens[$i] . '_' . $tokens[$i + 1];
+                    $counts[$bg] = (isset($counts[$bg]) ? $counts[$bg] : 0) + 1;
+                }
+            }
+        }
+
+        return $counts; // feature => count
+    }
+
+    /**
+     * DF is "how many posts contain feature F at least once".
+     * @param array $postKeywordsMap
+     * @param array $stopRaw
+     * @param array $stopStem
+     * @param bool $useBigrams
+     * @return array [dfMap, N]
+     */
+    private static function build_document_frequency($postKeywordsMap, $stopRaw, $stopStem, $useBigrams = true){
+        $df = [];
+        $N = 0;
+
+        foreach ($postKeywordsMap as $postId => $phrases) {
+            $N++;
+            $counts = self::feature_counts_from_phrases((array)$phrases, $stopRaw, $stopStem, $useBigrams);
+            // DF counts presence per post, not frequency
+            foreach ($counts as $feature => $_count) {
+                $df[$feature] = ((isset($df[$feature]) && !empty($df[$feature])) ? $df[$feature]: 0) + 1;
+            }
+        }
+
+        return [$df, $N];
+    }
+
+    /**
+     * Smoothed IDF: log((N+1)/(df+1)) + 1
+     * @param array $df
+     * @param int $N
+     */
+    private static function compute_idf($df, $N){
+        $idf = [];
+        if ($N <= 0) return $idf;
+
+        foreach ($df as $feature => $d) {
+            $idf[$feature] = log(($N + 1) / (((int)$d) + 1)) + 1.0;
+        }
+
+        return $idf;
+    }
+
+    /**
+     * TF-IDF with log-scaled TF: (1 + log(tf)) * idf
+     * @param array $featureCounts
+     * @param array $idf
+     */
+    private static function tfidf_vector($featureCounts, $idf){
+        $vec = [];
+
+        foreach ($featureCounts as $feature => $tfRaw) {
+            if (!isset($idf[$feature])) continue;
+
+            $tfRaw = (int) $tfRaw;
+            if ($tfRaw <= 0) continue;
+
+            $tf = 1.0 + log($tfRaw);
+            $vec[$feature] = $tf * (float)$idf[$feature];
+        }
+
+        return $vec; // sparse: feature => weight
+    }
+
+    /**
+     * @param array $vecA
+     * @param array $vecB
+     **/
+    private static function cosine_similarity($vecA, $vecB){
+        if (!$vecA || !$vecB) return 0.0;
+
+        // Iterate smaller vector for dot product
+        if (count($vecA) > count($vecB)) {
+            [$vecA, $vecB] = [$vecB, $vecA];
+        }
+
+        $dot = 0.0;
+        $normA = 0.0;
+        $normB = 0.0;
+
+        foreach ($vecA as $k => $a) {
+            $a = (float)$a;
+            $normA += $a * $a;
+            if (isset($vecB[$k])) {
+                $dot += $a * (float)$vecB[$k];
+            }
+        }
+
+        foreach ($vecB as $b) {
+            $b = (float)$b;
+            $normB += $b * $b;
+        }
+
+        if ($normA <= 0.0 || $normB <= 0.0) return 0.0;
+        return $dot / (sqrt($normA) * sqrt($normB));
     }
 }
 

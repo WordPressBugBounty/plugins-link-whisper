@@ -76,7 +76,7 @@ class Wpil_Telemetry
         67 => 'linkwhisper_ai_credits_purchased',
         68 => 'linkwhisper_ai_banner_opened',
         69 => 'linkwhisper_ai_banner_authed',
-        70 => 'deactivated_tawkto_popup',
+        70 => 'deactivated_support_popup',
         71 => 'link_updated_from_report',
         72 => 'link_updated_from_domains_report',
         73 => 'link_updated_from_links_report',
@@ -108,7 +108,11 @@ class Wpil_Telemetry
 
         93 => 'linkwhisper_ai_banner_dismissed', // dismissed the 'sign up for ai' banner
         94 => 'report_open_anchor_length',
-        95 => 'link_updated_from_anchor_length_report'
+        95 => 'link_updated_from_anchor_length_report',
+        96 => 'linkwhisper_ai_auto_authenticated',
+        97 => 'linkwhisper_ai_link_inserted',
+        98 => 'link_delay_waitlist_signup',
+        99 => 'dashboard_new_experience_feedback'
     );
 
     static $user_events = array(
@@ -116,6 +120,117 @@ class Wpil_Telemetry
         'domains_show_untargeted',
         'domains_changed_attrs',
         'ai_sitemap_opened'
+    );
+
+    /**
+     * Estimated seconds saved per outsourced/automated task unit.
+     * Count-aware events multiply this value by `count` when available.
+     */
+    static $time_saved_event_seconds = array(
+        // ============================
+        // Link creation / insertion
+        // ============================
+
+        // Manual equivalent:
+        // - Identify a relevant outbound page
+        // - Search site or Google for destination
+        // - Open editor
+        // - Choose anchor text
+        // - Insert link and save
+        'outbound_suggestion_link_add'        => 540, // ~9 min
+
+        // Manual equivalent:
+        // - Figure out which posts should link TO this page
+        // - Search site content
+        // - Open multiple posts
+        // - Insert link and save
+        'inbound_suggestion_link_add'         => 600, // ~10 min
+
+        // Faster than full manual because intent is known,
+        // but still requires searching, editing, inserting.
+        'outbound_quicklinks_add'             => 420, // ~7 min
+        'inbound_quicklinks_add'              => 480, // ~8 min
+
+        // Batch insert across posts without automation would require:
+        // - Finding opportunities across multiple posts
+        // - Editing each post manually
+        // - Repeating insertion workflow
+        'autolinking_insert_selected_links'   => 900, // ~15 min
+
+        // Using reports manually:
+        // - Identify opportunity from spreadsheet or crawling tool
+        // - Locate post
+        // - Insert link
+        'outbound_links_report_add'           => 600, // ~10 min
+        'inbound_links_report_add'            => 660, // ~11 min
+
+        // User already knows destination but still must:
+        // - Open post
+        // - Add anchor text
+        // - Insert link
+        // - Save and verify
+        'inserting_custom_link'               => 420, // ~7 min
+
+        // Without AI assistance:
+        // - Decide best related post
+        // - Choose anchor text
+        // - Insert manually
+        'linkwhisper_ai_link_inserted'        => 600, // ~10 min
+
+
+        // ============================
+        // Link maintenance / repair
+        // ============================
+
+        // Find link in content manually and update
+        'link_updated_from_report'            => 240, // ~4 min
+
+        // Domain-level changes often require extra checking
+        'link_updated_from_domains_report'    => 300, // ~5 min
+
+        // Similar to report-based update
+        'link_updated_from_links_report'      => 240, // ~4 min
+
+        // Anchor editing includes editorial judgment
+        'link_updated_from_anchor_length_report' => 300, // ~5 min
+
+        // Broken link repair manually:
+        // - Identify replacement URL
+        // - Confirm it works
+        // - Update post
+        'broken_link_url_updated'             => 360, // ~6 min
+
+        // Locate and remove link manually
+        'broken_link_delete'                  => 120, // ~2 min
+
+        // Bulk deletes still require locating posts and editing
+        'delete_selected_links'               => 180, // ~3 min
+
+
+        // ============================
+        // Supporting workflows
+        // ============================
+
+        // Selecting related posts without tooling:
+        // - Search site
+        // - Evaluate relevance
+        // - Record selections
+        'update_selected_related_posts'       => 360, // ~6 min
+
+        // Rule creation manually:
+        // - Determine pattern
+        // - Implement change
+        // - Test multiple URLs
+        'url_changer_rule_create'             => 900, // ~15 min
+
+        // Keyword targeting manually:
+        // - Research keyword
+        // - Decide mapping
+        // - Record
+        'custom_target_keyword_created'       => 420, // ~7 min
+
+        // Updating keywords in bulk manually
+        'update_selected_target_keywords'     => 240, // ~4 min
     );
 
     /**
@@ -247,36 +362,6 @@ class Wpil_Telemetry
         $table = $wpdb->prefix . "wpil_telemetry_log";
 
         return $wpdb->get_results("SELECT * FROM {$table} WHERE `pinged` < 1 LIMIT 1000");
-    }
-
-    /**
-     * Assembles the recorded event data into a package that we can process
-     **/
-    private static function assemble_data_packages($data){
-        $packages = array();
-
-        if(!empty($data)){
-            $packages['site_url'] = home_url();
-            foreach($data as $dat){
-                $user = get_userdata($dat->user_id);
-                if(empty($user)){
-                    self::mark_event_as_pinged($dat->event_id);
-                    continue;
-                }
-
-                $event_data = array(
-                    'u' => $dat->user_id,
-                    'n' => self::get_event_name_id($dat->event_name),
-                    't' => $dat->event_time
-                );
-
-                $event_data = array_merge($event_data, Wpil_Toolbox::json_decompress($dat->event_data, true));
-                $packages[] = $event_data;
-                self::mark_event_as_pinged($dat->event_id);
-            }
-        }
-
-        return $packages;
     }
 
     /**
@@ -458,20 +543,21 @@ class Wpil_Telemetry
         global $wpdb;
         $table = $wpdb->prefix . "wpil_telemetry_log";
 
-        if(apply_filters('wpil_disable_telemetry', false) || false === self::confirm_event_name($event_name)){
+        if(false === self::confirm_event_name($event_name)){
             return;
         }
 
         // note the relevent event data in the user's action log
         self::log_event_for_user($event_name);
 
+        $data = self::structure_data($data);
+        self::record_time_saved_event($event_name, $data, time());
+
         // if telemetry isn't active or this is only a user-specific event
-        if(!Wpil_Settings::get_if_telemetry_active() || in_array($event_name, self::$user_events)){
+        if(apply_filters('wpil_disable_telemetry', false) || !Wpil_Settings::get_if_telemetry_active() || in_array($event_name, self::$user_events)){
             // exit now
 //            return;
         }
-
-        $data = self::structure_data($data);
 
         $wpdb->insert($table, [
             'event_name' => $event_name,
@@ -520,7 +606,9 @@ class Wpil_Telemetry
             'target_site' => 'url',
             'name' => 'string', // string assumes plaintext and no HTML
             'token_revoked' => 'bool',
-            'email_id' => 'string'
+            'email_id' => 'string',
+            'email' => 'email',
+            'message' => 'message'
         );
 
         foreach($data as $key => $dat){
@@ -538,6 +626,12 @@ class Wpil_Telemetry
                     case 'bool':
                         $structured_data[$key] = (bool) $dat;
                         break;
+                    case 'email':
+                        $structured_data[$key] = sanitize_email($dat);
+                        break;
+                    case 'message':
+                        $structured_data[$key] = sanitize_textarea_field($dat);
+                        break;
                 }
             }else{
                 // we'll just assume that the input can be sanitized by a string check 
@@ -546,6 +640,270 @@ class Wpil_Telemetry
         }
 
         return $structured_data;
+    }
+
+    /**
+     * Returns the estimated time saved mapping for each tracked activity.
+     *
+     * @return array
+     */
+    public static function get_time_saved_activity_map(){
+        return self::$time_saved_event_seconds;
+    }
+
+    /**
+     * Adds time saved for a telemetry event into the day bucket.
+     *
+     * @param string $event_name
+     * @param array  $data
+     * @param int    $event_time
+     * @return void
+     */
+    public static function record_time_saved_event($event_name = '', $data = array(), $event_time = 0){
+        if(empty($event_name) || !isset(self::$time_saved_event_seconds[$event_name])){
+            return;
+        }
+
+        $seconds_per_unit = (int) self::$time_saved_event_seconds[$event_name];
+        if($seconds_per_unit <= 0){
+            return;
+        }
+
+        self::maybe_initialize_time_saved_daily_data();
+
+        $count = self::get_time_saved_event_count($data);
+        if($count <= 0){
+            return;
+        }
+
+        $daily = get_option('wpil_time_saved_daily', array());
+        if(!is_array($daily)){
+            $daily = array();
+        }
+
+        $event_time = !empty($event_time) ? (int) $event_time : time();
+        $day = self::normalize_time_saved_day($event_time);
+        if(!isset($daily[$day])){
+            $daily[$day] = 0;
+        }
+
+        $daily[$day] += ($seconds_per_unit * $count);
+        $daily = self::trim_time_saved_daily_data($daily, 120);
+
+        update_option('wpil_time_saved_daily', $daily, false);
+    }
+
+    /**
+     * Returns a [day_timestamp => seconds_saved] list for the last N days.
+     *
+     * @param int $days
+     * @return array
+     */
+    public static function get_time_saved_daily_data($days = 30){
+        self::maybe_initialize_time_saved_daily_data();
+
+        $days = max(1, (int) $days);
+        $daily = get_option('wpil_time_saved_daily', array());
+        $original_daily = $daily;
+        if(!is_array($daily)){
+            $daily = array();
+        }
+
+        $daily = self::trim_time_saved_daily_data($daily, 120);
+        if($daily !== $original_daily){
+            update_option('wpil_time_saved_daily', $daily, false);
+        }
+        $start = self::normalize_time_saved_day(time() - (($days - 1) * DAY_IN_SECONDS));
+
+        $filtered = array();
+        foreach($daily as $day => $seconds){
+            $day = (int) $day;
+            if($day >= $start){
+                $filtered[$day] = (int) $seconds;
+            }
+        }
+
+        ksort($filtered, SORT_NUMERIC);
+
+        return $filtered;
+    }
+
+    /**
+     * Returns aggregated time-saved stats for dashboard display.
+     *
+     * @param int $days
+     * @param int|float $hourly_rate
+     * @return array
+     */
+    public static function get_time_saved_summary($days = 30, $hourly_rate = 30){
+        $daily = self::get_time_saved_daily_data($days);
+        $seconds = 0;
+        foreach($daily as $saved){
+            $seconds += (int) $saved;
+        }
+
+        $hours = round($seconds / HOUR_IN_SECONDS, 1);
+        $money = round($hours * ((float) $hourly_rate), 0);
+
+        return array(
+            'days' => (int) $days,
+            'seconds' => (int) $seconds,
+            'hours' => (float) $hours,
+            'money' => (float) $money,
+            'daily' => $daily,
+        );
+    }
+
+    /**
+     * One-time backfill for time-saved tracking from tracked inserted links.
+     *
+     * @return void
+     */
+    private static function maybe_initialize_time_saved_daily_data(){
+        $existing = get_option('wpil_time_saved_daily', null);
+        $version = (int) get_option('wpil_time_saved_daily_version', 0);
+
+        // Rebuild once with date-indexed tracked-link data to correct legacy over-counted buckets.
+        if($version < 2 || !is_array($existing)){
+            $daily = self::build_time_saved_daily_backfill(120);
+            $daily = self::trim_time_saved_daily_data($daily, 120);
+            update_option('wpil_time_saved_daily', $daily, false);
+            update_option('wpil_time_saved_daily_version', 2, false);
+            return;
+        }
+
+        $trimmed = self::trim_time_saved_daily_data($existing, 120);
+        if($trimmed !== $existing){
+            update_option('wpil_time_saved_daily', $trimmed, false);
+        }
+    }
+
+    /**
+     * Backfills [day_timestamp => seconds_saved] from tracked inserted links.
+     *
+     * @param int $max_days
+     * @return array
+     */
+    public static function build_time_saved_daily_backfill($max_days = 120){
+        global $wpdb;
+        $tracked_table = $wpdb->prefix . 'wpil_tracked_link_ids';
+        $report_table = $wpdb->prefix . 'wpil_report_links';
+        $tracked_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $tracked_table));
+        $report_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $report_table));
+        if($tracked_exists !== $tracked_table || $report_exists !== $report_table){
+            return array();
+        }
+
+        $max_days = max(1, (int) $max_days);
+        $cutoff = time() - (DAY_IN_SECONDS * ($max_days - 1));
+        $now = time();
+
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT FLOOR(t.`creation_time` / %d) AS day_bucket, COUNT(DISTINCT r.`link_id`) AS link_count
+                    FROM {$tracked_table} t
+                    INNER JOIN {$report_table} r
+                        ON r.`tracking_id` = t.`link_id`
+                    WHERE t.`creation_time` >= %d
+                        AND t.`creation_time` <= %d
+                        AND t.`link_id` > 0
+                        AND r.`tracking_id` > 0
+                    GROUP BY day_bucket",
+                DAY_IN_SECONDS,
+                $cutoff,
+                $now
+            )
+        );
+        if(empty($rows)){
+            return array();
+        }
+
+        $fallback_seconds = !empty(self::$time_saved_event_seconds['outbound_suggestion_link_add'])
+            ? (int) self::$time_saved_event_seconds['outbound_suggestion_link_add']
+            : 180;
+
+        $daily = array();
+        foreach($rows as $row){
+            if(!isset($row->day_bucket) || !isset($row->link_count)){
+                continue;
+            }
+
+            $day = self::normalize_time_saved_day(((int) $row->day_bucket) * DAY_IN_SECONDS);
+            $count = max(0, (int) $row->link_count);
+            if($count <= 0){
+                continue;
+            }
+
+            $daily[$day] = ($count * $fallback_seconds);
+        }
+
+        return $daily;
+    }
+
+    /**
+     * Converts a timestamp to a day bucket timestamp (UTC midnight).
+     *
+     * @param int $timestamp
+     * @return int
+     */
+    private static function normalize_time_saved_day($timestamp){
+        $timestamp = (int) $timestamp;
+        if($timestamp <= 0){
+            $timestamp = time();
+        }
+
+        return strtotime(gmdate('Y-m-d 00:00:00', $timestamp));
+    }
+
+    /**
+     * Pulls a count from structured telemetry event data.
+     *
+     * @param array $data
+     * @return int
+     */
+    private static function get_time_saved_event_count($data = array()){
+        $count = 0;
+        if(!empty($data) && is_array($data)){
+            foreach(array('count', 'link_count', 'post_count') as $key){
+                if(isset($data[$key]) && is_numeric($data[$key])){
+                    $count = max($count, (int) $data[$key]);
+                }
+            }
+        }
+
+        return ($count > 0) ? $count : 1;
+    }
+
+    /**
+     * Trims day buckets to the max day retention and drops stale rows.
+     *
+     * @param array $daily
+     * @param int $max_days
+     * @return array
+     */
+    private static function trim_time_saved_daily_data($daily = array(), $max_days = 120){
+        if(empty($daily) || !is_array($daily)){
+            return array();
+        }
+
+        $max_days = max(1, (int) $max_days);
+        $cutoff = self::normalize_time_saved_day(time() - (($max_days - 1) * DAY_IN_SECONDS));
+        $today = self::normalize_time_saved_day(time());
+
+        $trimmed = array();
+        foreach($daily as $day => $seconds){
+            $day = (int) $day;
+            if($day >= $cutoff && $day <= $today){
+                $trimmed[$day] = max(0, (int) $seconds);
+            }
+        }
+
+        ksort($trimmed, SORT_NUMERIC);
+        if(count($trimmed) > $max_days){
+            $trimmed = array_slice($trimmed, -$max_days, null, true);
+        }
+
+        return $trimmed;
     }
 
     public static function general_status(){
@@ -743,6 +1101,11 @@ class Wpil_Telemetry
      * Logs an event for the current user so we can display user-specific helps and tooltips
      **/
     public static function log_event_for_user($event_name = ''){
+        $user_id = get_current_user_id();
+        if(empty($user_id)){
+            return;
+        }
+
         $events = self::get_user_event_data();
         
         if(!isset($events[$event_name])){
@@ -756,6 +1119,11 @@ class Wpil_Telemetry
 
         $events[$event_name]['count'] += 1;
         $events[$event_name]['date'] = time();
+
+        // Remove computed keys before persisting.
+        unset($events['event_count'], $events['first_event_date'], $events['latest_event_date'], $events['last_notice_displayed']);
+
+        update_user_meta($user_id, 'wpil_telemetry_user_event_log', $events);
     }
 
     /**
@@ -771,9 +1139,10 @@ class Wpil_Telemetry
         if(empty($log_data)){
             $log_data = array();
         }
-        $log_data = array();
+
+        $available_events = array_unique(array_merge(array_values(self::$current_events), self::$user_events));
         // make sure that we have all the current events registered
-        foreach(self::$current_events as $event){
+        foreach($available_events as $event){
             if(!isset($log_data[$event])){
                 $log_data[$event] = array(
                     'count' => 0,
@@ -911,7 +1280,7 @@ class Wpil_Telemetry
      * Permenently dismisses the telemetry notice in the Dashboard telling the user that the telemetry system can be disabled
      */
     public static function ajax_dismiss_dashboard_telemetry_notice(){
-        update_option('wpil_has_dismissed_telemetry_notice', 1);
+        update_option('wpil_has_dismissed_telemetry_notice', 1, false);
     }
 
     /**

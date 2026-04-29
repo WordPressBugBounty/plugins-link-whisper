@@ -227,12 +227,12 @@
         }
 
         // also make sure there isn't a download for the data already running
-        if(undefined !== this && -1 !== globalDownloadTracker.indexOf(processId)){
+        if(undefined !== this && globalDownloadTracker && -1 !== globalDownloadTracker.indexOf(processId)){
             // if there is, exit
             return;
         }
 
-        if(-1 === globalDownloadTracker.indexOf(processId)){
+        if(!globalDownloadTracker || -1 === globalDownloadTracker.indexOf(processId)){
             globalDownloadTracker.push(processId);
         }
 

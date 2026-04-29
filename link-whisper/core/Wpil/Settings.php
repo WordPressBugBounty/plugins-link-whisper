@@ -23,6 +23,7 @@ class Wpil_Settings
         'wpil_selected_language',
         'wpil_ignore_links',
         'wpil_ignore_categories',
+        'wpil_dont_show_ignored_posts',
         'wpil_show_all_links',
         'wpil_make_suggestion_filtering_persistent',
         'wpil_max_suggestion_post_count',
@@ -47,13 +48,16 @@ class Wpil_Settings
         'wpil_disable_ai_anchor_building',
         'wpil_restrict_to_top_ai_suggestions',
         'wpil_disable_ai_suggestions_cron',
+        'wpil_ai_process_all_terms',
         'wpil_ai_max_processing_age',
         'wpil_suggestion_relatedness_threshold',
+        'wpil_ai_auto_insert_relatedness_threshold',
         'wpil_sitemap_embedding_relatedness_threshold',
         'wpil_new_tab_domains',
         'wpil_same_tab_domains',
         'wpil_links_to_ignore',
         'wpil_broken_links_to_ignore',
+        'wpil_auto_apply_broken_link_recommendations',
         'wpil_related_post_links_to_ignore',
         'wpil_ignore_elements_by_class',
         'wpil_ignore_shortcodes_by_name',
@@ -61,6 +65,7 @@ class Wpil_Settings
         'wpil_ignore_tags_from_linking',
         'wpil_ignore_elementor_from_linking',
         'wpil_ignore_pages_completely',
+        'wpil_ignore_sitemap_posts',
         'wpil_marked_as_external',
         'wpil_disable_acf',
         'wpil_count_related_post_links',
@@ -90,6 +95,7 @@ class Wpil_Settings
         'wpil_nofollow_domains',
         'wpil_dofollow_domains',
         'wpil_only_match_target_keywords',
+        'wpil_prevent_keyword_cannibalization',
         'wpil_add_noreferrer',
         'wpil_add_nofollow',
         'wpil_filter_staging_url',
@@ -121,7 +127,7 @@ class Wpil_Settings
         'wpil_open_all_external_same_tab',
         'wpil_js_open_new_tabs',
         'wpil_add_destination_title',
-        'wpil_disable_tawkto_widget',
+        'wpil_disable_support_widget',
         'wpil_disable_broken_link_cron_check',
         'wpil_disable_click_tracking',
         'wpil_delete_old_click_data',
@@ -142,10 +148,19 @@ class Wpil_Settings
         'wpil_max_suggestion_count',
         'wpil_skip_section_type',
         'wpil_override_global_post_during_scan',
+        'wpil_optimize_link_scan_for_speed',
+        'wpil_manually_trigger_suggestions',
+        'wpil_disable_outbound_suggestions',
+        'wpil_disable_search_update',
+        'wpil_track_all_element_clicks',
         'wpil_use_ugly_permalinks',
         'wpil_ignore_shortcodes_by_name',
-        'wpil_update_reusable_block_links',
+        'wpil_2_debug_mode',
+        'wpil_optimize_option_table',
         'wpil_use_link_data_table',
+        'wpil_selected_target_keyword_sources',
+        'wpil_selected_post_content_target_keyword_sources',
+        'wpil_enable_tours'
     ];
 
     /**
@@ -172,7 +187,7 @@ class Wpil_Settings
             'draft'
         ];
         $statuses_active = Wpil_Settings::getPostStatuses();
-        Wpil_Base::show_tawkto_widget();
+        Wpil_Base::show_support_widget();
         include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wpil_settings_v2.php';
     }
 
@@ -1222,7 +1237,7 @@ document.querySelectorAll(".plan-button").forEach((button) => {
           const res = await fetch(STRIPE.apiUrl + "/cancel-subscription", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ai_id: "<?php echo esc_attr($ai_id);?>", subscription_id: "<?php echo ((!empty($sub)) && isset($sub->subscription_id)) ? esc_attr($sub->subscription_id): '';?>" })
+            body: JSON.stringify({ ai_id: <?php echo wp_json_encode($ai_id);?>, subscription_id: "<?php echo ((!empty($sub)) && isset($sub->subscription_id)) ? wp_json_encode($sub->subscription_id): '';?>" })
           });
           const data = await res.json();
           if (data.success) {
@@ -2789,6 +2804,45 @@ function triggerConfettiExplosion() {
     }
 
     /**
+     * Get post types that are active on the site and reasonable for broad URL tracing.
+     * If the "link to non-public post types" setting is enabled, include non-public types that are show_ui.
+     *
+     * @return array<string>
+     */
+    public static function getReasonablyActivePostTypes()
+    {
+        $post_types = get_post_types([], 'objects');
+
+        // skip dees
+        $skip_types = [
+            'attachment',
+            'revision',
+            'nav_menu_item',
+            'custom_css',
+            'customize_changeset',
+            'oembed_cache',
+            'wp_block',
+        ];
+
+        // setting ON means include non-public (admin-visible) types too!
+        $include_non_public = !empty(get_option('wpil_2_show_all_post_types', false));
+
+        $names = [];
+
+        foreach ($post_types as $pt) {
+            if (in_array($pt->name, $skip_types, true)) {
+                continue;
+            }
+
+            if (!empty($pt->public) || ($include_non_public && !empty($pt->show_ui))) {
+                $names[] = $pt->name;
+            }
+        }
+
+        return array_values(array_unique($names));
+    }
+
+    /**
      * Get the post types that users have limited the suggestions to
      *
      * @return mixed|void
@@ -2796,6 +2850,110 @@ function triggerConfettiExplosion() {
     public static function getSuggestionPostTypes()
     {
         return get_option('wpil_suggestion_limited_post_types', self::getPostTypes());
+    }
+
+    /**
+     * Gets the special Fix with AI options.
+     * Stored per process key, with the legacy single option kept as the last-used fallback/default.
+     *
+     * @param string $process_key
+     * @return array
+     */
+    public static function get_ai_fix_special_options($process_key = '')
+    {
+        $data = array();
+        $process_key = !empty($process_key) ? sanitize_key($process_key) : '';
+
+        if(!empty($process_key)){
+            $scoped_data = get_option('wpil_ai_fix_special_options_by_process', array());
+            if(is_array($scoped_data) && isset($scoped_data[$process_key])){
+                $data = $scoped_data[$process_key];
+            }
+        }
+
+        if(empty($data)){
+            $data = get_option('wpil_ai_fix_special_options', array());
+        }
+
+        return self::sanitize_ai_fix_special_options($data);
+    }
+
+    /**
+     * Saves special Fix with AI options for a specific process.
+     * The legacy global option is also updated so new modals can default to the user's last-used settings.
+     *
+     * @param array|string $data
+     * @param string $process_key
+     * @return array
+     */
+    public static function update_ai_fix_special_options($data = array(), $process_key = '')
+    {
+        $sanitized = self::sanitize_ai_fix_special_options($data);
+        $process_key = !empty($process_key) ? sanitize_key($process_key) : '';
+
+        if(!empty($process_key)){
+            $scoped_data = get_option('wpil_ai_fix_special_options_by_process', array());
+            if(!is_array($scoped_data)){
+                $scoped_data = array();
+            }
+            $scoped_data[$process_key] = $sanitized;
+            update_option('wpil_ai_fix_special_options_by_process', $scoped_data, false);
+        }
+
+        update_option('wpil_ai_fix_special_options', $sanitized, false);
+        return $sanitized;
+    }
+
+    /**
+     * Removes special Fix with AI options for a completed/cancelled process.
+     *
+     * @param string $process_key
+     * @return void
+     */
+    public static function delete_ai_fix_special_options($process_key = '')
+    {
+        $process_key = !empty($process_key) ? sanitize_key($process_key) : '';
+        if(empty($process_key)){
+            return;
+        }
+
+        $scoped_data = get_option('wpil_ai_fix_special_options_by_process', array());
+        if(!is_array($scoped_data) || !isset($scoped_data[$process_key])){
+            return;
+        }
+
+        unset($scoped_data[$process_key]);
+        update_option('wpil_ai_fix_special_options_by_process', $scoped_data, false);
+    }
+
+    /**
+     * Sanitizes special Fix with AI options.
+     *
+     * @param array|string $data
+     * @return array
+     */
+    public static function sanitize_ai_fix_special_options($data = array())
+    {
+        if(is_string($data)){
+            $decoded = json_decode($data, true);
+            $data = (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) ? $decoded : array();
+        }
+
+        if(!is_array($data)){
+            $data = array();
+        }
+
+        $post_types = self::getPostTypes();
+        $selected_post_types = isset($data['selected_post_types']) && is_array($data['selected_post_types']) ? $data['selected_post_types'] : array();
+        $selected_post_types = array_values(array_intersect($post_types, array_map('sanitize_text_field', $selected_post_types)));
+
+        return array(
+            'link_to_category_pages' => !empty($data['link_to_category_pages']) ? 1 : 0,
+            'link_from_category_pages' => !empty($data['link_from_category_pages']) ? 1 : 0,
+            'select_post_types' => !empty($data['select_post_types']) ? 1 : 0,
+            'selected_post_types' => $selected_post_types,
+            'same_category' => !empty($data['same_category']) ? 1 : 0,
+        );
     }
 
     /**
@@ -3210,6 +3368,11 @@ function triggerConfettiExplosion() {
                 $_POST['wpil_selected_post_content_target_keyword_sources'] = [];
             }
 
+            $gsc_data = Wpil_SearchConsole::search_console_data();
+            if(!empty($gsc_data['authorized']) && empty($_POST['wpil_manually_select_gsc_profile'])) {
+                $_POST['wpil_manually_select_gsc_profile'] = [];
+            }
+
             if (empty($_POST['wpil_related_post_cat_ignore'])) {
                 $_POST['wpil_related_post_cat_ignore'] = [];
             }
@@ -3220,6 +3383,11 @@ function triggerConfettiExplosion() {
 
             // update the list of known keyword sources
             update_option('wpil_available_target_keyword_sources', Wpil_TargetKeyword::get_available_keyword_sources()); // should mention at_save, but the name would be getting too long
+
+            // Back-compat: accept legacy field name when posted by older templates.
+            if(isset($_POST['wpil_disable_tawkto_widget']) && !isset($_POST['wpil_disable_support_widget'])){
+                $_POST['wpil_disable_support_widget'] = $_POST['wpil_disable_tawkto_widget'];
+            } // todo: remove at v 1.0.0
 
             // if the user just uploaded his secret access token...
             if(isset($_POST['wpil_upload_linkwhisper_ai_token']) && !empty($_POST['wpil_upload_linkwhisper_ai_token'])){
@@ -3247,6 +3415,32 @@ function triggerConfettiExplosion() {
                     }
                 }
             }
+
+            // if the user pasted in a GSC code, see if we can turn it into working creds
+            if(isset($_POST['wpil_gsc_access_code']) && !empty($_POST['wpil_gsc_access_code'])){
+                $response = Wpil_SearchConsole::get_access_token(sanitize_text_field($_POST['wpil_gsc_access_code']));
+                set_transient('wpil_gsc_access_status_message', array(
+                    'status' => $response['access_valid'],
+                    'text' => $response['message']
+                ), 20);
+
+                if(!empty($response['access_valid'])){
+                    update_option('wpil_gsc_app_authorized', true, false);
+                }
+            }
+
+            // if the user has picked some GSC profiles, save them into the data store
+            if(isset($_POST['wpil_manually_select_gsc_profile'])){
+                $profiles = array_map('sanitize_text_field', $_POST['wpil_manually_select_gsc_profile']);
+                Wpil_SearchConsole::search_console_data(array('profiles' => $profiles));
+                update_option('wpil_gsc_processed_profiles', array(), false);
+                update_option('wpil_current_gsc_process_profile', false, false);
+            }
+
+            // Keep legacy option synced for downgrade compatibility.
+            if(array_key_exists('wpil_disable_support_widget', $_POST)){
+                update_option('wpil_disable_tawkto_widget', $_POST['wpil_disable_support_widget']);
+            } // TODO: remove in v. 1.0.0
 
             // if the user has checked the option to cancel the active broken link scans
             if(isset($_POST['wpil_clear_error_checker_process']) && !empty($_POST['wpil_clear_error_checker_process'])){
@@ -3276,6 +3470,27 @@ function triggerConfettiExplosion() {
                 // tell the user that we've re-run the process
                 $setting_update_msg .= '&database_update_activated=1';
                 set_transient('wpil_database_update_message', __('Database update routine complete!', 'wpil'), 60);
+            }
+
+            // if the user has checked the option to reset the AI setting cache
+            if(isset($_POST['wpil_reset_ai_setting_cache']) && !empty($_POST['wpil_reset_ai_setting_cache'])){
+                delete_transient('wpil_ai_credit_balance');
+                delete_transient('wpil_user_ai_subscription');
+                delete_option('wpil_oai_insufficient_quota_error');
+            }
+
+            // if the user wants to clear out the saved visitor data, go do it
+            if(isset($_POST['wpil_delete_stored_visitor_data']) && !empty($_POST['wpil_delete_stored_visitor_data'])){
+                $deleted = Wpil_ClickTracker::delete_stored_visitor_data();
+                $setting_update_msg .= '&user_data_deleted=' . (int) !empty($deleted);
+                set_transient('wpil_user_data_delete_message', (!empty($deleted)) ? __('Stored visitor data deleted!', 'wpil'): __('No stored visitor data was deleted.', 'wpil'), 60);
+            }
+
+            // if the user wants the report tables reset, put them back to the defaults
+            if(isset($_POST['wpil_reset_table_display_counts']) && !empty($_POST['wpil_reset_table_display_counts'])){
+                Wpil_Report::reset_display_counts();
+                $setting_update_msg .= '&table_item_count_reset=1';
+                set_transient('wpil_table_item_count_reset_message', __('Report table display counts reset!', 'wpil'), 60);
             }
 
             // clear the item caches if they're set
@@ -3324,7 +3539,7 @@ function triggerConfettiExplosion() {
             // flush the cache to make sure nothing's hanging
             wp_cache_flush();
 
-            wp_redirect(admin_url('admin.php?page=link_whisper_settings&success'));
+            wp_redirect(admin_url('admin.php?page=link_whisper_settings&success' . $setting_update_msg));
             exit;
         }
     }
@@ -3607,26 +3822,6 @@ function triggerConfettiExplosion() {
     }
 
     /**
-     * Gets all available cats and tags for the current post types
-     **/
-    public static function get_available_related_post_terms(){
-        $terms = get_transient('wpil_available_related_post_terms');
-
-        if($terms === '' || $terms === false){
-            $post_types = self::get_related_posts_active_post_types();
-
-            if(!empty($post_types)){
-                $taxes = get_object_taxonomies($post_types);
-                if(!empty($taxes)){
-
-                }
-            }
-        }
-
-        return $terms;
-    }
-
-    /**
      * Get ignore posts (posts & terms)
      * Pulls posts from cache if available to save processing time.
      *
@@ -3853,7 +4048,7 @@ function triggerConfettiExplosion() {
      * Gets a list of HTML tags that the user can choose to ignore from linking
      */
     public static function getPossibleIgnoreLinkingTags(){
-        return array('p', 'span', 'li', 'div', 'ul', 'ol', 'blockquote', 'td', 'th', 'strong', 'i', 'code');
+        return array('p', 'span', 'li', 'div', 'ul', 'ol', 'blockquote', 'td', 'th', 'strong', 'i', 'code', 'pre');
     }
 
     /**
@@ -3902,6 +4097,13 @@ function triggerConfettiExplosion() {
      **/
     public static function get_linkwhisper_ai_active(){
         return !empty(get_option('wpil_ai_access_authorized', '0'));
+    }
+
+    /**
+     * Gets if the user has affirmatively disconnected from LW AI
+     **/
+    public static function get_linkwhisper_ai_deactivated(){
+        return !empty(get_option('wpil_ai_access_deactivated', '0'));
     }
 
     /**
@@ -3960,6 +4162,88 @@ function triggerConfettiExplosion() {
     }
 
     /**
+     * Persists the email used for the Link Whisper AI account so checkout and
+     * reconnect flows can reuse it without a refresh.
+     *
+     * @param string $email
+     * @return string
+     */
+    public static function set_linkwhisper_ai_user_email($email = ''){
+        $email = sanitize_email($email);
+        if(empty($email) || !is_email($email)){
+            return '';
+        }
+
+        update_option('wpil_ai_access_user_email', $email, false);
+        update_user_meta(get_current_user_id(), 'wpil_ai_access_user_email', $email);
+
+        return $email;
+    }
+
+    /**
+     * Returns the current AI connection state for the UI connect flow.
+     *
+     * @param bool $refresh
+     * @return array
+     */
+    public static function get_linkwhisper_ai_connection_status($refresh = false){
+        $token = self::get_linkwhisper_ai_token();
+        $user_id = self::get_linkwhisper_ai_user_id();
+        $connected = (!empty(self::get_linkwhisper_ai_active()) && !empty($token) && !empty($user_id));
+        $email = self::get_linkwhisper_ai_user_email();
+
+        return array(
+            'connected' => $connected,
+            'email' => $email,
+            'user_id' => ($connected) ? $user_id : '',
+            'credits' => ($connected) ? (int) Wpil_AI::get_available_ai_credits($refresh) : 0,
+        );
+    }
+
+    /**
+     * Prepares the remote AI setup window and stores the submitted email
+     * locally so the rest of the UI can continue without reloading.
+     */
+    public static function ajax_prepare_ai_connection(){
+        Wpil_Base::verify_nonce('wpil_prepare_ai_connection');
+
+        $email = isset($_POST['email']) ? sanitize_email(wp_unslash($_POST['email'])) : '';
+        if(empty($email) || !is_email($email)){
+            wp_send_json_error(array(
+                'message' => __('Please enter a valid email address.', 'wpil'),
+            ));
+        }
+
+        self::set_linkwhisper_ai_user_email($email);
+        delete_option('wpil_ai_access_deactivated');
+
+        $return_url = admin_url('admin.php?page=link_whisper_ai_subscription&ai_auth_complete=1');
+        $auth_url = Wpil_AI::get_linkwhisper_ai_auth_url($return_url, array(
+            'email' => $email,
+            'uemail' => $email,
+            'customer_email' => $email,
+        ));
+
+        wp_send_json_success(array_merge(
+            self::get_linkwhisper_ai_connection_status(false),
+            array(
+                'auth_url' => $auth_url,
+            )
+        ));
+    }
+
+    /**
+     * Returns the current Link Whisper AI connection state for polling UIs.
+     */
+    public static function ajax_get_ai_connection_status(){
+        Wpil_Base::verify_nonce('wpil_get_ai_connection_status');
+
+        $refresh = !empty($_POST['refresh']);
+
+        wp_send_json_success(self::get_linkwhisper_ai_connection_status($refresh));
+    }
+
+    /**
      * Delets the ai api tokens so that we can disconnect this site
      **/
     public static function disconnect_linkwhisper_ai(){
@@ -3967,6 +4251,13 @@ function triggerConfettiExplosion() {
         delete_option('wpil_ai_access_user_id');
         delete_option('wpil_ai_access_user_email');
         delete_option('wpil_ai_access_authorized');
+        update_option('wpil_ai_access_deactivated', '1');
+
+        $current_user_id = get_current_user_id();
+        if(!empty($current_user_id)){
+            delete_user_meta($current_user_id, 'wpil_ai_access_user_email');
+            delete_user_meta($current_user_id, 'wpil_ai_access_user_id');
+        }
     }
 
     /**
@@ -4036,6 +4327,19 @@ function triggerConfettiExplosion() {
         return 'gpt-4o-mini';
     }
 
+    /**
+     * Gets the number of dimensions to use in the relation analysis
+     **/
+    public static function get_ai_dimension_limit(){
+        $dimensions = (int) get_option('wpil_ai_embedding_dimensions', '2048');
+        if($dimensions < 2){
+            $dimensions = 2048;
+        }elseif($dimensions > 3072){
+            $dimensions = 3072;
+        }
+        return $dimensions;
+    }
+
     public static function get_ai_suggestion_score_active(){
         return false;
         return get_option('wpil_ai_suggestion_score_active', false);
@@ -4056,6 +4360,21 @@ function triggerConfettiExplosion() {
     }
 
     /**
+     * Gets the auto insert relatedness threshold
+     **/
+    public static function get_ai_auto_insert_relatedness_threshold(){
+        return floatval(get_option('wpil_ai_auto_insert_relatedness_threshold', 0.6000));
+    }
+
+    /**
+     * Gets the outbound link count where we stop trying to process more AI outbound suggestions.
+     * We're hard coding this for now so the rest of the code can use the usual settings wrapper.
+     **/
+    public static function get_ai_suggestion_outbound_limit(){
+        return 8;
+    }
+
+    /**
      * Gets the post relatedness threshold
      **/
     public static function get_ai_sitemap_relatedness_threshold(){
@@ -4073,8 +4392,12 @@ function triggerConfettiExplosion() {
     }
 
     public static function get_selected_ai_batch_processes($return_process_names = false, $remove_embedding = false){
+        $default_processes = array(4,5); // dfault: embeddings and keywords!
         $processes = self::get_available_ai_batch_processes();
-        $selected_processes = get_option('wpil_selected_ai_batch_processes', $processes);
+        $selected_processes = get_option('wpil_selected_ai_batch_processes', $default_processes);
+        if(empty($selected_processes)){
+            $selected_processes = $default_processes; // handling weird edge cases!
+        }
         $available = array_intersect($selected_processes, array_flip($processes));
 
         if($remove_embedding && in_array(4, $available)){
@@ -4124,13 +4447,13 @@ function triggerConfettiExplosion() {
             'live' => array(
                 'post-summarizing'          => 100,
                 'product-detecting'         => 100,
-                'create-post-embeddings'    => ($ai_service_active) ? 50: 500,
+                'create-post-embeddings'    => ($ai_service_active) ? 100: 500,
                 'keyword-detecting'         => 100
             ),
             'batch' => array(
                 'post-summarizing'          => 100,
                 'product-detecting'         => 100,
-                'create-post-embeddings'    => ($ai_service_active) ? 50: 500,
+                'create-post-embeddings'    => ($ai_service_active) ? 100: 500,
                 'keyword-detecting'         => 100,
             )
         );
@@ -4138,8 +4461,8 @@ function triggerConfettiExplosion() {
         $limits = get_option('wpil_ai_batch_processing_limits', array());
 
         if(isset($limits['live']) && is_array($limits['live'])){
-            if($ai_service_active && $limits['live']['create-post-embeddings'] > 50){
-                $limits['live']['create-post-embeddings'] = 50;
+            if($ai_service_active && $limits['live']['create-post-embeddings'] > 100){
+                $limits['live']['create-post-embeddings'] = 100;
             }
             $defaults['live'] = array_merge($defaults['live'], $limits['live']);
         }
@@ -4228,6 +4551,15 @@ function triggerConfettiExplosion() {
     public static function updatePostModifiedDate()
     {
         return (!empty(get_option('wpil_update_post_edit_date', false)));
+    }
+
+    /**
+     * Gets if the user wants to disable revisions when links are inserted.
+     * Returns false by default, and only true if the user has activated the setting.
+     **/
+    public static function disablePostRevisions()
+    {
+        return (!empty(get_option('wpil_disable_revisions', false)));
     }
 
     /**
@@ -4533,6 +4865,8 @@ function triggerConfettiExplosion() {
             case 'select_post_types':
             case 'link_orphaned':
             case 'same_parent':
+            case 'link_to_category_pages':
+            case 'link_from_category_pages':
                 if($filters_persistent){
                     $status = (isset($filtering_settings[$index]) && !empty($filtering_settings[$index])) ? true: false;
                 }else{
@@ -4586,6 +4920,8 @@ function triggerConfettiExplosion() {
             'select_post_types' => false,
             'link_orphaned' => false,
             'same_parent' => false,
+            'link_to_category_pages' => false,
+            'link_from_category_pages' => false,
             'selected_category' => array(),
             'selected_tag' => array(),
             'selected_post_types' => array(),
@@ -4601,6 +4937,8 @@ function triggerConfettiExplosion() {
                 case 'select_post_types':
                 case 'link_orphaned':
                 case 'same_parent':
+                case 'link_to_category_pages':
+                case 'link_from_category_pages':
                     $status = (isset($_REQUEST[$index]) && !empty($_REQUEST[$index])) ? true: false;
                 break;
                 // number array filters
@@ -4642,6 +4980,8 @@ function triggerConfettiExplosion() {
             'select_post_types',
             'link_orphaned',
             'same_parent',
+            'link_to_category_pages',
+            'link_from_category_pages',
             'selected_category',
             'selected_tag',
             'selected_post_types'
@@ -4682,6 +5022,88 @@ function triggerConfettiExplosion() {
      */
     public static function get_use_anchor_limit_tk_matches(){
         return (int) get_option('wpil_force_keyword_exact_matches_word_limit', 1);
+    }
+
+    /**
+     * Gets a cleaned domain that was entered in the settings
+     **/
+    public static function get_setting_domain($domain){
+        // if the domain doesn't have the protocol included
+        if(false === strpos($domain, 'http')){
+            // add a protocol so that wp_parse_url can process it correctly
+            $domain = 'http://' . ltrim($domain, '/:');
+        }
+        return wp_parse_url(str_replace('://www.', '://', trim($domain)), PHP_URL_HOST);
+    }
+
+    /**
+     * Get links that the user wants to ignore
+     *
+     * @return array
+     */
+    public static function getIgnoreLinks()
+    {
+        $links = get_transient('wpil_links_to_ignore');
+        if(empty($links)){
+
+            $links = get_option('wpil_links_to_ignore', array());
+            if (!empty($links)) {
+                $links = explode("\n", $links);
+                foreach ($links as $key => $link) {
+                    if(empty(trim($link)) || empty(esc_url_raw($link)) && !Wpil_Link::isRelativeLink($link)){
+                        unset($links[$key]);
+                    }else{
+                        $links[$key] = trim($link);
+                    }
+                }
+
+            }
+            if(empty($links)){
+                $links = 'no-links-ignored';
+            }
+
+            set_transient('wpil_links_to_ignore', $links, 60 * MINUTE_IN_SECONDS);
+        }
+
+        if($links === 'no-links-ignored'){
+            return array();
+        }
+
+        return $links;
+    }
+
+    /**
+     * Gets if the user wants to prevent keyword cannibalization in suggestions.
+     * When active, suggestions using a phrase that contains another post's target keyword
+     * will be skipped (unless it's an inbound suggestion to the post that owns the keyword).
+     **/
+    public static function get_prevent_keyword_cannibalization(){
+        return !empty(get_option('wpil_prevent_keyword_cannibalization', false));
+    }
+
+    /**
+     * Get a list of domains that have been marked as "sponsored"
+     *
+     * @return array
+     */
+    public static function getSponsoredDomains()
+    {
+        $domains = get_option('wpil_sponsored_domains', '');
+
+        if (!empty($domains)) {
+            $domains = explode("\n", $domains);
+            foreach ($domains as $key => $domain) {
+                $cleaned_domain = self::get_setting_domain($domain);
+                if(empty($cleaned_domain)){
+                    continue;
+                }
+                $domains[$key] = $cleaned_domain;
+            }
+
+            return $domains;
+        }
+
+        return [];
     }
 
     /**
@@ -5132,7 +5554,7 @@ function triggerConfettiExplosion() {
             // try getting redirected posts
             $query = "SELECT p.post_title as 'old_relative' FROM {$wpdb->posts} p 
                         LEFT JOIN {$wpdb->postmeta} m ON p.ID = m.post_id
-                        WHERE p.post_type = 'seopress_404' AND m.meta_key = '_seopress_redirections_enabled' AND m.meta_value = 'yes'";
+                        WHERE p.post_type = 'seopress_404' AND p.post_status != 'trash' AND m.meta_key = '_seopress_redirections_enabled' AND m.meta_value = 'yes'";
 
             $results = $wpdb->get_results($query);
 
@@ -5265,7 +5687,7 @@ function triggerConfettiExplosion() {
                 LEFT JOIN {$wpdb->postmeta} ex ON p.ID = ex.post_id AND ex.meta_key = '_seopress_redirections_enabled_regex' 
                 LEFT JOIN {$wpdb->postmeta} act ON p.ID = act.post_id AND act.meta_key = '_seopress_redirections_enabled' 
                 LEFT JOIN {$wpdb->postmeta} red ON p.ID = red.post_id AND red.meta_key = '_seopress_redirections_type' 
-                WHERE p.post_type = 'seopress_404' AND m.meta_key = '_seopress_redirections_value' AND act.meta_value = 'yes' AND ex.meta_key IS NULL AND red.meta_value IN (301,302,307)";
+                WHERE p.post_type = 'seopress_404' AND p.post_status != 'trash' AND m.meta_key = '_seopress_redirections_value' AND act.meta_value = 'yes' AND ex.meta_key IS NULL AND red.meta_value IN (301,302,307)";
             $results = $wpdb->get_results($query);
 
             // if there are some posts
@@ -5346,8 +5768,8 @@ function triggerConfettiExplosion() {
         foreach($urls as $old_url => $new_url){
             $old_post = Wpil_Post::getPostByLink($old_url);
 
-            // if we can't identify the original post
-            if(empty($old_post)){
+            // if we can't identify the original post or it's not a post
+            if(empty($old_post) || $old_post->type !== 'post'){
                 // skip to the next URL since we can't confirm if the original post is hidden or not
                 continue;
             }
@@ -5646,16 +6068,58 @@ function triggerConfettiExplosion() {
             }
         }
 
-
-
-
-
         return (!empty($pages)) ? $pages: [];
         // TODO: get more pages from ecommerce and profile management plugins and include them in the list
     }
 
-    public static function get_money_pages(){
-        // we're going to want menu pages
-        // pages mentioned by seo po
+    public static function get_money_page_ids($refresh = false){
+        $ids = get_option('wpil_pillar_content_post_ids', Wpil_Post::get_money_pages());
+
+        // if we're refreshing the ids with new ones
+        if($refresh){
+            // check the site for ids
+            $new_ids = Wpil_Post::get_money_pages();
+
+            // if we found some
+            if(!empty($new_ids)){
+                // merge them into the list
+                $ids = array_unique(array_merge($ids, $new_ids));
+            }
+        }
+
+        return $ids;
+    }
+
+    public static function get_money_page_term_ids(){
+        $ids = get_option('wpil_pillar_content_term_ids', array());
+        if(empty($ids) || !is_array($ids)){
+            return array();
+        }
+
+        return $ids;
+    }
+
+    public static function get_money_page_pid_list($refresh = false){
+        $post_ids = self::get_money_page_ids($refresh);
+        $term_ids = self::get_money_page_term_ids();
+
+        $pid_list = array();
+        if(!empty($post_ids)){
+            foreach($post_ids as $id){
+                if(!empty($id)){
+                    $pid_list[] = 'post_' . (int) $id;
+                }
+            }
+        }
+
+        if(!empty($term_ids)){
+            foreach($term_ids as $id){
+                if(!empty($id)){
+                    $pid_list[] = 'term_' . (int) $id;
+                }
+            }
+        }
+
+        return array_values(array_unique($pid_list));
     }
 }

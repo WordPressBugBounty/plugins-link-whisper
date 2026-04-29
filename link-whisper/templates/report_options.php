@@ -22,15 +22,13 @@
     <label for="show_broken_link_type" <?= ('error' === $report) ? '' :  $hide?>>Show if broken link internal or external&nbsp;&nbsp;&nbsp;</label>
     <input type="checkbox" name="report_options[show_broken_link_discovered]" id="show_broken_link_discovered" <?=$show_broken_link_discovered ? 'checked' : ''?> <?= ('error' === $report) ? '' :  $hide?>/>
     <label for="show_broken_link_discovered" <?= ('error' === $report) ? '' :  $hide?>>Show when broken link detected&nbsp;&nbsp;&nbsp;</label>
-    <input type="checkbox" name="report_options[enable_tours]" id="enable_tours" <?=$enable_tours ? 'checked' : ''?>/>
-    <label for="enable_tours">Enable interactive tours&nbsp;&nbsp;&nbsp;</label>
+    <!--<input type="checkbox" name="report_options[enable_tours]" id="enable_tours" <?php /* <?=$enable_tours ? 'checked' : ''?> */?>/>
+    <label for="enable_tours">Enable interactive tours&nbsp;&nbsp;&nbsp;</label>-->
 </fieldset>
 <fieldset class="screen-options">
     <legend><?php _e('Pagination', 'wpil'); ?></legend>
     <label for="per_page"><?php _e('Posts per page', 'wpil'); ?></label>
     <input type="number" step="1" min="1" max="999" maxlength="3" name="report_options[per_page]" id="per_page" value="<?=esc_attr($per_page)?>" />
 </fieldset>
-<a href="<?php echo admin_url('admin.php?page=link_whisper_wizard');?>" class="button button-primary button-large" style="float:right";><?php esc_html_e('Launch One Click Setup', 'wpil');?></a>
-<br>
 <?=$button?>
 <?php wp_nonce_field( 'screen-options-nonce', 'screenoptionnonce', false, false ); ?>

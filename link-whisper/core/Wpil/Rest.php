@@ -111,10 +111,20 @@ class Wpil_Rest
     public function ai_auth_handler( WP_REST_Request $request )
     {
         if(!empty($request->get_param('access_token'))){
-            $token = $request->get_param('access_token');
-            $user_id = $request->get_param('user_id');
-            $uid = (int)$request->get_param('uid');
-            $uemail = $request->get_param('uemail');
+            $token   = sanitize_text_field((string) $request->get_param('access_token'));
+            $user_id = sanitize_text_field((string) $request->get_param('user_id'));
+            $uid     = absint($request->get_param('uid'));
+            $uemail  = sanitize_email((string) $request->get_param('uemail'));
+            if(empty($uemail) && !empty($uid)){
+                $uemail = sanitize_email((string) get_user_meta($uid, 'wpil_wizard_ai_user_email', true));
+            }
+            if(empty($uemail) && !empty($uid)){
+                $uemail = sanitize_email((string) get_user_meta($uid, 'wpil_ai_access_user_email', true));
+            }
+            if(empty($uemail) && !empty($uid)){
+                $user = get_userdata($uid);
+                $uemail = (!empty($user) && !empty($user->user_email)) ? sanitize_email((string) $user->user_email) : '';
+            }
 
             if( !empty($token) && 
                 false !== strpos($token, 'ai-') && // if the code isn't corrupted
@@ -126,12 +136,23 @@ class Wpil_Rest
                 // and the user id
                 update_option('wpil_ai_access_user_id', $user_id);
                 // and the user email
-                update_option('wpil_ai_access_user_email', sanitize_email($uemail));
+                if(!empty($uemail) && is_email($uemail)){
+                    update_option('wpil_ai_access_user_email', $uemail);
+                }
                 // tag the user with the id
-//                update_user_meta($uid, 'wpil_ai_access_user_id', $user_id);
-//                update_user_meta($uid, 'wpil_ai_access_user_email', $uemail);
+                if(!empty($uid) && !empty($uemail) && is_email($uemail)){
+                    update_user_meta($uid, 'wpil_ai_access_user_email', $uemail);
+                }
+                update_option('wpil_select_ai_provider', 'linkwhisper');
+                delete_option('wpil_ai_access_deactivated');
                 // and update the flag so we know it's live
                 update_option('wpil_ai_access_authorized', true);
+
+                if(!empty($uid)){
+                    delete_user_meta($uid, 'wpil_wizard_ai_user_email');
+                    delete_user_meta($uid, 'wpil_wizard_ai_activation_token');
+                }
+
             }
 
             return 'ok';

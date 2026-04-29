@@ -201,7 +201,7 @@ class Wpil_SearchConsole
                 }
             }
         }
-        update_option('wpil_gsc_profile_not_easily_found', empty($return_profile));
+        update_option('wpil_gsc_profile_not_easily_found', empty($return_profile), false);
 
         return $return_profile;
     }
@@ -235,7 +235,7 @@ class Wpil_SearchConsole
             // grab the first profile
             $profile = current($selected);
             // set the processing profile to this one
-            update_option('wpil_current_gsc_process_profile', $profile);
+            update_option('wpil_current_gsc_process_profile', $profile, false);
             // and return it
             return $profile;
         }
@@ -254,7 +254,7 @@ class Wpil_SearchConsole
             // grab the first one
             $profile = current($prfs);
             // set the processing profile for it
-            update_option('wpil_current_gsc_process_profile', $profile);
+            update_option('wpil_current_gsc_process_profile', $profile, false);
             // and return the profile
             return $profile;
         }
@@ -282,7 +282,7 @@ class Wpil_SearchConsole
         }
 
         // update the list of processed profiles
-        update_option('wpil_gsc_processed_profiles', $processed_profiles);
+        update_option('wpil_gsc_processed_profiles', $processed_profiles, false);
 
         // find all of the profiles that haven't been processed
         $un_processed = array_diff(self::$data['profiles'], $processed_profiles);
@@ -292,15 +292,15 @@ class Wpil_SearchConsole
             // pull the first one
             $profile = current($un_processed);
             // setup the processing flag
-            update_option('wpil_current_gsc_process_profile', $profile);
+            update_option('wpil_current_gsc_process_profile', $profile, false);
             // and return the profile
             return $profile;
         }
 
         // if we haven't found any profiles that haven't been processed
         // clear the flags
-        update_option('wpil_gsc_processed_profiles', array());
-        update_option('wpil_current_gsc_process_profile', false);
+        update_option('wpil_gsc_processed_profiles', array(), false);
+        update_option('wpil_current_gsc_process_profile', false, false);
 
         // and return false
         return false;
@@ -501,9 +501,9 @@ class Wpil_SearchConsole
      * @return bool True on update, False on failure
      */
     public static function save_custom_auth_config($config = array()){
-        $saved = update_option('wpil_gsc_custom_config', $config);
+        $saved = update_option('wpil_gsc_custom_config', $config, false);
         if($saved){
-            update_option('wpil_gsc_auth_method', 'custom_auth');
+            update_option('wpil_gsc_auth_method', 'custom_auth', false);
         }
         return $saved;
     }
@@ -525,7 +525,7 @@ class Wpil_SearchConsole
     public static function clear_custom_auth_config(){
         $deleted = delete_option('wpil_gsc_custom_config');
         if($deleted){
-            update_option('wpil_gsc_auth_method', 'standard');
+            update_option('wpil_gsc_auth_method', 'standard', false);
         }
         return $deleted;
     }
@@ -682,8 +682,8 @@ class Wpil_SearchConsole
         self::search_console_data(false);
         self::search_console_data(array('authorized' => false, 'profiles'   => array()));
         self::clear_custom_auth_config();
-        update_option('wpil_gsc_app_authorized', false);
-        update_option('wpil_gsc_remote_credentials', array());
+        update_option('wpil_gsc_app_authorized', false, false);
+        update_option('wpil_gsc_remote_credentials', array(), false);
 
         self::set_data();
     }
@@ -796,7 +796,7 @@ class Wpil_SearchConsole
         }
 
         $data = wp_parse_args($data, $saved);
-        update_option($key, $data);
+        update_option($key, $data, false);
 
         return $data;
     }

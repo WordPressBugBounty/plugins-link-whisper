@@ -22,6 +22,22 @@
     <div style="margin-bottom: 15px; float:left;">
         <input type="hidden" class="wpil-suggestion-input wpil-suggestions-can-be-regenerated" value="0" data-suggestion-input-initial-value="0">
         <br>
+        <?php if(!empty($has_orphaned)){  ?>
+            <div class="wpil-is-tooltipped wpil-no-scale wpil-tooltip-no-position" style="display:inline-block;" <?php echo Wpil_Toolbox::generate_tooltip_text('outbound-suggestions-link-orphaned'); ?>>
+                <input style="margin-bottom: -5px;" type="checkbox" name="link_orphaned" id="field_link_orphaned" class="wpil-suggestion-input" data-suggestion-input-initial-value="<?php echo !empty($link_orphaned) ? 1: 0;?>" <?=(isset($link_orphaned) && !empty($link_orphaned)) ? 'checked' : ''?>> <label for="field_link_orphaned"><?php esc_html_e('Only Link to Orphaned Posts', 'wpil'); ?></label>
+            </div>
+        <?php }  ?>
+        <br>
+        <div class="wpil-is-tooltipped wpil-no-scale wpil-tooltip-no-position" style="display:inline-block;">
+            <input style="margin-bottom: -5px;" type="checkbox" name="link_to_category_pages" id="field_link_to_category_pages" class="wpil-suggestion-input" data-suggestion-input-initial-value="<?php echo !empty($link_to_category_pages) ? 1: 0;?>" <?=(isset($link_to_category_pages) && !empty($link_to_category_pages)) ? 'checked' : ''?>> <label for="field_link_to_category_pages"><?php esc_html_e('Only Link to Category Pages', 'wpil'); ?></label>
+        </div>
+        <?php if(!empty($has_parent)){  ?>
+        <br>
+        <div class="wpil-is-tooltipped wpil-no-scale wpil-tooltip-no-position" style="display:inline-block;" data-wpil-tooltip-read-time="4500" <?php echo Wpil_Toolbox::generate_tooltip_text('outbound-suggestions-link-same-parent'); ?>>
+            <input style="margin-bottom: -5px;" type="checkbox" name="same_parent" id="field_same_parent" class="wpil-suggestion-input" data-suggestion-input-initial-value="<?php echo !empty($same_parent) ? 1: 0;?>" <?=(isset($same_parent) && !empty($same_parent)) ? 'checked' : ''?>> <label for="field_same_parent"><?php esc_html_e('Only Suggest Links to Posts With the Same Parent as This Post', 'wpil'); ?></label>
+        </div>
+        <?php }  ?>
+        <br>
         <?php if(!empty($categories)){ ?>
         <div class="wpil-is-tooltipped wpil-no-scale wpil-tooltip-no-position" style="display:inline-block;" <?php echo Wpil_Toolbox::generate_tooltip_text('outbound-suggestions-link-same-category'); ?>>
             <input style="margin-bottom: -5px;" type="checkbox" name="same_category" id="field_same_category" class="wpil-suggestion-input" data-suggestion-input-initial-value="<?php echo !empty($same_category) ? 1: 0;?>" <?=(isset($same_category) && !empty($same_category)) ? 'checked' : ''?>> <label for="field_same_category"><?php esc_html_e('Only Show Link Suggestions in the Same Category as This Post', 'wpil'); ?></label>

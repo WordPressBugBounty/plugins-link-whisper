@@ -45,7 +45,7 @@
     $current_tab = (isset($_GET['tab']) && !empty($_GET['tab'])) ? esc_attr($_GET['tab']): 'general-settings';
 
     // get if we're highlighting a setting
-    $highlight = (isset($_GET['setting_highlight']) && !empty($_GET['setting_highlight'])) ? $_GET['setting_highlight']: '';
+    $highlight = (isset($_GET['setting_highlight']) && !empty($_GET['setting_highlight'])) ? esc_attr($_GET['setting_highlight']): '';
 
     $is_connected_to_linkwhisper_ai = Wpil_Settings::get_linkwhisper_ai_active();
     $ai_is_active = ($is_connected_to_linkwhisper_ai);
@@ -68,8 +68,10 @@
     $ai_disable_anchor_building = Wpil_Settings::get_disable_ai_anchor_building();
     $ai_show_top_ai_suggestions = Wpil_Settings::get_show_top_ai_suggestions();
     $ai_disable_inbound_suggestion_cron = Wpil_Settings::disable_ai_suggestions_cron_task();
+    $ai_process_all_terms = !empty(get_option('wpil_ai_process_all_terms', false));
     $ai_max_processing_age = Wpil_Settings::get_ai_max_processing_age();
     $ai_suggestion_relatedness_threshold = Wpil_Settings::get_ai_suggestion_relatedness_threshold();
+    $ai_auto_insert_relatedness_threshold = Wpil_Settings::get_ai_auto_insert_relatedness_threshold();
     $ai_linkwhisper_decoding_error = !empty(get_option('wpil_ai_token_decoding_error', '0'));
 
     // if we're not doing anything
@@ -918,7 +920,7 @@
                             <td scope='row' class="wpil-setting-text"><?php _e('AI Relation Analysis Batch Size', 'wpil'); ?></td>
                             <td>
                                 <div style="max-width: 210px;">
-                                <input type="number" class="" style="min-width: 170px;" name="wpil_ai_batch_processing_limits[live][create-post-embeddings]" value="<?php echo max([1, (int) $ai_processing_batch_limits['live']['create-post-embeddings']]);?>" min="1" max="<?php echo !($is_connected_to_linkwhisper_ai) ? 1000: 50;?>">
+                                <input type="number" class="" style="min-width: 170px;" name="wpil_ai_batch_processing_limits[live][create-post-embeddings]" value="<?php echo max([1, (int) $ai_processing_batch_limits['live']['create-post-embeddings']]);?>" min="1" max="<?php echo !($is_connected_to_linkwhisper_ai) ? 1000: 100;?>">
                                 <div class="wpil_help" style="float:right">
                                     <i class="dashicons dashicons-editor-help"></i>
                                     <div style="background: rgba(0, 0, 0, 0.8); width: 400px">
@@ -1127,7 +1129,45 @@
                             </td>
                         </tr>
                         <tr class="wpil-ai-settings wpil-setting-row wpil-ai-any-setting <?php echo !empty($ai_is_active) ? '': 'hide-setting'; ?>">
-                            <td scope='row' class="wpil-setting-text"><?php _e('Clear AI Data', 'wpil'); ?></td>
+                            <td scope='row'><?php _e('Clear AI Relation Analysis Data', 'wpil'); ?></td>
+                            <td>
+                                <div style="max-width: 140px">
+                                    <a style="margin-top:5px;" class="wpil-clear-ai-relation-data button-primary <?php echo (!Wpil_AI::has_ai_processed_data('wpil_ai_embedding_data')) ? 'button-disabled': '';?>" data-nonce="<?php echo wp_create_nonce(wp_get_current_user()->ID . 'wpil_clear_ai_data'); ?>"><?php esc_html_e('Clear Data', 'wpil'); ?></a>
+                                    <div class="wpil_help" style="float:right;">
+                                        <i class="dashicons dashicons-editor-help"></i>
+                                        <div style="margin: -50px 0px 0px 30px; width: 400px">
+                                            <?php 
+                                            _e('Clicking this button will tell Link Whisper to delete all of its AI Relation Analysis data.', 'wpil');
+                                            echo '<BR><BR>';
+                                            _e('This will clear the AI Relation data for the rare cases where all posts in suggestions have an "AI Relatedness Score" of "Unknown".', 'wpil');
+                                            ?>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="clear:both;"></div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-ai-settings wpil-setting-row wpil-ai-any-setting <?php echo !empty($ai_is_active) ? '': 'hide-setting'; ?>">
+                            <td scope='row'><?php _e('Clear AI Generated Keyword Data', 'wpil'); ?></td>
+                            <td>
+                                <div style="max-width: 140px">
+                                    <a style="margin-top:5px;" class="wpil-clear-ai-keyword-data button-primary <?php echo (!Wpil_AI::has_ai_processed_data('wpil_ai_keyword_data')) ? 'button-disabled': '';?>" data-nonce="<?php echo wp_create_nonce(wp_get_current_user()->ID . 'wpil_clear_ai_data'); ?>"><?php esc_html_e('Clear Data', 'wpil'); ?></a>
+                                    <div class="wpil_help" style="float:right;">
+                                        <i class="dashicons dashicons-editor-help"></i>
+                                        <div style="margin: -50px 0px 0px 30px; width: 400px">
+                                            <?php 
+                                            _e('Clicking this button will tell Link Whisper to delete all of its AI Generated Keywords.', 'wpil');
+                                            echo '<BR><BR>';
+                                            _e('This will clear the AI Generated Keywords and remove them from the Target Keywords system.', 'wpil');
+                                            ?>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="clear:both;"></div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-ai-settings wpil-setting-row wpil-ai-any-setting <?php echo !empty($ai_is_active) ? '': 'hide-setting'; ?>">
+                            <td scope='row'><?php _e('Clear ALL AI Data', 'wpil'); ?></td>
                             <td>
                                 <div style="max-width: 140px">
                                     <a style="margin-top:5px;" class="wpil-clear-all-ai-data button-primary <?php echo !Wpil_AI::has_ai_processed_data() ? 'button-disabled': '';?>" data-nonce="<?php echo wp_create_nonce(wp_get_current_user()->ID . 'wpil_clear_ai_data'); ?>"><?php esc_html_e('Clear Data', 'wpil'); ?></a>
@@ -1474,8 +1514,8 @@
                             <td scope="row"><?php esc_html_e('Remove Link Whisper Support Popup', 'wpil'); ?></td>
                             <td>
                                 <div style="max-width:80px;">
-                                    <input type="hidden" name="wpil_disable_tawkto_widget" value="0" />
-                                    <input type="checkbox" name="wpil_disable_tawkto_widget" <?=(!empty(get_option('wpil_disable_tawkto_widget', '')))?'checked':''?> value="1" />
+                                    <input type="hidden" name="wpil_disable_support_widget" value="0" />
+                                    <input type="checkbox" name="wpil_disable_support_widget" <?=(!empty(get_option('wpil_disable_support_widget', get_option('wpil_disable_tawkto_widget', ''))))?'checked':''?> value="1" />
                                     <div class="wpil_help" style="float:right;">
                                         <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
                                         <div style="margin: -250px 0 0 30px;">
@@ -1508,7 +1548,118 @@
                         </tr>
                         <?php } ?>
                         <tr class="wpil-advanced-settings wpil-setting-row">
-                            <td scope='row' class="wpil-setting-text"><?php esc_html_e('Content Formatting Level in Link Scan', 'wpil'); ?></td>
+                            <td scope='row'><?php esc_html_e('Disable Broken Link Checker Cron Task', 'wpil'); ?></td>
+                            <td>
+                                <input type="hidden" name="wpil_disable_broken_link_cron_check" value="0" />
+                                <div style="max-width: 80px;">
+                                    <input type="checkbox" name="wpil_disable_broken_link_cron_check" <?=get_option('wpil_disable_broken_link_cron_check', false)==1?'checked':''?> value="1" />
+                                    <div class="wpil_help" style="float: right;">
+                                        <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
+                                        <div style="margin-left: 30px; margin-top: -20px;">
+                                            <p><?php esc_html_e('Checking this will disable the cron task that broken link checker runs.', 'wpil'); ?></p>
+                                            <p><?php esc_html_e('This will disable the scanning for new broken links and the re-checking of suspected broken links.', 'wpil'); ?></p>
+                                            <p><?php esc_html_e('You can still manually activate the broken link scan by going to the Broken Links Report and clicking "Scan for Broken Links" button.', 'wpil'); ?></p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-advanced-settings wpil-setting-row">
+                            <td scope='row'><?php esc_html_e('Auto-Apply Broken Link Recommendations', 'wpil'); ?></td>
+                            <td>
+                                <div style="max-width:80px;">
+                                    <input type="hidden" name="wpil_auto_apply_broken_link_recommendations" value="0" />
+                                    <input type="checkbox" name="wpil_auto_apply_broken_link_recommendations" <?=!empty(get_option('wpil_auto_apply_broken_link_recommendations', false))?'checked':''?> value="1" />
+                                    <div class="wpil_help" style="float:right;">
+                                        <i class="dashicons dashicons-editor-help"></i>
+                                        <div style="margin: -100px 0px 0px 30px; width: 300px;">
+                                            <?php 
+                                            esc_html_e('When enabled, Link Whisper will automatically apply recommended fixes for broken links as they are generated.', 'wpil');
+                                            echo '<br /><br />';
+                                            esc_html_e('When disabled, you can review and apply recommendations from the Broken Links Report.', 'wpil');
+                                            ?>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="clear:both;"></div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-advanced-settings wpil-setting-row">
+                            <td scope='row'><?php esc_html_e('Count Non-Content Links', 'wpil'); ?></td>
+                            <td>
+                                <div style="max-width:80px;">
+                                    <input type="hidden" name="wpil_show_all_links" value="0" />
+                                    <input type="checkbox" name="wpil_show_all_links" <?=get_option('wpil_show_all_links')==1?'checked':''?> value="1" />
+                                    <div class="wpil_help" style="float:right;">
+                                        <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
+                                        <div><?php esc_html_e('Turning this on will cause menu links, footer links, sidebar links, comment links, and links from widgets to be displayed in the link reports.', 'wpil'); ?></div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        <!-- related posts -->
+                        <tr class="wpil-advanced-settings wpil-related-posts-settings wpil-setting-row">
+                            <td scope='row'><?php esc_html_e('Count Related Post Links', 'wpil'); ?></td>
+                            <td>
+                                <div style="max-width:80px;">
+                                    <input type="hidden" name="wpil_count_related_post_links" value="0" />
+                                    <input type="checkbox" name="wpil_count_related_post_links" <?=get_option('wpil_count_related_post_links')==1?'checked':''?> value="1" />
+                                    <div class="wpil_help" style="float:right;">
+                                        <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
+                                        <div>
+                                            <?php esc_html_e('Turning this on will tell Link Whisper to scan and process links from related post sections that store their data seperately from the post\'s data.', 'wpil'); ?>
+                                            <br>
+                                            <br>
+                                            <?php esc_html_e('Currently supports links generated by Link Whisper\'s Related Posts feature, YARPP, and Posts 2 Posts.', 'wpil'); ?>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-advanced-settings wpil-setting-row">
+                            <td scope='row'><?php esc_html_e('Include Comment Links In Links Report', 'wpil'); ?></td>
+                            <td>
+                                <input type="hidden" name="wpil_show_comment_links" value="0" />
+                                <input type="checkbox" name="wpil_show_comment_links" <?=!empty(get_option('wpil_show_comment_links', false))?'checked':''?> value="1" />
+                                <div class="wpil_help" style="display: inline-block; float: none; margin: 0px 0 0 5px;">
+                                    <i class="dashicons dashicons-editor-help"></i>
+                                    <div>
+                                        <?php esc_html_e('Checking this will tell Link Whisper to include links from comments in the Links Report.', 'wpil'); ?>
+                                        <br />
+                                        <br />
+                                        <?php esc_html_e('If you have "Count Non-Content Links" active, you won\'t need to activate this because comment links are already being included in the report.', 'wpil'); ?></div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-advanced-settings wpil-setting-row">
+                            <td scope='row'><?php esc_html_e('Ignore Links From Latest Post Widgets', 'wpil'); ?></td>
+                            <td>
+                                <input type="hidden" name="wpil_ignore_latest_posts" value="0" />
+                                <input type="checkbox" name="wpil_ignore_latest_posts" <?=!empty(get_option('wpil_ignore_latest_posts', false))?'checked':''?> value="1" />
+                                <div class="wpil_help" style="display: inline-block; float: none; margin: 0px 0 0 5px;">
+                                    <i class="dashicons dashicons-editor-help"></i>
+                                    <div>
+                                        <?php esc_html_e('Checking this will tell Link Whisper to ignore links from known Latest Post elements so the links aren\'t used in the Links Report.', 'wpil'); ?>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-advanced-settings wpil-setting-row">
+                            <td scope='row'><?php esc_html_e('Monitor Link Changes in Gutenberg Reusable Blocks', 'wpil'); ?></td>
+                            <td>
+                                <input type="hidden" name="wpil_update_reusable_block_links" value="0" />
+                                <input type="checkbox" name="wpil_update_reusable_block_links" <?=!empty(get_option('wpil_update_reusable_block_links', false))?'checked':''?> value="1" />
+                                <div class="wpil_help" style="display: inline-block; float: none; margin: 0px 0 0 5px;">
+                                    <i class="dashicons dashicons-editor-help"></i>
+                                    <div>
+                                        <?php esc_html_e('Checking this option will tell Link Whisper to monitor changes to Gutenberg reusable blocks and update the link stats of any posts that use the modified blocks.', 'wpil'); ?>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-advanced-settings wpil-setting-row">
+                            <td scope='row'><?php esc_html_e('Content Formatting Level in Link Scan', 'wpil'); ?></td>
                             <td>
                                 <input type="range" name="wpil_content_formatting_level" class="wpil-thick-range" min="0" max="2" value="<?php echo $formatting_level; ?>">
                                 <div class="wpil_help" style="display: inline-block; float: none; margin: 0px 0 0 5px;">
@@ -1843,6 +1994,56 @@
                             </td>
                         </tr>
                         <tr class="wpil-advanced-settings wpil-setting-row">
+                            <td scope='row'><?php esc_html_e('Prevent Target Keyword Cannibalization', 'wpil'); ?></td>
+                            <td>
+                                <input type="hidden" name="wpil_prevent_keyword_cannibalization" value="0" />
+                                <input type="checkbox" name="wpil_prevent_keyword_cannibalization" <?=!empty(get_option('wpil_prevent_keyword_cannibalization', false))?'checked':''?> value="1" />
+                                <div class="wpil_help" style="display: inline-block; float: none; margin: 0px 0 0 5px;">
+                                    <i class="dashicons dashicons-editor-help"></i>
+                                    <div><?php esc_html_e('Checking this will tell Link Whisper to make extra sure to skip suggestions where the anchor phrase contains another post\'s Target Keywords, preventing keyword cannibalization between posts. AI generated keywords are ignored by this setting as they tend to be more generic.', 'wpil'); ?></div>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-advanced-settings wpil-setting-row">
+                            <td scope='row'><?php esc_html_e('Target Keyword Sources', 'wpil'); ?></td>
+                            <td>
+                                <div style="display: inline-block; position: relative;">
+                                    <?php
+                                        $target_keyword_sources             = array_reverse(Wpil_TargetKeyword::get_available_keyword_sources());
+                                        $active_keyword_sources             = Wpil_Settings::getSelectedKeywordSources();
+                                        $source_display_names               = Wpil_TargetKeyword::get_keyword_name_list();
+                                        $post_content_sources               = Wpil_TargetKeyword::get_available_post_content_keyword_sources();
+                                        $active_post_content_sources        = Wpil_Settings::get_selected_post_content_keyword_sources();
+                                        $post_content_source_display_names  = Wpil_TargetKeyword::get_post_content_keyword_name_list();
+
+                                    ?>
+                                    <div class="wpil_help" style="position: absolute; right: -50px; top: -4px;">
+                                        <i class="dashicons dashicons-editor-help"></i>
+                                        <div style="width: 350px;">
+                                            <?php esc_html_e('The toggle in this section allow you to select what Target Keyword sources Link Whisper will extract data from.', 'wpil'); ?>
+                                            <br />
+                                            <br />
+                                            <?php esc_html_e('The Page Content Keywords are extracted from significant parts of the page itself, such as the title or the URL slug. You can fine tune what parts Link Whisper will extract keywords from.', 'wpil'); ?>
+                                            <br />
+                                            <br />
+                                            <?php esc_html_e('The Custom Keywords are always enabled because they are manually entered.', 'wpil'); ?>
+                                        </div>
+                                    </div>
+                                    <?php foreach ($target_keyword_sources as $source){ ?>
+                                            <input type="checkbox" name="wpil_selected_target_keyword_sources[]" value="<?=$source?>" <?=in_array($source, $active_keyword_sources)?'checked':''?> <?php echo ($source === 'custom') ? 'disabled="disabled"': ''; ?>><label><?=$source_display_names[$source]?></label><br>
+                                            <?php
+                                            if($source === 'post-content'){?>
+                                                <div class="wpil-post-content-keyword-container" style="padding-left: 30px; <?php echo (!in_array($source, $active_keyword_sources)) ? 'display:none;': ''; ?>">
+                                                    <?php foreach($post_content_sources as $pc_source){ ?>
+                                                    <input type="checkbox" name="wpil_selected_post_content_target_keyword_sources[]" value="<?=$pc_source?>" <?=in_array($pc_source, $active_post_content_sources)?'checked':''?>><label><?=$post_content_source_display_names[$pc_source]?></label><br>
+                                                    <?php } ?>
+                                                </div>
+                                            <?php } ?>
+                                    <?php } ?>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-advanced-settings wpil-setting-row">
                             <td scope='row' class="wpil-setting-text"><?php esc_html_e('Use "Ugly" Permalinks In Reports', 'wpil'); ?></td>
                             <td>
                                 <input type="hidden" name="wpil_use_ugly_permalinks" value="0" />
@@ -1862,48 +2063,6 @@
                                         (<?php esc_html_e('This won\'t affect the inserted links or Suggestions, and it also won\'t change the links on the site itself. The "Ugly" permalinks will only be used for the Link Whisper "View" buttons in the Reports.', 'wpil'); ?>)
                                     </div>
                                 </div>
-                            </td>
-                        </tr>
-                        <tr class="wpil-content-ignoring-settings wpil-setting-row">
-                            <td scope='row' class="wpil-setting-text"><?php _e('Shortcodes to Ignore by Name.', 'wpil'); ?></td>
-                            <td>
-                                <textarea name='wpil_ignore_shortcodes_by_name' id='wpil_ignore_shortcodes_by_name' style="width: 400px;float:left;" class='regular-text' rows=10><?php echo esc_textarea(get_option('wpil_ignore_shortcodes_by_name', '')); ?></textarea>
-                                <div class="wpil_help">
-                                    <i class="dashicons dashicons-info"></i>    
-                                    <div style="margin: 0px 0px 0px -500px; width: 500px; overflow: auto; max-height: 200px;">
-                                        <?php 
-                                        echo '<h3 style="color:#fff; margin-top: 0px;">';
-                                        _e('The known shortcode names are:', 'wpil');
-                                        echo '</h3>';
-                                        echo '<thing style="display:flex; flex-wrap: wrap;">'; // not div since that gets hidden in wpil_helps
-                                        foreach($shortcode_tags as $tag_name => $dat){
-                                            echo '<span style="padding: 0 10px 0 0;">' . $tag_name . '</span>';
-                                        }
-                                        echo '</thing>';
-                                        echo '<br />';
-                                        echo '<br />';
-                                        echo '<span style="color:#fff;">';
-                                        echo '(' . __('There may be other shortcodes active, but this is what we could find.', 'wpil') . ')';
-                                        echo '</span>';
-                                        ?>
-                                    </div>
-                                </div>
-                                <div class="wpil_help">
-                                    <i class="dashicons dashicons-editor-help"></i>
-                                    <div style="margin: -160px 0px 0px 30px; width: 300px;">
-                                        <?php 
-                                        _e('Link Whisper will ignore any shortcodes listed in this field. It won\'t extract links from the listed shortcodes, or create links in any text content of the shortcode.', 'wpil');
-                                        echo '<br /><br />';
-                                        _e('To ignore a shortcode, enter it\'s name (without square brackets) in this field on it\'s own line.', 'wpil');
-                                        echo '<br /><br />';
-                                        _e('So for example, to ignore the WordPress [caption][/caption] shortcode, enter "caption" (without quotes) on it\'s own line in the field', 'wpil');
-                                        echo '<br /><br />';
-                                        _e('After entering a shortcode, you may want to run a link scan to refresh any stored link data based on shortcodes.', 'wpil');
-                                        echo '<br /><br />';
-                                        ?>
-                                    </div>
-                                </div>
-                                <div style="clear:both;"></div>
                             </td>
                         </tr>
                         <?php }else{ ?>
@@ -2220,13 +2379,59 @@
                                     <br>
                                 </div>
                                 <div class="setting-control">
-                                    <a class="button button-primary" href="<?php echo esc_url(admin_url("post.php?area=wpil_export_sitemap_support&nonce=" . wp_create_nonce(get_current_user_id() . 'wpil_export_sitemap_for_support')));?>"><?php esc_html_e('Export Sitemap Support Data', 'wpil'); ?></a>
+                                    <a id="wpil-export-sitemap-support-trigger" class="button button-primary" href="<?php echo esc_url(admin_url("post.php?area=wpil_export_sitemap_support&nonce=" . wp_create_nonce(get_current_user_id() . 'wpil_export_sitemap_for_support')));?>"><?php esc_html_e('Export Sitemap Support Data', 'wpil'); ?></a>
                                     <div class="wpil_help" style="float:right;">
                                         <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
                                         <div style="margin: -260px 0 0 30px;">
                                             <p><?php esc_html_e('Clicking this button will have Link Whisper compile and export sitemap data that can be used to debug issues with the Visual Sitemaps.', 'wpil'); ?></p>
                                             <br>
                                             <p><?php esc_html_e('If you don\'t see a file download after a short wait, or you see an error screen, please try exporting with a different browser.', 'wpil'); ?></p>
+                                        </div>
+                                    </div>
+                                    <br>
+                                </div>
+                                <div class="setting-control">
+                                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                        <label for="wpil-ai-token-export-from" style="font-weight:600;"><?php esc_html_e('From', 'wpil'); ?></label>
+                                        <input id="wpil-ai-token-export-from" type="date" value="<?php echo esc_attr(gmdate('Y-m-d', strtotime('-30 days'))); ?>" />
+                                        <label for="wpil-ai-token-export-to" style="font-weight:600;"><?php esc_html_e('To', 'wpil'); ?></label>
+                                        <input id="wpil-ai-token-export-to" type="date" value="<?php echo esc_attr(gmdate('Y-m-d')); ?>" />
+                                        <button type="button" id="wpil-ai-token-export-trigger" class="button button-primary" data-export-base="<?php echo esc_url(admin_url('post.php')); ?>" data-export-nonce="<?php echo esc_attr(wp_create_nonce(get_current_user_id() . 'wpil_export_ai_token_use_for_support')); ?>"><?php esc_html_e('Export AI Credit Usage Data', 'wpil'); ?></button>
+                                    </div>
+                                    <div class="wpil_help" style="float:right;">
+                                        <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
+                                        <div style="margin: -260px 0 0 30px;">
+                                            <p><?php esc_html_e('Exports AI token usage records for the selected date range, including model, token totals, process type, and query id for debugging.', 'wpil'); ?></p>
+                                            <br>
+                                            <p><?php esc_html_e('Use this export when support needs to verify where AI usage occurred and which process consumed tokens.', 'wpil'); ?></p>
+                                        </div>
+                                    </div>
+                                    <br>
+                                </div>
+                                <div class="setting-control">
+                                    <a style="margin-top:5px;" class="wpil-clear-ai-linking-process-data button-primary" data-nonce="<?php echo esc_attr(wp_create_nonce(wp_get_current_user()->ID . 'wpil_clear_ai_linking_process_data')); ?>"><?php esc_html_e('Delete All AI Linking Process Data', 'wpil'); ?></a>
+                                    <div class="wpil_help" style="float:right;">
+                                        <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
+                                        <div style="margin: -260px 0 0 30px;">
+                                            <p><?php esc_html_e('Deletes only AI linking process data used by One Click Setup and Dashboard "Fix with AI" actions.', 'wpil'); ?></p>
+                                            <br>
+                                            <p><?php esc_html_e('This clears the AI Linking and Relation Mapping process tables, active process trackers, and temporary process options/transients.', 'wpil'); ?></p>
+                                            <br>
+                                            <p><?php esc_html_e('It will not remove your other AI datasets, AI account/subscription data, or general site/report data.', 'wpil'); ?></p>
+                                        </div>
+                                    </div>
+                                    <br>
+                                </div>
+                                <div class="setting-control">
+                                    <input type="hidden" name="wpil_reset_ai_setting_cache" value="0" />
+                                    <input type='checkbox' name="wpil_reset_ai_setting_cache" value="1" />
+                                    <label><?php esc_html_e('Reset the stored AI Setting cache?', 'wpil'); ?></label>
+                                    <div class="wpil_help" style="float:right;">
+                                        <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
+                                        <div style="margin: -260px 0 0 30px;">
+                                            <p><?php esc_html_e('Resetting the AI Setting cache will clear the existing data and tell Link Whisper to do a fresh check of the AI Settings.', 'wpil'); ?></p>
+                                            <br>
+                                            <p><?php esc_html_e('This is useful for cases where changes have been made in the OpenAI account, and the settings haven\'t caught up yet.', 'wpil'); ?></p>
                                         </div>
                                     </div>
                                     <br>

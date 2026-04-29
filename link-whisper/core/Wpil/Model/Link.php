@@ -24,6 +24,9 @@ class Wpil_Model_Link
     public $target_id = null;
     public $target_type = null;
     public $anchor_word_count = 0;
+    public $url_slug_word_count = 0;
+    public $anchor_slug_positional_match = 0;
+    public $page_context = '';
 
     public function __construct($params = [])
     {
@@ -36,6 +39,18 @@ class Wpil_Model_Link
 
         if(empty($this->anchor_word_count) && !empty($this->anchor)){
             $this->anchor_word_count = Wpil_Word::getWordCount($this->anchor);
+        }
+
+        if(!empty($this->url) || !empty($this->anchor)){
+            $slug_match_data = Wpil_Report::get_url_slug_match_data($this->url, $this->anchor);
+
+            if(empty($this->url_slug_word_count)){
+                $this->url_slug_word_count = $slug_match_data['url_slug_word_count'];
+            }
+
+            if(empty($this->anchor_slug_positional_match)){
+                $this->anchor_slug_positional_match = $slug_match_data['anchor_slug_positional_match'];
+            }
         }
     }
 
@@ -52,12 +67,29 @@ class Wpil_Model_Link
     }
 
     function get_ai_relation_percent($return_number = false){
-        $percent = (!empty($this->ai_relation_score)) ? (round($this->ai_relation_score, 2) * 100): 0;
+        $score = $this->get_reporting_ai_relation_score();
+        $percent = (!empty($score)) ? (round($score, 2) * 100): 0;
 
         if($return_number){
             return $percent;
         }else{
             return (!empty($percent)) ? $percent . '%': 'Unknown';
         }
+    }
+
+    function get_reporting_ai_relation_score(){
+        $score = (isset($this->ai_relation_score) && is_numeric($this->ai_relation_score)) ? (float)$this->ai_relation_score : 0;
+
+        if(
+            !empty($this->internal) &&
+            $score > 0 &&
+            isset($this->anchor_slug_positional_match) &&
+            is_numeric($this->anchor_slug_positional_match) &&
+            (float)$this->anchor_slug_positional_match >= 80
+        ){
+            $score = min(1, ($score * 1.2));
+        }
+
+        return $score;
     }
 }

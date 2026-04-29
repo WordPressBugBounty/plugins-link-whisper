@@ -50,6 +50,444 @@ class Wpil_Export
         exit;
     }
 
+    function export_sitemap_support(){
+        // be sure to ignore any external object caches
+        Wpil_Base::ignore_external_object_cache();
+
+        // verify the nonce
+        Wpil_Base::verify_nonce('wpil_export_sitemap_for_support');
+
+        // exit if this isn't the admin
+        if(!is_admin()){
+            return;
+        }
+
+        $data = self::getSitemapSupportExportData();
+        $data = json_encode($data, JSON_PRETTY_PRINT);
+        $host = !empty($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : '';
+        $filename = 'sitemap-export' . '-' . $host . '-' . time() . '.json';
+
+        //download export file
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-type: application/json');
+        echo $data;
+        exit;
+    }
+
+    function export_ai_token_use_support(){
+        // be sure to ignore any external object caches
+        Wpil_Base::ignore_external_object_cache();
+
+        // verify the nonce
+        Wpil_Base::verify_nonce('wpil_export_ai_token_use_for_support');
+
+        // exit if this isn't the admin
+        if(!is_admin()){
+            return;
+        }
+
+        $filters = self::get_ai_credit_history_filters($_GET);
+        $from_ts = isset($filters['from_ts']) ? (int) $filters['from_ts'] : 0;
+        $to_ts = isset($filters['to_ts']) ? (int) $filters['to_ts'] : 0;
+        $events = isset($filters['events']) ? $filters['events'] : array();
+        $view = isset($filters['view']) ? (string) $filters['view'] : 'individual';
+
+        $format = isset($_GET['format']) ? sanitize_text_field(wp_unslash($_GET['format'])) : 'json';
+        $format = strtolower($format);
+
+        $payload = self::get_ai_token_use_export_data($from_ts, $to_ts, $events, $view);
+        $host = !empty($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : '';
+        $base_filename = 'ai-token-use-export' . '-' . $host . '-' . date('Ymd', $from_ts) . '-to-' . date('Ymd', $to_ts);
+
+        if('csv' === $format){
+            $filename = $base_filename . '.csv';
+            header('Content-Disposition: attachment; filename="' . $filename . '"');
+            header('Content-type: text/csv; charset=utf-8');
+            $out = fopen('php://output', 'w');
+            if(false !== $out){
+                self::stream_ai_token_use_csv($out, $payload);
+                fclose($out);
+            }
+            exit;
+        }
+
+        $filename = $base_filename . '.json';
+        $data = json_encode($payload, JSON_PRETTY_PRINT);
+
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-type: application/json');
+        echo $data;
+        exit;
+    }
+
+    private static function stream_ai_token_use_csv($stream, $payload = array()){
+        if(!is_resource($stream)){
+            return;
+        }
+
+        $rows = (isset($payload['rows']) && is_array($payload['rows'])) ? $payload['rows'] : array();
+        fputcsv($stream, array(
+            'token_index',
+            'process_time_utc',
+            'process_time',
+            'view_mode',
+            'transaction_type',
+            'transaction_ref',
+            'transaction_note',
+            'ai_event',
+            'task_name',
+            'process_key',
+            'process_id',
+            'credit_change',
+            'process_used',
+            'model_version',
+            'credits_used',
+            'credits_added',
+            'input_tokens',
+            'output_tokens',
+            'total_tokens',
+            'cached_prompt_tokens',
+            'reasoning_tokens',
+            'batch_processed',
+            'query_id'
+        ));
+
+        foreach($rows as $row){
+            $credit_change = self::format_ai_credit_history_change($row, false);
+            $task_name = '';
+            if(isset($payload['view']) && 'task' === $payload['view']){
+                $task_name = self::get_ai_credit_history_event_name($row, 'task');
+            }elseif(!empty($row['process_key']) && !empty($row['process_id'])){
+                $task_name = Wpil_AI::get_credit_tracking_task_pretty_name($row['process_key'], $row['process_id'], true);
+            }
+            fputcsv($stream, array(
+                isset($row['token_index']) ? $row['token_index'] : '',
+                isset($row['process_time_utc']) ? $row['process_time_utc'] : '',
+                isset($row['process_time']) ? $row['process_time'] : '',
+                isset($payload['view']) ? $payload['view'] : 'individual',
+                isset($row['transaction_type']) ? $row['transaction_type'] : '',
+                isset($row['transaction_ref']) ? $row['transaction_ref'] : '',
+                isset($row['transaction_note']) ? $row['transaction_note'] : '',
+                isset($row['process_name']) ? $row['process_name'] : '',
+                $task_name,
+                isset($row['process_key']) ? $row['process_key'] : '',
+                isset($row['process_id']) ? $row['process_id'] : '',
+                $credit_change,
+                isset($row['process_used']) ? $row['process_used'] : '',
+                isset($row['model_version']) ? $row['model_version'] : '',
+                isset($row['credits_used']) ? $row['credits_used'] : '',
+                isset($row['credits_added']) ? $row['credits_added'] : '',
+                isset($row['input_tokens']) ? $row['input_tokens'] : '',
+                isset($row['output_tokens']) ? $row['output_tokens'] : '',
+                isset($row['total_tokens']) ? $row['total_tokens'] : '',
+                isset($row['cached_prompt_tokens']) ? $row['cached_prompt_tokens'] : '',
+                isset($row['reasoning_tokens']) ? $row['reasoning_tokens'] : '',
+                isset($row['batch_processed']) ? $row['batch_processed'] : '',
+                isset($row['query_id']) ? $row['query_id'] : ''
+            ));
+        }
+    }
+
+    public static function get_ai_credit_history_filters($source = array(), $per_page = 10){
+        $source = is_array($source) ? $source : array();
+        $today = current_time('timestamp');
+        $default_to = wp_date('Y-m-d', $today);
+        $default_from = wp_date('Y-m-d', strtotime('-30 days', $today));
+
+        $from = isset($source['ai_usage_from']) ? sanitize_text_field(wp_unslash($source['ai_usage_from'])) : (isset($source['from']) ? sanitize_text_field(wp_unslash($source['from'])) : $default_from);
+        $to = isset($source['ai_usage_to']) ? sanitize_text_field(wp_unslash($source['ai_usage_to'])) : (isset($source['to']) ? sanitize_text_field(wp_unslash($source['to'])) : $default_to);
+        $events = isset($source['ai_usage_events']) ? $source['ai_usage_events'] : (isset($source['events']) ? $source['events'] : array());
+        $page = isset($source['ai_usage_page']) ? (int) $source['ai_usage_page'] : (isset($source['page']) ? (int) $source['page'] : 1);
+        $view = isset($source['ai_usage_view']) ? sanitize_key(wp_unslash($source['ai_usage_view'])) : (isset($source['view']) ? sanitize_key(wp_unslash($source['view'])) : 'task');
+        $view = ('task' === $view) ? 'task': 'individual';
+
+        if(!preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)){
+            $from = $default_from;
+        }
+
+        if(!preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)){
+            $to = $default_to;
+        }
+
+        $from_ts = self::parse_ai_credit_history_date_to_timestamp($from, false);
+        $to_ts = self::parse_ai_credit_history_date_to_timestamp($to, true);
+        if(empty($from_ts) || empty($to_ts)){
+            $from = $default_from;
+            $to = $default_to;
+            $from_ts = self::parse_ai_credit_history_date_to_timestamp($from, false);
+            $to_ts = self::parse_ai_credit_history_date_to_timestamp($to, true);
+        }
+
+        if($from_ts > $to_ts){
+            $swap_date = $from;
+            $from = $to;
+            $to = $swap_date;
+            $swap_ts = $from_ts;
+            $from_ts = $to_ts;
+            $to_ts = $swap_ts;
+        }
+
+        $event_options = self::get_ai_credit_history_event_options_by_time($from_ts, $to_ts, $view);
+        $events = self::sanitize_ai_credit_history_events($events, array_keys($event_options), $view);
+
+        return array(
+            'from' => $from,
+            'to' => $to,
+            'from_ts' => $from_ts,
+            'to_ts' => $to_ts,
+            'page' => max(1, $page),
+            'per_page' => max(1, (int) $per_page),
+            'view' => $view,
+            'events' => $events,
+            'event_options' => $event_options,
+            'from_label' => wp_date(get_option('date_format', 'F j, Y'), $from_ts),
+            'to_label' => wp_date(get_option('date_format', 'F j, Y'), $to_ts),
+        );
+    }
+
+    public static function get_ai_credit_history_event_options_by_time($from_ts = 0, $to_ts = 0, $view = 'individual'){
+        $rows = self::get_ai_token_use_raw_rows($from_ts, $to_ts);
+        if(empty($rows)){
+            return array();
+        }
+
+        if('task' === $view){
+            $options = array();
+            $has_credit_additions = false;
+            foreach($rows as $row){
+                $transaction_type = isset($row['transaction_type']) ? (string) $row['transaction_type'] : 'usage';
+                if('credit-deposit' === $transaction_type){
+                    $has_credit_additions = true;
+                    continue;
+                }
+
+                $task_key = isset($row['process_key']) ? sanitize_key((string) $row['process_key']) : '';
+                $process_id = isset($row['process_id']) ? (int) $row['process_id'] : 0;
+                if(empty($task_key) || $process_id < 1){
+                    $legacy_key = self::get_ai_credit_history_legacy_process_key(isset($row['process_used']) ? (int) $row['process_used'] : 0);
+                    if(empty($legacy_key)){
+                        continue;
+                    }
+
+                    $options[$legacy_key] = self::get_ai_credit_history_legacy_process_name(
+                        isset($row['process_used']) ? (int) $row['process_used'] : 0,
+                        isset($row['transaction_note']) ? (string) $row['transaction_note'] : ''
+                    );
+                    continue;
+                }
+
+                $options[$task_key] = Wpil_AI::get_credit_tracking_task_pretty_name($task_key);
+            }
+
+            asort($options);
+            if($has_credit_additions){
+                $options['credit-deposit'] = __('Credits Added', 'wpil');
+            }
+
+            return $options;
+        }
+
+        $options = array();
+        foreach($rows as $row){
+            $process_code = isset($row['process_used']) ? (int) $row['process_used'] : 0;
+            if($process_code < 1){
+                continue;
+            }
+
+            $options[$process_code] = Wpil_AI::get_process_pretty_name_from_code($process_code);
+        }
+
+        asort($options);
+        return $options;
+    }
+
+    public static function get_ai_credit_history_panel_data($source = array(), $per_page = 10){
+        $filters = self::get_ai_credit_history_filters($source, $per_page);
+        $history = self::get_ai_token_use_export_data_paginated($filters['from_ts'], $filters['to_ts'], $filters['page'], $filters['per_page'], $filters['events'], $filters['view']);
+
+        return array(
+            'filters' => $filters,
+            'rows' => !empty($history['rows']) && is_array($history['rows']) ? $history['rows'] : array(),
+            'total_count' => isset($history['total_count']) ? (int) $history['total_count'] : 0,
+            'total_pages' => isset($history['total_pages']) ? max(1, (int) $history['total_pages']) : 1,
+            'current_page' => isset($history['page']) ? max(1, (int) $history['page']) : 1,
+            'per_page' => isset($history['per_page']) ? (int) $history['per_page'] : $filters['per_page'],
+        );
+    }
+
+    public static function render_ai_credit_history_panel($source = array(), $per_page = 10){
+        $panel_data = self::get_ai_credit_history_panel_data($source, $per_page);
+        ob_start();
+        include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/dashboard_ai_credit_history.php';
+        return ob_get_clean();
+    }
+
+    public static function get_ai_credit_history_export_url($source = array()){
+        $filters = self::get_ai_credit_history_filters($source);
+        $query_args = array(
+            'area' => 'wpil_export_ai_token_use_support',
+            'nonce' => wp_create_nonce(get_current_user_id() . 'wpil_export_ai_token_use_for_support'),
+            'format' => 'csv',
+            'from' => $filters['from'],
+            'to' => $filters['to'],
+            'view' => $filters['view'],
+        );
+        if(!empty($filters['events'])){
+            $query_args['events'] = $filters['events'];
+        }
+
+        return add_query_arg($query_args, admin_url('post.php'));
+    }
+
+    public static function get_ai_credit_history_event_name($row = array(), $view = 'individual'){
+        if(!empty($row['process_name'])){
+            return (string) $row['process_name'];
+        }
+
+        $transaction_type = isset($row['transaction_type']) ? (string) $row['transaction_type'] : 'usage';
+        if('task' === $view){
+            if('credit-deposit' === $transaction_type){
+                return Wpil_AI::get_process_pretty_name_from_code(16, isset($row['transaction_note']) ? (string) $row['transaction_note'] : '');
+            }
+
+            $task_key = isset($row['process_key']) ? sanitize_key((string) $row['process_key']) : '';
+            $process_id = isset($row['process_id']) ? (int) $row['process_id'] : 0;
+            if(!empty($task_key) && !empty($process_id)){
+                return Wpil_AI::get_credit_tracking_task_pretty_name($task_key, $process_id, true);
+            }
+
+            return self::get_ai_credit_history_legacy_process_name(
+                isset($row['process_used']) ? (int) $row['process_used'] : 0,
+                isset($row['transaction_note']) ? (string) $row['transaction_note'] : ''
+            );
+        }
+
+        $process_code = isset($row['process_used']) ? (int) $row['process_used'] : 0;
+        $transaction_note = isset($row['transaction_note']) ? (string) $row['transaction_note'] : '';
+        return Wpil_AI::get_process_pretty_name_from_code($process_code, $transaction_note);
+    }
+
+    public static function format_ai_credit_history_date($timestamp = 0){
+        if(empty($timestamp)){
+            return '';
+        }
+
+        $date_format = trim(get_option('date_format', 'Y-m-d') . ' ' . get_option('time_format', 'H:i'));
+        return wp_date($date_format, (int) $timestamp);
+    }
+
+    public static function format_ai_credit_history_change($row = array(), $formatted = true){
+        $is_credit_deposit = !empty($row['transaction_type']) && 'credit-deposit' === $row['transaction_type'];
+        $credits_used = isset($row['credits_used']) ? (float) $row['credits_used'] : 0;
+        $credits_added = isset($row['credits_added']) ? (float) $row['credits_added'] : 0;
+        $credit_total = $is_credit_deposit ? $credits_added : $credits_used;
+        if($is_credit_deposit && empty($credit_total) && !empty($credits_used)){
+            $credit_total = $credits_used;
+        }
+
+        $decimals = ((float) floor($credit_total) === (float) $credit_total) ? 0 : 4;
+        if(!$formatted){
+            return $is_credit_deposit ? $credit_total : ($credit_total * -1);
+        }
+
+        $prefix = $is_credit_deposit ? '+' : '-';
+        return $prefix . number_format_i18n($credit_total, $decimals);
+    }
+
+    private static function get_ai_credit_history_legacy_process_key($process_used = 0){
+        $process_used = (int) $process_used;
+        if($process_used < 1){
+            return '';
+        }
+
+        return 'legacy-process-' . $process_used;
+    }
+
+    private static function get_ai_credit_history_legacy_process_day_key($process_used = 0, $timestamp = 0){
+        $process_key = self::get_ai_credit_history_legacy_process_key($process_used);
+        if(empty($process_key) || empty($timestamp)){
+            return '';
+        }
+
+        return $process_key . '-day-' . wp_date('Y-m-d', (int) $timestamp);
+    }
+
+    private static function get_ai_credit_history_legacy_process_name($process_used = 0, $transaction_note = ''){
+        $process_used = (int) $process_used;
+
+        $legacy_labels = array(
+            1 => __('Suggestion Scoring', 'wpil'),
+            2 => __('Post Summarizing', 'wpil'),
+            3 => __('Product Detection', 'wpil'),
+            4 => __('Calculating Relationship Scores', 'wpil'),
+            5 => __('Target Keyword Detection', 'wpil'),
+            6 => __('Summary + Product Search', 'wpil'),
+            7 => __('Summary + Keyword Search', 'wpil'),
+            8 => __('Product + Keyword Search', 'wpil'),
+            9 => __('Summary + Keyword + Product Search', 'wpil'),
+            10 => __('Create Post Sentence Embeddings', 'wpil'),
+            11 => __('Assess Sentence Anchors', 'wpil'),
+            12 => __('Outbound AI Links', 'wpil'),
+            13 => __('Inbound AI Links', 'wpil'),
+            14 => __('Broken Link Replacement', 'wpil'),
+            15 => __('Credit Balance Check', 'wpil'),
+            16 => __('Credits Added', 'wpil'),
+        );
+
+        if(isset($legacy_labels[$process_used])){
+            $label = $legacy_labels[$process_used];
+        }elseif($process_used > 0){
+            $label = Wpil_AI::get_process_pretty_name_from_code($process_used, $transaction_note);
+        }else{
+            $label = __('Unknown Legacy AI Process', 'wpil');
+        }
+
+        if(16 === $process_used && !empty($transaction_note)){
+            return Wpil_AI::get_process_pretty_name_from_code($process_used, $transaction_note);
+        }
+
+        return $label;
+    }
+
+    private static function parse_ai_credit_history_date_to_timestamp($date = '', $end_of_day = false){
+        if(empty($date) || !is_string($date) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)){
+            return 0;
+        }
+
+        $time = $end_of_day ? '23:59:59' : '00:00:00';
+        $datetime = date_create_immutable_from_format('Y-m-d H:i:s', $date . ' ' . $time, wp_timezone());
+        return !empty($datetime) ? $datetime->getTimestamp() : 0;
+    }
+
+    private static function sanitize_ai_credit_history_events($events = array(), $allowed = array(), $view = 'individual'){
+        if(!is_array($events)){
+            $events = explode(',', (string) $events);
+        }
+
+        $events = array_values(array_filter(array_map('trim', $events), 'strlen'));
+        if('task' === $view){
+            $events = array_map('sanitize_key', $events);
+            if(!empty($allowed)){
+                $events = array_values(array_unique(array_intersect($events, $allowed)));
+            }else{
+                $events = array_values(array_unique($events));
+            }
+            sort($events);
+            return $events;
+        }
+
+        if(empty($allowed)){
+            $allowed = array_keys(Wpil_AI::get_credit_history_filter_processes());
+        }
+
+        $allowed = array_map('intval', $allowed);
+        $events = array_map('intval', $events);
+        $events = array_values(array_unique(array_intersect($events, $allowed)));
+        sort($events);
+
+        return $events;
+    }
+
     /**
      * Get post data, links and settings for export
      *
@@ -104,7 +542,7 @@ class Wpil_Export
             'title' => $post->getTitle(),
             'content' => $post->getContent(false),
             'processed_content' => Wpil_Report::process_content($post->getContent(false), $post),
-            'shortcode_processed' => do_shortcode($post->getContent(false)),
+            'shortcode_processed' => Wpil_Report::run_shortcode_safely($post->getContent(false), $post),
             'clean_content' => $post->getCleanContent(),
             'thrive_content' => $thrive_content,
             'beaver_content' => $beaver_content,
@@ -165,6 +603,277 @@ class Wpil_Export
         $res['site_plugins'] = ($is_admin) ? get_plugins(): 'User not an admin';
 
         return $res;
+    }
+
+    /**
+     * Get post data, links and settings for export
+     *
+     * @param $post_id
+     * @return array
+     */
+    public static function getSitemapSupportExportData(){
+        // detach any hooks known to cause problems in the loading
+        Wpil_Base::remove_problem_hooks(true);
+
+        $data = array(
+            'sitemaps' => base64_encode(print_r(Wpil_Sitemap::get_data(), true)),
+            'sitemap_list' => Wpil_Sitemap::get_sitemap_list(),
+            'has_completed_post_embeddings' => (Wpil_AI::has_completed_post_embeddings()) ? true: false,
+            'ai_embedding_data' => (Wpil_AI::has_completed_post_embeddings()) ? array_slice(Wpil_AI::get_post_embedding_data(), 0, 100): 'has not completed post embeddings',
+            'posts_with_calculated_embeddings' => Wpil_AI::get_calculated_embedding_post_ids(),
+            'calculated_embedding_data' => array_slice(Wpil_AI::get_calculated_embedding_data(), 0, 50)
+        );
+
+        return $data;
+    }
+
+    public static function get_ai_token_use_export_data($from_ts = 0, $to_ts = 0, $events = array(), $view = 'individual'){
+        $normalized_rows = self::normalize_ai_token_rows(self::get_ai_token_use_raw_rows($from_ts, $to_ts), $events, $view);
+
+        return array(
+            'generated_at_utc' => gmdate('c'),
+            'site_url' => get_site_url(),
+            'range' => array(
+                'from_date' => gmdate('Y-m-d', (int) $from_ts),
+                'to_date' => gmdate('Y-m-d', (int) $to_ts),
+                'from_timestamp' => (int) $from_ts,
+                'to_timestamp' => (int) $to_ts
+            ),
+            'view' => $view,
+            'count' => count($normalized_rows),
+            'rows' => $normalized_rows
+        );
+    }
+
+    public static function get_ai_token_use_export_data_paginated($from_ts = 0, $to_ts = 0, $page = 1, $per_page = 25, $events = array(), $view = 'individual'){
+        $page = max(1, (int) $page);
+        $per_page = max(1, min(200, (int) $per_page));
+        $rows = self::normalize_ai_token_rows(self::get_ai_token_use_raw_rows($from_ts, $to_ts), $events, $view);
+        $total_count = count($rows);
+        $total_pages = max(1, (int) ceil($total_count / $per_page));
+        if($page > $total_pages){
+            $page = $total_pages;
+        }
+
+        if($total_count > 0){
+            $rows = array_slice($rows, max(0, ($page - 1) * $per_page), $per_page);
+        }
+
+        return array(
+            'generated_at_utc' => gmdate('c'),
+            'site_url' => get_site_url(),
+            'range' => array(
+                'from_date' => gmdate('Y-m-d', (int) $from_ts),
+                'to_date' => gmdate('Y-m-d', (int) $to_ts),
+                'from_timestamp' => (int) $from_ts,
+                'to_timestamp' => (int) $to_ts
+            ),
+            'view' => $view,
+            'count' => count($rows),
+            'total_count' => $total_count,
+            'page' => $page,
+            'per_page' => $per_page,
+            'total_pages' => $total_pages,
+            'rows' => $rows
+        );
+    }
+
+    private static function get_ai_token_use_raw_rows($from_ts = 0, $to_ts = 0){
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'wpil_ai_token_use_data';
+        $table_exists = $wpdb->query("SHOW TABLES LIKE '{$table}'");
+        if(empty($table_exists) || empty($from_ts) || empty($to_ts)){
+            return array();
+        }
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT *
+                FROM {$table}
+                WHERE `process_time` >= %d AND `process_time` <= %d
+                ORDER BY `process_time` DESC, `token_index` DESC",
+                (int) $from_ts,
+                (int) $to_ts
+            ),
+            ARRAY_A
+        );
+    }
+
+    private static function normalize_ai_token_rows($rows = array(), $events = array(), $view = 'individual'){
+        if(empty($rows) || !is_array($rows)){
+            return array();
+        }
+
+        $grouped_rows = ('task' === $view)
+            ? self::group_ai_token_rows_by_task($rows, $events)
+            : self::group_ai_token_rows_individual($rows, $events);
+
+        foreach($grouped_rows as $index => $row){
+            $process_time = isset($row['process_time']) ? (int) $row['process_time'] : 0;
+            if(isset($row['transaction_type']) && $row['transaction_type'] === 'credit-deposit' && empty($grouped_rows[$index]['credits_added']) && !empty($grouped_rows[$index]['credits_used'])){
+                $grouped_rows[$index]['credits_added'] = $grouped_rows[$index]['credits_used'];
+            }
+
+            $grouped_rows[$index]['process_name'] = self::get_ai_credit_history_event_name($grouped_rows[$index], $view);
+            $grouped_rows[$index]['process_time_utc'] = !empty($process_time) ? gmdate('c', $process_time) : '';
+            $grouped_rows[$index]['grouped_view'] = $view;
+        }
+
+        usort($grouped_rows, function($a, $b){
+            $time_a = isset($a['process_time']) ? (int) $a['process_time'] : 0;
+            $time_b = isset($b['process_time']) ? (int) $b['process_time'] : 0;
+            if($time_a === $time_b){
+                return ((int) ($b['token_index'] ?? 0)) <=> ((int) ($a['token_index'] ?? 0));
+            }
+
+            return $time_b <=> $time_a;
+        });
+
+        return array_values($grouped_rows);
+    }
+
+    private static function group_ai_token_rows_individual($rows = array(), $events = array()){
+        $events = self::sanitize_ai_credit_history_events($events, array(), 'individual');
+        $grouped_rows = array();
+
+        foreach($rows as $row){
+            $row = self::prepare_ai_token_row($row);
+            if(!empty($events) && !in_array((int) $row['process_used'], $events, true)){
+                continue;
+            }
+
+            $group_key = implode('|', array(
+                (int) $row['process_time'],
+                (int) $row['process_used'],
+                (string) $row['transaction_type'],
+                ('credit-deposit' === $row['transaction_type']) ? (string) $row['transaction_ref'] : '',
+            ));
+
+            if(!isset($grouped_rows[$group_key])){
+                $grouped_rows[$group_key] = $row;
+                continue;
+            }
+
+            $grouped_rows[$group_key] = self::merge_ai_token_group_rows($grouped_rows[$group_key], $row);
+        }
+
+        return array_values($grouped_rows);
+    }
+
+    private static function group_ai_token_rows_by_task($rows = array(), $events = array()){
+        $events = self::sanitize_ai_credit_history_events($events, array(), 'task');
+        $grouped_rows = array();
+
+        foreach($rows as $row){
+            $row = self::prepare_ai_token_row($row);
+            $transaction_type = (string) $row['transaction_type'];
+            $task_key = isset($row['process_key']) ? sanitize_key((string) $row['process_key']) : '';
+            $process_id = isset($row['process_id']) ? (int) $row['process_id'] : 0;
+
+            if('credit-deposit' === $transaction_type){
+                if(!empty($events) && !in_array('credit-deposit', $events, true)){
+                    continue;
+                }
+
+                $group_key = 'credit-deposit|' . (string) $row['transaction_ref'];
+            }elseif(!empty($task_key) && !empty($process_id)){
+                if(!empty($events) && !in_array($task_key, $events, true)){
+                    continue;
+                }
+
+                $group_key = 'task|' . $task_key . '|' . $process_id;
+            }else{
+                $legacy_filter_key = self::get_ai_credit_history_legacy_process_key((int) $row['process_used']);
+                $legacy_task_key = self::get_ai_credit_history_legacy_process_day_key((int) $row['process_used'], (int) $row['process_time']);
+                if(empty($legacy_filter_key) || empty($legacy_task_key)){
+                    continue;
+                }
+
+                if(!empty($events) && !in_array($legacy_filter_key, $events, true)){
+                    continue;
+                }
+
+                $row['legacy_usage'] = 1;
+                $row['legacy_task_key'] = $legacy_filter_key;
+                $group_key = implode('|', array(
+                    'legacy-process',
+                    $legacy_task_key,
+                ));
+            }
+
+            if(!isset($grouped_rows[$group_key])){
+                $grouped_rows[$group_key] = $row;
+                continue;
+            }
+
+            $grouped_rows[$group_key] = self::merge_ai_token_group_rows($grouped_rows[$group_key], $row, true);
+        }
+
+        return array_values($grouped_rows);
+    }
+
+    private static function prepare_ai_token_row($row = array()){
+        $row = (is_array($row)) ? $row: array();
+        $row['token_index'] = isset($row['token_index']) ? (int) $row['token_index'] : 0;
+        $row['process_time'] = isset($row['process_time']) ? (int) $row['process_time'] : 0;
+        $row['process_used'] = isset($row['process_used']) ? (int) $row['process_used'] : 0;
+        $row['process_id'] = isset($row['process_id']) ? (int) $row['process_id'] : 0;
+        $row['transaction_type'] = !empty($row['transaction_type']) ? (string) $row['transaction_type'] : 'usage';
+        $row['transaction_ref'] = isset($row['transaction_ref']) ? (string) $row['transaction_ref'] : '';
+        $row['transaction_note'] = isset($row['transaction_note']) ? (string) $row['transaction_note'] : '';
+        $row['model_version'] = isset($row['model_version']) ? (string) $row['model_version'] : '';
+        $row['query_id'] = isset($row['query_id']) ? (string) $row['query_id'] : '';
+        $row['process_key'] = isset($row['process_key']) ? sanitize_key((string) $row['process_key']) : '';
+        $row['input_tokens'] = isset($row['input_tokens']) ? (int) $row['input_tokens'] : 0;
+        $row['output_tokens'] = isset($row['output_tokens']) ? (int) $row['output_tokens'] : 0;
+        $row['total_tokens'] = isset($row['total_tokens']) ? (int) $row['total_tokens'] : 0;
+        $row['cached_prompt_tokens'] = isset($row['cached_prompt_tokens']) ? (int) $row['cached_prompt_tokens'] : 0;
+        $row['reasoning_tokens'] = isset($row['reasoning_tokens']) ? (int) $row['reasoning_tokens'] : 0;
+        $row['batch_processed'] = isset($row['batch_processed']) ? (int) $row['batch_processed'] : 0;
+        $row['credits_used'] = isset($row['credits_used']) ? (float) $row['credits_used'] : 0;
+        $row['credits_added'] = isset($row['credits_added']) ? (float) $row['credits_added'] : 0;
+
+        if('credit-deposit' === $row['transaction_type'] && empty($row['credits_added']) && !empty($row['credits_used'])){
+            $row['credits_added'] = $row['credits_used'];
+        }
+
+        return $row;
+    }
+
+    private static function merge_ai_token_group_rows($existing_row = array(), $row = array(), $task_mode = false){
+        $existing_row['token_index'] = max((int) $existing_row['token_index'], (int) $row['token_index']);
+        $existing_row['process_time'] = max((int) $existing_row['process_time'], (int) $row['process_time']);
+        $existing_row['input_tokens'] = ((int) $existing_row['input_tokens']) + ((int) $row['input_tokens']);
+        $existing_row['output_tokens'] = ((int) $existing_row['output_tokens']) + ((int) $row['output_tokens']);
+        $existing_row['total_tokens'] = ((int) $existing_row['total_tokens']) + ((int) $row['total_tokens']);
+        $existing_row['cached_prompt_tokens'] = ((int) $existing_row['cached_prompt_tokens']) + ((int) $row['cached_prompt_tokens']);
+        $existing_row['reasoning_tokens'] = ((int) $existing_row['reasoning_tokens']) + ((int) $row['reasoning_tokens']);
+        $existing_row['credits_used'] = ((float) $existing_row['credits_used']) + ((float) $row['credits_used']);
+        $existing_row['credits_added'] = ((float) $existing_row['credits_added']) + ((float) $row['credits_added']);
+        $existing_row['batch_processed'] = max((int) $existing_row['batch_processed'], (int) $row['batch_processed']);
+
+        if(empty($existing_row['transaction_ref']) && !empty($row['transaction_ref'])){
+            $existing_row['transaction_ref'] = $row['transaction_ref'];
+        }
+
+        if(empty($existing_row['transaction_note']) && !empty($row['transaction_note'])){
+            $existing_row['transaction_note'] = $row['transaction_note'];
+        }
+
+        if($task_mode && (int) $existing_row['process_used'] !== (int) $row['process_used']){
+            $existing_row['process_used'] = 0;
+        }
+
+        if($existing_row['model_version'] !== $row['model_version']){
+            $existing_row['model_version'] = '';
+        }
+
+        if($existing_row['query_id'] !== $row['query_id']){
+            $existing_row['query_id'] = '';
+        }
+
+        return $existing_row;
     }
 
     public static function get_table_data(){

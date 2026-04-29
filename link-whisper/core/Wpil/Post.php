@@ -52,14 +52,15 @@ class Wpil_Post
             $post = new Wpil_Model_Post((int)$bits[1], sanitize_text_field($bits[0]));
 
             $post_link = $post->getViewLink();
-            if(!empty(self::getPostByLink($post_link))){
+            $ignore_post = self::getPostByLink($post_link); // try getting the post to ensure that there's no issues getting the post from url
+            if(!empty($ignore_post) && $post->id === $ignore_post->id){
                 $ignored_posts .= "\n" . $post_link;
             }else{
                 $ignored_posts .= "\n" . $post->getViewLink(false, true); // if we can't turn the url into a viable post, go with the "Ugly" url instead.
             }
         }
 
-        update_option('wpil_ignore_orphaned_posts', $ignored_posts);
+        update_option('wpil_ignore_orphaned_posts', $ignored_posts, false);
 
         wp_send_json(array('success' => true));
     }
@@ -467,6 +468,12 @@ class Wpil_Post
             $fields = array_flip(array_flip($fields));
         }
 
+        // if for some reason we couldn't find any fields
+        if(empty($fields)){
+            // try pulling and formatting fields from ACF using its own functions to make the field names
+            $fields = self::flatten_get_fields_allowed_types($post_id);
+        }
+
         return $fields;
     }
 
@@ -500,6 +507,169 @@ class Wpil_Post
         return $found_fields;
     }
 
+    /**
+     * Flatten get_fields() and try to pull the fields we need!
+     */
+    public static function flatten_get_fields_allowed_types($post_id, $skip_empty = true){
+        if(!function_exists('get_fields') || !class_exists('ACF')){
+            return [];
+        }
+
+        $values = get_fields($post_id);
+        if(empty($values) || !is_array($values)){
+            return [];
+        }
+
+        // LW ignore rules
+        $ignored_exact = Wpil_Settings::getIgnoredACFFields();
+        $ignored_wildcards = [];
+        if(!empty($ignored_exact)){
+            foreach($ignored_exact as $i => $rule){
+                if(strpos($rule, '*') !== false){
+                    $ignored_wildcards[] = str_replace('*', '.*', $rule);
+                    unset($ignored_exact[$i]);
+                }
+            }
+        }
+        $ignored_regex = !empty($ignored_wildcards) ? '/' . implode('|', $ignored_wildcards) . '/' : '';
+
+        $schema = self::acf_get_allowed_schema_fields($post_id);
+        $allowed_leaf = $schema['allowed_leaf'];
+
+        $is_ignored = function($str) use ($ignored_exact, $ignored_regex){
+            if(in_array($str, $ignored_exact, true)){
+                return true;
+            }
+            if(!empty($ignored_regex) && preg_match($ignored_regex, $str)){
+                return true;
+            }
+            return false;
+        };
+
+        $out = [];
+
+        /**
+         * @param mixed       $value   Current value
+         * @param string      $prefix  Flattened LW-style key path
+         * @param string|null $leafKey The field key at this node
+         */
+        $walk = function($value, $prefix, $leafKey = null) use (&$walk, &$out, $allowed_leaf, $skip_empty, $is_ignored){
+            if($leafKey !== null){
+                if($is_ignored($leafKey)){
+                    return;
+                }
+            }
+
+            if(!is_array($value)){
+                if($leafKey === null || empty($allowed_leaf[$leafKey])){
+                    return;
+                }
+
+                if(!is_string($value)){
+                    return;
+                }
+
+                if($skip_empty && trim($value) === ''){
+                    return;
+                }
+
+                $out[] = $prefix;
+                return;
+            }
+
+            // Otherwise recurse through arrays (repeaters, flex, groups, etc.)
+            foreach($value as $k => $v){
+                $nextPrefix = ($prefix === '') ? (string)$k : ($prefix . '_' . $k);
+                $nextLeafKey = is_string($k) ? $k : null;
+                $walk($v, $nextPrefix, $nextLeafKey);
+            }
+        };
+
+        foreach($values as $top_key => $top_value){
+            if($is_ignored($top_key)){
+                continue;
+            }
+            $walk($top_value, (string)$top_key, (string)$top_key);
+        }
+
+        return array_values(array_unique($out));
+    }
+
+    /**
+     * Build a set of "allowed leaf field names" based on ACF schema:
+     * - textarea, wysiwyg, and (optionally) text
+     * - recursively through repeater/group/flexible_content/clone
+     *
+     * Returns: array{allowed_leaf: array<string,true>, allowed_roots: array<string,true>}
+     */
+    public static function acf_get_allowed_schema_fields($post_id){
+        $allowed_leaf = [];
+        $allowed_roots = [];
+
+        if(!function_exists('get_field_objects') || !class_exists('ACF')){
+            return ['allowed_leaf' => [], 'allowed_roots' => []];
+        }
+
+        $include_text = !Wpil_Settings::get_ignore_acf_text_fields();
+
+        $objs = get_field_objects($post_id);
+        if(empty($objs) || !is_array($objs)){
+            return ['allowed_leaf' => [], 'allowed_roots' => []];
+        }
+
+        $walk_field = function($field) use (&$walk_field, &$allowed_leaf, $include_text){
+            if(empty($field) || !is_array($field) || empty($field['name']) || empty($field['type'])){
+                return;
+            }
+
+            $type = $field['type'];
+            $name = $field['name'];
+
+            // leaf types we care about
+            if($type === 'textarea' || $type === 'wysiwyg' || ($include_text && $type === 'text')){
+                $allowed_leaf[$name] = true;
+                return;
+            }
+
+            // containers
+            if(($type === 'group' || $type === 'repeater') && !empty($field['sub_fields'])){
+                foreach($field['sub_fields'] as $sub){
+                    $walk_field($sub);
+                }
+                return;
+            }
+
+            if($type === 'flexible_content' && !empty($field['layouts'])){
+                foreach($field['layouts'] as $layout){
+                    if(!empty($layout['sub_fields'])){
+                        foreach($layout['sub_fields'] as $sub){
+                            $walk_field($sub);
+                        }
+                    }
+                }
+                return;
+            }
+
+            if($type === 'clone'){
+                // clone can inline sub_fields or reference "clone" keys depending on config
+                if(!empty($field['sub_fields'])){
+                    foreach($field['sub_fields'] as $sub){
+                        $walk_field($sub);
+                    }
+                    return;
+                }
+            }
+        };
+
+        foreach($objs as $root){
+            if(empty($root['name'])) continue;
+            $allowed_roots[$root['name']] = true;
+
+            $walk_field($root);
+        }
+
+        return ['allowed_leaf' => $allowed_leaf, 'allowed_roots' => $allowed_roots];
+    }
 
     /**
      * Gets an array of all custom fields on the site.
@@ -594,7 +764,7 @@ class Wpil_Post
                         foreach ($fields_query as $field) {
                             $name = trim($field->name);
                             if ($name) {
-                                $fields[] = $field->name;
+                                $fields[] = $name;
                             }
                         }
                     }
@@ -641,7 +811,7 @@ class Wpil_Post
                                 unset($fields[$ind]);
                             }
 
-                            if ( !empty($ignored_fields_wildcards) && preg_match('/' . $ignored_fields_wildcards . '/', $name) ) {
+                            if ( !empty($ignored_fields_wildcards) && preg_match('/' . $ignored_fields_wildcards . '/', $field) ) {
                                 unset($fields[$ind]);
                             }
                         }
@@ -1014,6 +1184,148 @@ class Wpil_Post
     }
 
     /**
+     * If quotes or apostrophes got shaved off before insert, try to borrow them back from the post content so we can actually insert the link.
+     *
+     * @param string $content
+     * @param string $sentence
+     * @param string $changed_sentence
+     * @return array
+     */
+    public static function repunctuate_sentence($content, $sentence, $changed_sentence){
+        $result = array(
+            'sentence' => $sentence,
+            'changed_sentence' => $changed_sentence,
+        );
+
+        if(empty($content) || empty($sentence) || empty($changed_sentence)){
+            return $result;
+        }
+
+        // if the sentence is already in the content, we're already where we need to be
+        if(
+            false !== Wpil_Word::mb_strpos($content, $sentence) ||
+            false !== Wpil_Word::mb_strpos(self::normalize_slashes($content), self::normalize_slashes($sentence))
+        ){
+            return $result;
+        }
+
+        $quote_chars = array("'", '"', '’', '‘', '“', '”');
+        $split_chars = function($text){
+            if($text === ''){
+                return array();
+            }
+
+            $chars = preg_split('//u', (string) $text, -1, PREG_SPLIT_NO_EMPTY);
+            return ($chars !== false) ? $chars : str_split((string) $text);
+        };
+
+        $is_quote = function($char) use ($quote_chars){
+            return in_array($char, $quote_chars, true);
+        };
+
+        $build_match_data = function($text) use ($split_chars, $is_quote){
+            $chars = $split_chars((string) $text);
+            $clean = '';
+            $map = array();
+
+            foreach($chars as $index => $char){
+                if($is_quote($char)){
+                    continue;
+                }
+
+                $clean .= $char;
+                $map[] = $index;
+            }
+
+            return array(
+                'chars' => $chars,
+                'clean' => $clean,
+                'map' => $map,
+            );
+        };
+
+        $content_data = $build_match_data($content);
+        $sentence_data = $build_match_data($sentence);
+        if(empty($content_data['clean']) || empty($sentence_data['clean'])){
+            return $result;
+        }
+
+        $match_position = Wpil_Word::mb_strpos($content_data['clean'], $sentence_data['clean']);
+        if(false === $match_position){
+            return $result;
+        }
+
+        $clean_length = count($sentence_data['map']);
+        if(
+            empty($clean_length) || 
+            !isset($content_data['map'][$match_position]) || 
+            !isset($content_data['map'][$match_position + $clean_length - 1])
+        ){
+            return $result;
+        }
+
+        $match_start = $content_data['map'][$match_position];
+        $match_end = $content_data['map'][$match_position + $clean_length - 1];
+        $matched_sentence = implode('', array_slice($content_data['chars'], $match_start, (($match_end - $match_start) + 1)));
+        if(empty($matched_sentence)){
+            return $result;
+        }
+
+        $matched_data = $build_match_data($matched_sentence);
+        if($matched_data['clean'] !== $sentence_data['clean']){
+            return $result;
+        }
+
+        $plain_changed_sentence = trim(strip_tags(html_entity_decode($changed_sentence, ENT_QUOTES, 'UTF-8')));
+        $changed_data = $build_match_data($plain_changed_sentence);
+        if(!empty($changed_data['clean']) && $changed_data['clean'] === $sentence_data['clean']){
+            $tokens = preg_split('/(<[^>]+>)/u', $changed_sentence, -1, PREG_SPLIT_DELIM_CAPTURE);
+
+            if($tokens !== false){
+                $rebuilt_changed_sentence = '';
+                $source_index = 0;
+
+                foreach($tokens as $token){
+                    if($token === ''){
+                        continue;
+                    }
+
+                    if(substr($token, 0, 1) === '<'){
+                        $rebuilt_changed_sentence .= $token;
+                        continue;
+                    }
+
+                    foreach($split_chars($token) as $char){
+                        while(isset($matched_data['chars'][$source_index]) && $is_quote($matched_data['chars'][$source_index]) && $matched_data['chars'][$source_index] !== $char){
+                            $rebuilt_changed_sentence .= $matched_data['chars'][$source_index];
+                            $source_index++;
+                        }
+
+                        $rebuilt_changed_sentence .= $char;
+
+                        if(isset($matched_data['chars'][$source_index]) && $matched_data['chars'][$source_index] === $char){
+                            $source_index++;
+                        }
+                    }
+
+                    while(isset($matched_data['chars'][$source_index]) && $is_quote($matched_data['chars'][$source_index])){
+                        $rebuilt_changed_sentence .= $matched_data['chars'][$source_index];
+                        $source_index++;
+                    }
+                }
+
+                if(!empty($rebuilt_changed_sentence)){
+                    $result['changed_sentence'] = $rebuilt_changed_sentence;
+                }
+            }
+        }
+
+        $result['sentence'] = $matched_sentence;
+
+        return $result;
+    }
+
+    /**
      * Get post ID from any URL
      *
      * @param string $url
@@ -1023,6 +1335,11 @@ class Wpil_Post
         $url = Wpil_Settings::makeLinkAbsolute($url);
 
         $url_parts = parse_url($url);
+
+        if(!isset($url_parts['path']) || empty($url_parts['path'])){
+            return false;
+        }
+
         $path = trim($url_parts['path'], '/');
         $path_parts = explode('/', $path);
         $slug = end($path_parts);
@@ -1114,6 +1431,16 @@ class Wpil_Post
                 // if it does exist, set the id. Else, set it to null
                 $post_id = (!empty($wp_post)) ? $wp_post->ID: null;
             }
+        }elseif(preg_match('#[?&](tag_ID)=(\d+)#', $link, $values)){ // if it looks to be a tag id
+            // if it's not, get the id
+            $id = absint($values[2]);
+            // if there is an id
+            if($id){
+                // get the term so we can make sure it exists
+                $wp_term = get_term($id);
+                // if it does exist, set the id. Else, set it to null
+                $term_id = (!empty($wp_term)) ? $wp_term->term_id: null;
+            }
         }else{
             // make sure the link isn't double slashed anywhere that it's not supposed to be
             if(!empty(preg_match('/(?<!http:|https:)\/\//', $link, $m)) || !empty($m)){
@@ -1126,11 +1453,17 @@ class Wpil_Post
 
             // clean up any translations if it's a relative link
             $link = Wpil_Link::clean_translated_relative_links($link);
-            $post_id = url_to_postid($link);
+
+            // if the user isn't using hard rewrite custom perma links
+            if(!defined('CUSTOM_PERMALINKS_FILE')){
+                $post_id = url_to_postid($link); // try using the default getter.
+            }
         }
 
         if (!empty($post_id)) {
             $post = new Wpil_Model_Post($post_id);
+        }elseif(!empty($term_id)){
+            $post = new Wpil_Model_Post($term_id, 'term');
         }
 
         // if we couldn't find the post and custom permalinks is active
@@ -1252,7 +1585,8 @@ class Wpil_Post
 
                         // if there isn't one, check across all the post types
                         if(empty($dat)){
-                            $dat = $wpdb->get_col($wpdb->prepare("SELECT `ID` FROM {$wpdb->posts} WHERE `post_name` = %s AND `post_type` != 'revision' LIMIT 1", $name));
+                            $all_post_types = Wpil_Query::postTypes('', true);
+                            $dat = $wpdb->get_col($wpdb->prepare("SELECT `ID` FROM {$wpdb->posts} WHERE `post_name` = %s {$all_post_types} LIMIT 1", $name));
                         }
 
                         // if that didn't work either, try looking for the title
@@ -1262,9 +1596,10 @@ class Wpil_Post
                             // and search through our post types
                             $dat = $wpdb->get_col($wpdb->prepare("SELECT `ID` FROM {$wpdb->posts} WHERE `post_title` = %s {$post_types} LIMIT 1", $name)); // for exceedingly long titles, I might consider re-adding the LIKE check. But we'll cross that bridge when we get there
 
-                            // if that still didn't work, check the title across all the post types
+                            // if that still didn't work, check the title across all the post types that we are reasonably sure are active
                             if(empty($dat)){
-                                $dat = $wpdb->get_col($wpdb->prepare("SELECT `ID` FROM {$wpdb->posts} WHERE `post_title` = %s AND `post_type` != 'revision' LIMIT 1", $name));
+                                $all_post_types = Wpil_Query::postTypes('', true);
+                                $dat = $wpdb->get_col($wpdb->prepare("SELECT `ID` FROM {$wpdb->posts} WHERE `post_title` = %s {$all_post_types} LIMIT 1", $name));
                             }
                         }
 
@@ -1562,4 +1897,730 @@ class Wpil_Post
         return 'category';
     }
 
+    /**
+     * Gets a detailed list of ids...
+     * Focussing on posts sincce 97% of people will be using those
+     **/
+    public static function get_money_pages(){
+        $list = array(); // yay! our list of page ids!
+
+        // first, go for the easy ones
+        // get the ones that the user has set!
+        $list = array_merge($list, get_option('wpil_pillar_content_post_ids', []));
+
+        // quit now if the user has defined money pages
+        if(!empty($list)){
+            return $list;
+        }
+
+        // pull cornerstone from Yoast if it's set
+        $list = array_merge($list, Wpil_Toolbox::get_cornerstone_ids());
+
+        // and pillar from Rank Math // because they're totally different!
+        $list = array_merge($list, Wpil_Toolbox::get_pillar_content_ids());
+
+        // todo: pull in other seo plugins
+
+        // next, pull what we can from the menus
+        $menu_links = self::get_nav_menu_items();
+
+        // if we've got something
+        if(!empty($menu_links)){
+            // add it to the list
+            foreach($menu_links as $link){
+                $list[] = $link['object_id'];
+            }
+        }
+        
+        // next, lets analyse linking trends to see if there are any posts that stand out...
+        $list = array_merge($list, Wpil_Report::get_link_targetted_pages());
+        // if there are, add them to the list
+
+        // next, check for forms... // later...
+        // add the non help forms to the list
+
+        // try pulling in any e-com pages // yeah, later too...
+
+        // sift out the garbage
+        $ignored = Wpil_Settings::get_completely_ignored_pages();
+        if(!empty($ignored)){
+            $ignore_posts = array();
+            foreach($ignored as $pid){
+                $bits = explode('_', $pid);
+                if(!empty($bits) && $bits[1] === 'post'){
+                    $ignore_posts[] = $bits[0];
+                }
+            }
+
+            if(!empty($ignore_posts)){
+                $list = array_diff($list, $ignore_posts); 
+            }
+        }
+
+        // if we've got posts
+        if(!empty($list)){
+            // filter to get the uniques
+            $list = array_keys(array_flip($list)); // and we're left with profit!
+        }
+
+        return $list; // profit!
+    }
+
+    /**
+     * Returns all nav menu items for the site.
+     * Makes sure to only give us post objects that can be traced.
+     *
+     * @return array
+     */
+    public static function get_nav_menu_items(){
+        $results = [];
+        $seen    = [];
+
+        // location => term_id
+        $locations = get_nav_menu_locations();
+        $location_by_term_id = [];
+        foreach ($locations as $loc => $term_id) {
+            $location_by_term_id[(int) $term_id] = (string) $loc;
+        }
+
+        // Pull menus that exist on the site.
+        $menus = wp_get_nav_menus(); // array of WP_Term objects
+
+        foreach ($menus as $menu_term) {
+            $menu_id   = (int) $menu_term->term_id;
+            $menu_name = (string) $menu_term->name;
+            $location  = isset($location_by_term_id[$menu_id]) ? $location_by_term_id[$menu_id]: null;
+
+            // Get items for this menu.
+            $items = wp_get_nav_menu_items($menu_id);
+            if (empty($items) || is_wp_error($items)) {
+                continue;
+            }
+
+            foreach ($items as $item) {
+                // $item is WP_Post with extra properties
+                $url = isset($item->url) ? trim((string) $item->url) : '';
+                if($url === '' || $url === '#' || !Wpil_Link::isInternal($url)){ 
+                    continue;
+                }
+
+                $key = strtolower($url);
+                if(isset($seen[$key])){
+                    continue;
+                }
+                $seen[$key] = true;
+
+                if($item->type === 'custom'){
+                    $post = self::getPostByLink($url);
+                    if(!empty($post) && $post->type === 'post'){
+                        $object_id = $post->id;
+                    }else{
+                        continue;
+                    }
+                }else{
+                    $object_id = $item->object_id;
+                }
+
+                $results[] = [
+                    'menu'      => $menu_name,
+                    'location'  => $location,               // null if not assigned to a theme location
+                    'item_id'   => (int) $item->ID,
+                    'title'     => (string) $item->title,
+                    'url'       => $url,                    // already the resolved URL WP outputs in menus
+                    'type'      => (string) $item->type,    // 'post_type', 'taxonomy', 'custom', etc.
+                    'object'    => (string) $item->object,  // 'page', 'category', etc.
+                    'object_id' => (int) $object_id,
+                ];
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Main entry. Returns best about page candidate or null.
+     *
+     * @return array|null { post_id, url, score, reasons }
+     */
+    public static function find_about_page(){
+        $candidates = self::find_about_page_candidates();
+        if(empty($candidates)){
+            return null;
+        }
+
+        $scored = [];
+        foreach($candidates as $candidate){
+            $scored[] = self::score_about_page_candidate($candidate);
+        }
+
+        usort($scored, function($a, $b){
+            $a_score = isset($a['score']) ? $a['score'] : 0;
+            $b_score = isset($b['score']) ? $b['score'] : 0;
+
+            if($a_score == $b_score){
+                return 0;
+            }
+
+            return ($a_score < $b_score) ? 1 : -1;
+        });
+
+        $best = (isset($scored[0]) && !empty($scored[0])) ? $scored[0]: null;
+
+        // Threshold to avoid returning nonsense.
+        if (!$best || !isset($best['score']) || $best['score'] < 8) {
+            return null;
+        }
+
+        return $best;
+    }
+
+    /**
+     * Collect candidates from menus, homepage header/footer scrape, and fallback published pages.
+     *
+     * @return array[] Each item: { url, anchor_text, source, post_id }
+     */
+    public static function find_about_page_candidates() {
+        $home_url = home_url('/');
+        $home_host = parse_url($home_url, PHP_URL_HOST);
+
+        $raw_candidates = [];
+
+        // 1) Menus
+        $raw_candidates = array_merge($raw_candidates, self::pull_nav_menu_links());
+
+        // 2) Homepage scrape for header and footer links
+        $raw_candidates = array_merge($raw_candidates, self::pull_links_from_homepage());
+
+        // 3) Fallback: pages list (helps if homepage is locked down or minimal)
+        $pages = get_posts([
+            'post_type' => 'page',
+            'post_status' => 'publish',
+            'posts_per_page' => 200,
+            'orderby' => 'menu_order',
+            'order' => 'ASC',
+            'fields' => 'ids',
+            'no_found_rows' => true,
+        ]);
+
+        if(!empty($pages)){
+            foreach ($pages as $page_id) {
+                $url = get_permalink($page_id);
+                if (!$url) {
+                    continue;
+                }
+                $raw_candidates[] = [
+                    'url' => $url,
+                    'anchor_text' => get_the_title($page_id),
+                    'source' => 'published_pages',
+                    'post_id' => (int) $page_id,
+                ];
+            }
+        }
+
+        // Normalize and dedupe
+        $dedup = [];
+        foreach ($raw_candidates as $cand) {
+            $url = isset($cand['url']) ? trim($cand['url']) : '';
+            if ($url === '') {
+                continue;
+            }
+
+            // Only internal links
+            $host = parse_url($url, PHP_URL_HOST);
+            if ($host && $home_host && strcasecmp($host, $home_host) !== 0) {
+                continue;
+            }
+
+            // Normalize to absolute
+            if (strpos($url, '//') === 0) {
+                $url = (is_ssl() ? 'https:' : 'http:') . $url;
+            } elseif (strpos($url, 'http') !== 0) {
+                $url = home_url($url);
+            }
+
+            // Remove fragments
+            $url = preg_replace('/#.*$/', '', $url);
+
+            // Skip empty or homepage
+            if ($url === $home_url) {
+                continue;
+            }
+
+            // Resolve to post id when possible
+            if(!isset($cand['post_id']) || empty($cand['post_id'])){
+                $cand['post_id'] = self::getPostByLink($url);
+            }
+
+            $cand['url'] = $url; // make sure the url is fully normalized
+
+            $key = strtolower($url);
+            if (!isset($dedup[$key])) {
+                $dedup[$key] = $cand;
+            } else {
+                // Prefer candidates that have anchor_text or better source
+                if (empty($dedup[$key]['anchor_text']) && !empty($cand['anchor_text'])) {
+                    $dedup[$key]['anchor_text'] = $cand['anchor_text'];
+                }
+                if (($dedup[$key]['source'] ?? '') !== 'homepage_header_footer' && ($cand['source'] ?? '') === 'homepage_header_footer') {
+                    $dedup[$key]['source'] = $cand['source'];
+                }
+            }
+        }
+
+        return array_values($dedup);
+    }
+
+    private static function pull_nav_menu_links() {
+        $out = [];
+
+        $pages = self::get_nav_menu_items();
+        if (!is_array($pages) || empty($pages)) {
+            return $out;
+        }
+
+        foreach($pages as $page){
+            $out[] = array_merge([
+                'anchor_text' => $page['title'],
+                'source' => 'menu_' . $page['location'],
+                'post_id' => $page['object_id']
+            ], $page);
+        }
+
+        return $out;
+    }
+
+    private static function pull_links_from_homepage() {
+        $out = [];
+
+        if(!class_exists('DOMDocument')){
+            return $out;
+        }
+
+        // grabe the homepage directly to ensure we get all the nav links
+        $response = wp_remote_get(home_url('/'), [
+            'timeout' => 10,
+            'redirection' => 5,
+            'user-agent' => WPIL_DATA_USER_AGENT,
+            'headers' => [
+                'Accept' => 'text/html,application/xhtml+xml',
+            ],
+        ]);
+
+        if(is_wp_error($response)){
+            return $out;
+        }
+
+        $html = (string) wp_remote_retrieve_body($response);
+        if($html === ''){
+            return $out;
+        }
+
+        // iuf our page is really long
+        if(strlen($html) > 1500000){
+            // trime it
+            $html = substr($html, 0, 1500000);
+        }
+
+        // since we're only checking one page, we'll cheat with domdoc
+        libxml_use_internal_errors(true);
+        $dom = new DOMDocument();
+        $dom->loadHTML($html);
+        libxml_clear_errors();
+
+        $xpath = new DOMXPath($dom);
+
+        // look for the normal nave areas as well as any page builder sections standing in for them
+        $contexts = [
+            '//header//a[@href]',
+            '//footer//a[@href]',
+            '//nav//a[@href]',
+            "//*[contains(translate(@id,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'header') or contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'header')]//a[@href]",
+            "//*[contains(translate(@id,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'footer') or contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'footer')]//a[@href]",
+            "//*[contains(translate(@id,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'menu') or contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'menu')]//a[@href]",
+        ];
+
+        $seen = [];
+        foreach($contexts as $query){
+            $nodes = $xpath->query($query);
+            if(!$nodes){
+                continue;
+            }
+            foreach($nodes as $a){
+                $href = $a->getAttribute('href');
+                if (!$href) {
+                    continue;
+                }
+                $text = trim($a->textContent ?? '');
+                $key = strtolower($href . '|' . $text);
+                if (isset($seen[$key])) {
+                    continue;
+                }
+                $seen[$key] = true;
+
+                $out[] = [
+                    'url' => $href,
+                    'anchor_text' => $text,
+                    'source' => 'homepage_header_footer',
+                ];
+            }
+        }
+
+        return $out;
+    }
+
+    function score_about_page_candidate(array $candidate) {
+        $url = (string) ($candidate['url'] ?? '');
+        $anchor_text = (string) ($candidate['anchor_text'] ?? '');
+        $source = (string) ($candidate['source'] ?? '');
+        $post_id = (int) ($candidate['post_id'] ?? 0);
+
+        $reasons = [];
+        $score = 0;
+
+        $about_keywords = self::get_standard_about_page_keywords();
+        $negative_keywords = self::get_standard_non_about_page_keywords();
+
+        $url_path = strtolower((string) parse_url($url, PHP_URL_PATH));
+        $url_host = strtolower((string) parse_url($url, PHP_URL_HOST));
+
+        // Skip obvious non content pages
+        foreach ($negative_keywords as $bad) {
+            if ($bad !== '' && (strpos($url_path, $bad) !== false || strpos(strtolower($anchor_text), $bad) !== false)) {
+                $score -= 20;
+                $reasons[] = 'negative_keyword:' . $bad;
+                break;
+            }
+        }
+
+        // Keyword match in URL path
+        foreach ($about_keywords as $kw) {
+            if ($kw !== '' && strpos($url_path, $kw) !== false) {
+                $score += 10;
+                $reasons[] = 'url_keyword:' . $kw;
+                break;
+            }
+        }
+
+        // Keyword match in anchor text
+        $normalized_anchor = self::about_page_normalize_text($anchor_text);
+        foreach ($about_keywords as $kw) {
+            if ($kw !== '' && strpos($normalized_anchor, $kw) !== false) {
+                $score += 8;
+                $reasons[] = 'anchor_keyword:' . $kw;
+                break;
+            }
+        }
+
+        // Source weighting
+        if (strpos($source, 'menu_') === 0) {
+            $score += 2;
+            $reasons[] = 'source:menu';
+        }
+        if ($source === 'homepage_header_footer') {
+            $score += 3;
+            $reasons[] = 'source:homepage_layout';
+        }
+
+        // If we can resolve to a page, use title and template signals
+        if ($post_id > 0) {
+            $post = get_post($post_id);
+            if ($post && $post->post_type === 'page' && $post->post_status === 'publish') {
+                $score += 2;
+                $reasons[] = 'is_page';
+
+                $title_norm = self::about_page_normalize_text(get_the_title($post_id));
+                foreach ($about_keywords as $kw) {
+                    if ($kw !== '' && strpos($title_norm, $kw) !== false) {
+                        $score += 8;
+                        $reasons[] = 'title_keyword:' . $kw;
+                        break;
+                    }
+                }
+
+                $template = (string) get_page_template_slug($post_id);
+                $template_norm = self::about_page_normalize_text($template);
+                if ($template_norm && strpos($template_norm, 'about') !== false) {
+                    $score += 6;
+                    $reasons[] = 'template_mentions_about';
+                }
+
+                // Many about pages are top level pages
+                if ((int) $post->post_parent === 0) {
+                    $score += 1;
+                    $reasons[] = 'top_level_page';
+                }
+            }
+        }
+
+        // Prefer shorter paths that look like a page slug
+        $segments = array_values(array_filter(explode('/', trim($url_path, '/'))));
+        if (count($segments) === 1) {
+            $score += 1;
+            $reasons[] = 'single_segment_path';
+        }
+
+        // Penalize media files and feeds
+        if (preg_match('/\.(jpg|jpeg|png|gif|webp|pdf|zip|xml)$/i', $url_path)) {
+            $score -= 15;
+            $reasons[] = 'file_like_url';
+        }
+        if (strpos($url_path, '/feed') !== false) {
+            $score -= 10;
+            $reasons[] = 'feed_url';
+        }
+
+        return [
+            'post_id' => $post_id,
+            'url' => $url,
+            'score' => $score,
+            'reasons' => $reasons,
+            'source' => $source,
+            'anchor_text' => $anchor_text,
+        ];
+    }
+
+    private static function about_page_normalize_text($text) {
+        $text = (string) $text;
+        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = strtolower($text);
+        $text = preg_replace('/\s+/', ' ', $text);
+        $text = trim($text);
+
+        // Remove punctuation but keep unicode letters and numbers
+        $text = preg_replace('/[^\p{L}\p{N}\s]+/u', ' ', $text);
+        $text = preg_replace('/\s+/', ' ', $text);
+        return trim($text);
+    }
+
+    private static function get_standard_about_page_keywords() {
+        return [
+            // English
+            'about', 'about-us', 'aboutus', 'about-me', 'aboutme',
+            'about-the-author', 'about-the-company', 'about-the-site',
+            'our-story', 'our team', 'our-team', 'meet-the-team', 'meet our team',
+            'who-we-are', 'who we are', 'who-i-am', 'who i am', 'mission',
+
+            // Spanish (Español)
+            'acerca', 'acerca-de', 'acerca de',
+            'acerca-de-nosotros', 'acerca de nosotros',
+            'acerca-de-mi', 'acerca de mi', 'acerca-de-mí', 'acerca de mí',
+            'sobre', 'sobre-mi', 'sobre mi', 'sobre-mí', 'sobre mí',
+            'sobre-nosotros', 'sobre nosotros', 'sobre-nosotras', 'sobre nosotras',
+            'quienes-somos', 'quienes somos',
+            'quiénes-somos', 'quiénes somos',
+            'nuestra-historia', 'nuestra historia',
+            'nuestro-equipo', 'nuestro equipo',
+            'conocenos', 'conócenos',
+
+            // French (Français)
+            'a-propos', 'a propos',
+            'a-propos-de-nous', 'a propos de nous',
+            'a-propos-de-moi', 'a propos de moi',
+            'apropos',
+            'qui-sommes-nous', 'qui sommes nous',
+            'notre-histoire', 'notre histoire',
+            'notre-equipe', 'notre équipe',
+            'l-equipe', 'l equipe',
+
+            // German (Deutsch)
+            'uber-uns', 'ueber-uns', 'über-uns',
+            'uber uns', 'ueber uns', 'über uns',
+            'uber-mich', 'ueber-mich', 'über-mich',
+            'uber mich', 'ueber mich', 'über mich',
+            'uber-das-unternehmen', 'ueber-das-unternehmen', 'über-das-unternehmen',
+            'unsere-geschichte', 'unsere geschichte',
+            'unser-team', 'unser team',
+
+            // Russian (Русский)
+            'о нас', 'обо мне', 'о компании', 'о проекте', 'о фирме', 'о магазине',
+            'o-nas', 'o nas',
+            'o-kompanii', 'o kompanii',
+            'o-proekte', 'o proekte',
+
+            // Portuguese (Português)
+            'sobre-nos', 'sobre nos', 'sobre-nós', 'sobre nós',
+            'sobre-mim', 'sobre mim',
+            'quem-somos', 'quem somos',
+            'nossa-historia', 'nossa história',
+            'nossa-equipe', 'nossa equipe',
+
+            // Dutch (Dutch)
+            'over-ons', 'over ons',
+            'over-mij', 'over mij',
+            'ons-verhaal', 'ons verhaal',
+            'ons-team', 'ons team',
+            'wie-zijn-wij', 'wie zijn wij',
+
+            // Danish / Norwegian / Swedish (Dansk / Norsk bokmål / Svenska)
+            'om-oss', 'om oss',
+            'om-os', 'om os',
+            'om-meg', 'om meg',
+            'om-mig', 'om mig',
+            'om-foretaget', 'om foretaget',
+            'om-foretag', 'om foretag',
+            'om-bedriften', 'om bedriften',
+            'om-selskapet', 'om selskapet',
+            'om-virksomheden', 'om virksomheden',
+            'om-virksomheten', 'om virksomheten',
+            'var-historia', 'vår-historie', 'vår historik', 'var historie',
+            'mot-teamet', 'möt teamet',
+            'møte-teamet', 'mote teamet',
+
+            // Italian (Italiano)
+            'chi-siamo', 'chi siamo',
+            'su-di-noi', 'su di noi',
+            'su-di-me', 'su di me',
+            'la-nostra-storia', 'la nostra storia',
+            'il-nostro-team', 'il nostro team',
+
+            // Polish (Polskie)
+            'o-nas', 'o nas',
+            'o-mnie', 'o mnie',
+            'o-firmie', 'o firmie',
+            'nasz-zespol', 'nasz zespol', 'nasz-zespół', 'nasz zespół',
+            'kim-jestesmy', 'kim jestesmy', 'kim jesteśmy',
+
+            // Slovak (Slovenčina)
+            'o-nas', 'o nás', 'o-nás',
+            'o-mne', 'o mne',
+            'o-firme', 'o firme',
+            'o-spolocnosti', 'o spoločnosti', 'o-spoločnosti',
+            'o-projekte', 'o projekte',
+
+            // Arabic (عربي)
+            'من نحن', 'عن الشركة', 'عن الموقع', 'نبذة عنا',
+            'من-نحن', 'عن-الشركة', 'عن-الموقع', 'نبذة-عنا',
+
+            // Serbian (Српски / srpski)
+            'о нама', 'о мени', 'о компанији', 'о фирми', 'о пројекту',
+            'o-nama', 'o nama',
+            'o-meni', 'o meni',
+            'o-kompaniji', 'o kompaniji',
+            'o-firmi', 'o firmi',
+            'o-projektu', 'o projektu',
+
+            // Finnish (Suomi)
+            'meista', 'meistä', 'meistämme',
+            'minusta',
+            'tietoa',
+            'tietoa-meista', 'tietoa meistä',
+            'yrityksesta', 'yrityksestä',
+            'tietoa-yrityksesta', 'tietoa yrityksestä',
+
+            // Hebrew (עִבְרִית)
+            'עלינו', 'על החברה', 'עליי', 'מי אנחנו',
+            'על-ינו', 'על-החברה', 'מי-אנחנו',
+
+            // Hindi (हिन्दी)
+            'हमारे बारे में', 'मेरे बारे में', 'कंपनी के बारे में',
+            'hamare-bare-mein', 'hamare bare mein',
+            'mere-bare-mein', 'mere bare mein',
+            'company-ke-bare-mein', 'company ke bare mein',
+
+            // Hungarian (Magyar)
+            'rólunk', 'rolunk',
+            'rólam', 'rolam',
+            'csapatunk',
+            'kuldetesunk', 'küldetésünk',
+            'cégünkről', 'cegunkrol',
+
+            // Romanian (Română)
+            'despre', 'despre-noi', 'despre noi',
+            'despre-mine', 'despre mine',
+            'cine-suntem', 'cine suntem',
+            'echipa-noastra', 'echipa noastră',
+            'povestea-noastra', 'povestea noastră',
+
+            // Ukrainian (Українська)
+            'про нас', 'про мене', 'про компанію', 'про проект', 'про проєкт', 'хто ми',
+            'pro-nas', 'pro nas',
+            'pro-mene', 'pro mene',
+            'pro-kompaniyu', 'pro kompaniyu',
+            'pro-kompaniia', 'pro kompaniia',
+            'khto-my', 'khto my',
+
+            // Indonesian (Bahasa Indonesia)
+            'tentang-kami', 'tentang kami',
+            'tentang-saya', 'tentang saya',
+            'tentang-perusahaan', 'tentang perusahaan',
+            'profil-perusahaan', 'profil perusahaan',
+            'kisah-kami', 'kisah kami',
+
+            // Czech (Čeština)
+            'o nás', 'o-nas', 'o nas',
+            'o mně', 'o-mne', 'o mne',
+            'o-spolecnosti', 'o společnosti', 'o spolecnosti',
+            'o-projektu', 'o projektu',
+
+            // Bulgarian (български)
+            'за нас', 'за мен', 'за компанията', 'за фирмата', 'за проекта',
+            'za-nas', 'za nas',
+            'za-men', 'za men',
+            'za-kompaniyata', 'za kompaniyata',
+            'za-firmata', 'za firmata',
+            'za-proekta', 'za proekta',
+
+            // Lithuanian (Lietuvių)
+            'apie-mus', 'apie mus',
+            'apie-mane', 'apie mane',
+            'apie-imone', 'apie įmonę', 'apie įmone',
+            'apie-projekta', 'apie projektą', 'apie projekta',
+            'kas-mes-esame', 'kas mes esame',
+            'musu-istorija', 'mūsų istorija', 'musu istorija',
+            'musu-komanda', 'mūsų komanda', 'musu komanda',
+
+            // Latvian (Latviešu)
+            'par-mums', 'par mums',
+            'par-mani', 'par mani',
+            'par-uznemumu', 'par uzņēmumu', 'par uznemumu',
+            'musu-komanda', 'mūsu komanda', 'musu komanda',
+            'musu-stasts', 'mūsu stāsts', 'musu stasts',
+            'kas-mes-esam', 'kas mēs esam', 'kas mes esam',
+
+            // Estonian (Eesti)
+            'meist',
+            'minust',
+            'ettevottest', 'ettevõttest', 'ettevoittest',
+            'meie-lugu', 'meie lugu',
+            'meie-meeskond', 'meie meeskond',
+            'kes-me-oleme', 'kes me oleme',
+            
+            // Greek (someday!)
+            'sxetika', 'σχετικα', 'σχετικά',
+
+            // Turkish
+            'hakkimizda', 'hakkımızda',
+
+            // Vietnamese (Tiếng Việt)
+            'gioi-thieu', 'giới thiệu', 'gioi thieu',
+            've-chung-toi', 'về chúng tôi', 've chung toi',
+            've-toi', 'về tôi', 've toi',
+            've-cong-ty', 'về công ty', 've cong ty',
+            'cau-chuyen-cua-chung-toi', 'câu chuyện của chúng tôi', 'cau chuyen cua chung toi',
+            'doi-ngu-cua-chung-toi', 'đội ngũ của chúng tôi', 'doi ngu cua chung toi',
+            'ai-chung-toi-la', 'ai chúng tôi là', 'ai chung toi la',
+
+            // Japanese (someday!)
+            'about', 'プロフィール', '私について', '運営者情報',
+
+            // Chinese (someday!)
+            '关于', '关于我们', '关于我',
+        ];
+    }
+
+    private static function get_standard_non_about_page_keywords() {
+        return [
+            'privacy', 'privacy policy', 'terms', 'terms of use', 'cookies', 'cookie policy',
+            'login', 'sign in', 'signup', 'register', 'account',
+            'cart', 'checkout', 'my account',
+            'contact', 'support', 'help',
+            'refund', 'returns', 'shipping',
+            'wp admin', 'wp-login',
+        ];
+    }
+
+
+
+
 }
+

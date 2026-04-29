@@ -33,6 +33,10 @@ class Wpil_AI
     public static $error_log = array();
     public static $current_error = false;
     public static $anchor_assessment_ids = array();
+    public static $active_linking_process_key = '';
+    public static $keyword_cannibalization_keywords = null;
+    public static $active_credit_tracking_context = array();
+    public static $request_credit_tracking_runs = array();
 
     function __construct()
     {
@@ -40,13 +44,17 @@ class Wpil_AI
         self::$batch_limit = 50000;
 
         self::$ai_service_connected = (Wpil_Settings::get_linkwhisper_ai_active() && Wpil_Settings::get_linkwhisper_ai_token());
-        self::$concurrency = 50;
+        self::$concurrency = 100;
     }
 
     public function register()
     {
         add_action('wp_ajax_wpil_live_download_ai_data', [__CLASS__, 'ajax_live_download_ai_data']);
+        add_action('wp_ajax_wpil_live_ai_linking', [__CLASS__, 'ajax_live_ai_linking']);
         add_action('wp_ajax_wpil_clear_ai_data', [__CLASS__, 'ajax_wpil_clear_ai_data']);
+        add_action('wp_ajax_wpil_clear_ai_relation_data', [__CLASS__, 'ajax_wpil_clear_ai_relation_data']);
+        add_action('wp_ajax_wpil_clear_ai_keyword_data', [__CLASS__, 'ajax_wpil_clear_ai_keyword_data']);
+        add_action('wp_ajax_wpil_clear_ai_linking_process_data', [__CLASS__, 'ajax_clear_ai_linking_process_data']);
         add_action('wp_ajax_wpil_ai_dismiss_credit_notice', [__CLASS__, 'ajax_wpil_dismiss_credit_notice']);
         add_action('wp_ajax_wpil_ai_dismiss_api_key_decoding_error', [__CLASS__, 'ajax_wpil_dismiss_api_key_decoding_error']);
         add_action('wp_ajax_wpil_estimate_site_processing_cost', [__CLASS__, 'ajax_estimate_site_processing_cost']);
@@ -56,12 +64,16 @@ class Wpil_AI
         add_action('admin_init', [__CLASS__, 'schedule_batch_process']);
         add_action('wpil_ai_batch_process_cron', [__CLASS__, 'perform_cron_batch_process']);
         add_filter('orhanerday_openai_stream_response_data', [__CLASS__, 'process_streamed_data'], 10, 3);
+        add_action('wp_ajax_wpil_get_review_links', array(__CLASS__, 'ajax_get_review_links'));
+        add_action('wp_ajax_wpil_get_review_link_count', array(__CLASS__, 'ajax_get_review_link_count'));
+        add_action('wp_ajax_wpil_set_review_link_decision', array(__CLASS__, 'ajax_set_review_link_decision'));
+        add_action('wp_ajax_wpil_get_wizard_credit_estimate', [__CLASS__, 'ajax_get_wizard_credit_estimate']);
     }
 
     /**
      * @return array
      **/
-    public static function call_linkwhisper_ai($content = '', $model = '', $action = ''){
+    public static function call_linkwhisper_ai($content = '', $model = '', $action = '', $params = []){
         if(is_array($content)){
             $args = array(
                 'user_id' => Wpil_Settings::get_linkwhisper_ai_user_id(),
@@ -81,6 +93,10 @@ class Wpil_AI
                 'access_token' => Wpil_Settings::get_linkwhisper_ai_token(),
                 'url' => site_url()
             );
+        }
+
+        if(!empty($params)){
+            $args['params'] = $params;
         }
 
         // exist if there are 
@@ -153,7 +169,7 @@ class Wpil_AI
                 break;
             }
 
-            $curl_opts = array_merge($opts, ['input' => $messages[$i]]); 
+            $curl_opts = array_merge($opts, ['input' => $messages[$i]]);
             $post_fields    = wp_json_encode($curl_opts);
             $headers = array("Content-Type: application/json");
 
@@ -173,7 +189,7 @@ class Wpil_AI
             if ($curl_opts == []) {
                 unset($curl_info[CURLOPT_POSTFIELDS]);
             }
-    
+
             $handles[$i] = curl_init();
             curl_setopt_array($handles[$i], $curl_info);
             curl_multi_add_handle($mh, $handles[$i]);
@@ -223,6 +239,88 @@ class Wpil_AI
     }
 
     /**
+     * Does stuff...
+     * Ok fine, it does live ai linking.
+     * For the One Click Setup
+     **/
+    public static function ajax_live_ai_linking(){
+        Wpil_Base::verify_nonce('wpil_download_ai_data');
+        // be sure to ignore any external object caches
+        Wpil_Base::ignore_external_object_cache();
+        // Remove any hooks that may interfere with AJAX requests
+        Wpil_Base::remove_problem_hooks();
+        wp_send_json(array('success' => array(
+            'progress' => 100,
+            'ai_credits' => self::get_available_ai_credits(),
+            'estimated_credit_cost' => self::estimate_site_processing_credit_cost('', false),
+            'review_ready_count' => 0,
+            'disabled' => true,
+        )));
+    }
+
+    private static function is_release_disabled_ai_linking_process($process_key = '', $fix_type = ''){
+        $process_key = is_string($process_key) ? sanitize_text_field($process_key) : '';
+        $fix_type = is_string($fix_type) ? sanitize_key($fix_type) : '';
+
+        if($process_key === md5('one-click-setup')){
+            return true;
+        }
+
+        if(!empty($process_key) && in_array($process_key, self::get_dashboard_fix_process_keys(), true)){
+            return true;
+        }
+
+        return in_array($fix_type, array('orphaned_posts', 'link_coverage', 'link_quality', 'broken_links', 'external_focus'), true);
+    }
+
+    private static function get_process_review_link_count($process_key = ''){
+        global $wpdb;
+
+        $process_key = is_string($process_key) ? sanitize_text_field($process_key) : '';
+        if(empty($process_key)){
+            return 0;
+        }
+
+        if(self::is_release_disabled_ai_linking_process($process_key)){
+            return 0;
+        }
+
+        $table = $wpdb->prefix . 'wpil_ai_linking';
+        $sql = $wpdb->prepare(
+            "SELECT COUNT(*)
+                FROM {$table}
+                WHERE inserted = 0
+                    AND ignored = 0
+                    AND process_key = %s",
+            $process_key
+        );
+
+        return (int) $wpdb->get_var($sql);
+    }
+
+    /**
+     * Gets the ids that have been processeed
+     **/
+    public static function get_linking_suggestion_processed_ids($process_key = '', $direction = 'outbound'){
+        global $wpdb;
+        $linking_table = $wpdb->prefix . 'wpil_ai_linking';
+
+        $search = "CONCAT(`post_type`, '_', `post_id`)";
+        if($direction === 'inbound'){
+            $search = "CONCAT(`target_type`, '_', `target_id`)";
+        }
+
+        $sql = "SELECT DISTINCT {$search} FROM {$linking_table} WHERE 1=1";
+        if(!empty($process_key)){
+            $sql .= $wpdb->prepare(" AND process_key = %s", $process_key);
+        }
+
+        $ids = $wpdb->get_col($sql);
+
+        return (!empty($ids)) ? $ids: [];
+    }
+
+    /**
      * 
      **/
     public static function ajax_live_download_ai_data(){
@@ -231,6 +329,7 @@ class Wpil_AI
         Wpil_Base::ignore_external_object_cache();
         // Remove any hooks that may interfere with AJAX requests
         Wpil_Base::remove_problem_hooks();
+        $ai_linking_enabled = self::is_ai_linking_enabled_request();
 
         $selected_processes = Wpil_Settings::get_selected_ai_batch_processes(true);
         $processed_embeddings = false;
@@ -392,6 +491,7 @@ class Wpil_AI
                     'current_process' => $current_process,
                     'start_time' => $start_time,
                     'completed' => $completed,
+                    'lock' => self::get_last_embedding_id_lock(),
                     'completion_messages' => array(
                         'info' => array(
                             'title' => __('Processing Halted', 'wpil'), 
@@ -399,7 +499,9 @@ class Wpil_AI
                         ),
                         'error' => (self::$ai_service_connected) ? self::get_linkwhisper_ai_error_message() : self::get_live_oai_error_message()
                         ),
-                    'is_rate_limited' => self::$rate_limited
+                    'is_rate_limited' => self::$rate_limited,
+                    'ai_credits' => self::get_available_ai_credits(),
+                    'estimated_credit_cost' => self::estimate_site_processing_credit_cost(get_option('wpil_ai_linking_process_key', null), $ai_linking_enabled)
                 )
             );
         }else{
@@ -408,6 +510,8 @@ class Wpil_AI
                     'title' => __('Processing Complete!', 'wpil'),
                     'text'  => __('All available site data has been processed!', 'wpil'),
                     'oai_completed' => $oai_completed,
+                    'ai_credits' => self::get_available_ai_credits(),
+                    'estimated_credit_cost' => self::estimate_site_processing_credit_cost(get_option('wpil_ai_linking_process_key', null), $ai_linking_enabled)
                 )
             );
         }
@@ -438,6 +542,185 @@ class Wpil_AI
         }
 
         wp_send_json($response);
+    }
+
+    public static function ajax_wpil_clear_ai_relation_data(){
+        Wpil_Base::verify_nonce('wpil_clear_ai_data');
+
+        $cleared =  self::clear_ai_data(['relation_analysis']);
+
+        $response = array();
+        if($cleared){
+            $response = array(
+                'success' => array(
+                    'title' => __('Data Cleared!', 'wpil'),
+                    'text'  => __('All AI Relation Analysis data has been deleted.', 'wpil'),
+                )
+            );
+        }else{
+            $response = array(
+                'error' => array(
+                    'title' => __('Unknown Error', 'wpil'),
+                    'text'  => __('Unfortunately, there was an error while trying to clear the AI Relation Analysis data, and there may still be some stored on the site.', 'wpil'),
+                )
+             );
+        }
+
+        wp_send_json($response);
+    }
+
+    public static function ajax_wpil_clear_ai_keyword_data(){
+        Wpil_Base::verify_nonce('wpil_clear_ai_data');
+
+        $cleared =  self::clear_ai_data(['keyword_analysis']);
+        // also remove any assigned ai generated target keywords from the target keyword report!
+        Wpil_TargetKeyword::delete_keyword_by_type('ai-generated-keyword');
+
+        $response = array();
+        if($cleared){
+            $response = array(
+                'success' => array(
+                    'title' => __('Data Cleared!', 'wpil'),
+                    'text'  => __('All AI Keywords have been deleted.', 'wpil'),
+                )
+            );
+        }else{
+            $response = array(
+                'error' => array(
+                    'title' => __('Unknown Error', 'wpil'),
+                    'text'  => __('Unfortunately, there was an error while trying to clear the AI Keywords, and there may still be some stored on the site.', 'wpil'),
+                )
+             );
+        }
+
+        wp_send_json($response);
+    }
+
+    public static function ajax_clear_ai_linking_process_data(){
+        Wpil_Base::verify_nonce('wpil_clear_ai_linking_process_data');
+
+        if(!current_user_can('manage_options')){
+            wp_send_json(array(
+                'error' => array(
+                    'title' => __('Permission Error', 'wpil'),
+                    'text'  => __('You do not have permission to perform this action.', 'wpil'),
+                )
+            ));
+        }
+
+        $cleared = self::clear_ai_linking_process_data();
+
+        if($cleared){
+            wp_send_json(array(
+                'success' => array(
+                    'title' => __('Data Cleared!', 'wpil'),
+                    'text'  => __('All AI Linking process data has been deleted.', 'wpil'),
+                )
+            ));
+        }
+
+        wp_send_json(array(
+            'error' => array(
+                'title' => __('Unknown Error', 'wpil'),
+                'text'  => __('Unfortunately, there was an error while trying to clear the AI Linking process data.', 'wpil'),
+            )
+        ));
+    }
+
+    /**
+     * Clears only AI linking process artifacts used by AI linking/fix runs.
+     * Does not clear broader AI datasets or unrelated site data.
+     **/
+    public static function clear_ai_linking_process_data(){
+        global $wpdb;
+
+        $all_ok = true;
+        $ai_linking_table = $wpdb->prefix . 'wpil_ai_linking';
+        $relation_map_table = $wpdb->prefix . 'wpil_relation_mapping';
+
+        $tables = array($ai_linking_table, $relation_map_table);
+        foreach($tables as $table){
+            $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
+            if($table_exists === $table){
+                $result = $wpdb->query("TRUNCATE TABLE {$table}");
+                if($result === false){
+                    $all_ok = false;
+                }
+            }
+        }
+
+        // Clear active fix tracker and registry for dashboard Fix with AI.
+        delete_option('wpil_ai_fix_registry');
+        delete_transient('wpil_doing_ai_fix_process');
+        $linking_process_keys = array(
+            md5('one-click-setup'),
+            md5('orphan-post-search'),
+            md5('link-coverage-search'),
+            md5('link-quality-search'),
+            md5('broken-link-search'),
+            md5('external-focus-search'),
+        );
+        foreach($linking_process_keys as $process_key){
+            self::clear_credit_tracking_task_run('linking:' . $process_key);
+        }
+
+        // Remove AI linking process options (process key + processed-id trackers).
+        $option_names = $wpdb->get_col(
+            "SELECT option_name
+                FROM {$wpdb->options}
+                WHERE option_name LIKE 'wpil_ai_linking_%'
+                    OR option_name LIKE 'wpil_link_map_snapshot_%'"
+        );
+        if(!empty($option_names)){
+            foreach($option_names as $option_name){
+                if(!is_string($option_name) || $option_name === ''){
+                    continue;
+                }
+                delete_option($option_name);
+            }
+        }
+
+        // Remove review/fix transient rows for all users/process keys.
+        $transient_cleanup = $wpdb->query(
+            "DELETE FROM {$wpdb->options}
+                WHERE option_name LIKE '_transient_wpil_review_served_%'
+                    OR option_name LIKE '_transient_timeout_wpil_review_served_%'
+                    OR option_name LIKE '_transient_wpil_map_replace_links_id_list_%'
+                    OR option_name LIKE '_transient_timeout_wpil_map_replace_links_id_list_%'"
+        );
+        if($transient_cleanup === false){
+            $all_ok = false;
+        }
+
+        // Clear current user's in-memory review list immediately as well.
+        delete_transient('wpil_review_served_' . get_current_user_id());
+
+        return $all_ok;
+    }
+
+    /**
+     * Clears the saved queue trail for a single AI linking run so the next pass starts fresh.
+     **/
+    private static function reset_ai_linking_process_runtime($process_key = '', $clear_process_key = true){
+        global $wpdb;
+
+        $process_key = is_string($process_key) ? sanitize_text_field($process_key) : '';
+        if(empty($process_key)){
+            return;
+        }
+
+        //$linking_table = $wpdb->prefix . 'wpil_ai_linking'; // TODO: Think about and possibly reenable later
+        //$wpdb->delete($linking_table, array('process_key' => $process_key), array('%s'));
+
+        if($clear_process_key && get_option('wpil_ai_linking_process_key', '') === $process_key){
+            delete_option('wpil_ai_linking_process_key');
+        }
+
+        delete_option('wpil_ai_linking_' . $process_key);
+        delete_transient('wpil_review_served_' . get_current_user_id());
+
+        Wpil_LinkMapping::delete_relation_map($process_key);
+        self::clear_credit_tracking_task_run('linking:' . $process_key);
     }
 
     public static function ajax_wpil_dismiss_credit_notice(){
@@ -527,6 +810,29 @@ class Wpil_AI
         wp_send_json($response);
     }
 
+    public static function ajax_get_wizard_credit_estimate(){
+        Wpil_Base::verify_nonce('wpil_download_ai_data');
+
+        $ai_linking_enabled = self::is_ai_linking_enabled_request();
+        $process_key = get_option('wpil_ai_linking_process_key', null);
+        $refresh_credits = isset($_POST['refresh_credits']) && !empty($_POST['refresh_credits']);
+
+        wp_send_json(array(
+            'success' => array(
+                'ai_credits' => self::get_available_ai_credits($refresh_credits),
+                'estimated_credit_cost' => self::estimate_site_processing_credit_cost($process_key, $ai_linking_enabled)
+            )
+        ));
+    }
+
+    private static function is_ai_linking_enabled_request(){
+        if(isset($_POST['ai_linking_enabled'])){
+            return !empty($_POST['ai_linking_enabled']);
+        }
+
+        return true;
+    }
+
     public static function add_batch_cron_interval($schedules){
         if(!isset($schedules['hourly'])){
             $schedules['hourly'] = array(
@@ -574,6 +880,11 @@ class Wpil_AI
         // if no batches are selected
         if(empty($selected_processes)){
             // exit
+            return;
+        }
+
+        // if we're running the AI service and there are no AI credits available
+        if(Wpil_Settings::get_linkwhisper_ai_active() && empty(self::get_available_ai_credits(true))){ // TODO: handle the edge case where a customer will be out of AI credits, but there is AI relation & keyword data taht we can process
             return;
         }
 
@@ -662,6 +973,7 @@ class Wpil_AI
         $error_log_table        = $wpdb->prefix . "wpil_ai_error_log";
         $system_error_log_table = $wpdb->prefix . "wpil_ai_system_error_log";
         $completed_log_table    = $wpdb->prefix . "wpil_ai_completed_batch_log";
+        $ai_linking_table       = $wpdb->prefix . "wpil_ai_linking";
 
         // if the AI post data table doesn't exist
         $ai_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_post_data}'");
@@ -761,6 +1073,10 @@ class Wpil_AI
         if(empty($ai_tkn_tbl_exists)){
             $ai_token_data_table_query = "CREATE TABLE IF NOT EXISTS {$ai_token_table} (
                                             token_index bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                                            query_id varchar(128) DEFAULT NULL,
+                                            transaction_type varchar(24) NOT NULL DEFAULT 'usage',
+                                            transaction_ref varchar(128) DEFAULT NULL,
+                                            transaction_note varchar(64) DEFAULT NULL,
                                             model_version varchar(168),
                                             batch_processed tinyint(1) DEFAULT 0,
                                             input_tokens int(10) unsigned NOT NULL DEFAULT 0,
@@ -769,9 +1085,17 @@ class Wpil_AI
                                             reasoning_tokens int(10) unsigned NOT NULL DEFAULT 0,
                                             total_tokens int(10) unsigned NOT NULL DEFAULT 0,
                                             credits_used decimal(10,4) unsigned NOT NULL DEFAULT 0.0000,
+                                            credits_added decimal(10,4) unsigned NOT NULL DEFAULT 0.0000,
                                             process_used int(10) unsigned NOT NULL DEFAULT 0,
+                                            process_key varchar(64) NOT NULL DEFAULT '',
+                                            process_id int(10) unsigned NOT NULL DEFAULT 0,
                                             process_time bigint(20),
-                                            PRIMARY KEY (token_index)
+                                            PRIMARY KEY (token_index),
+                                            INDEX (query_id),
+                                            INDEX (transaction_type),
+                                            INDEX (transaction_ref),
+                                            INDEX process_key_id_time (process_key, process_id, process_time),
+                                            UNIQUE KEY credit_transaction_ref (transaction_type, transaction_ref)
                                         )";
 
             // create DB table if it doesn't exist
@@ -1013,26 +1337,95 @@ class Wpil_AI
             require_once (ABSPATH . 'wp-admin/includes/upgrade.php');
             dbDelta($cmpltd_lg_tbl_query);
         }
+
+        // if the AI post data table doesn't exist
+        $ai_lnk_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_linking_table}'");
+        if(empty($ai_lnk_tbl_exists)){
+            $ai_linking_table_table_query = "CREATE TABLE IF NOT EXISTS {$ai_linking_table} (
+                                            ai_index bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                                            post_id bigint(20) unsigned NOT NULL,
+                                            post_type varchar(8),
+                                            data_type tinyint(1) DEFAULT 1,
+                                            target_id bigint(20) unsigned NOT NULL,
+                                            target_type varchar(8),
+                                            target_data_type tinyint(1) DEFAULT 1,
+                                            sentence_text text DEFAULT NULL,
+                                            sentence_id varchar(168) DEFAULT '',
+                                            sentence_with_anchor_text text DEFAULT NULL,
+                                            ai_relation_score double UNSIGNED NOT NULL DEFAULT 0,
+                                            ignored tinyint(1) DEFAULT 0,
+                                            inserted tinyint(1) DEFAULT 0,
+                                            process_key varchar(64) DEFAULT '',
+                                            process_time bigint(20),
+                                            model_version varchar(168),
+                                            PRIMARY KEY (ai_index),
+                                            INDEX (post_id),
+                                            INDEX (post_type),
+                                            INDEX (sentence_id),
+                                            INDEX (process_key)
+                                        )";
+                /**
+                 * id === table index
+                 * post_id === post|term id
+                 * post_type === data type, 'post'|'term'
+                 * data_type === boolint 'post' => 1|'term' => 0
+                 * summary === AI summary describing the post|term
+                 * process_time === timestamp of last process
+                 * model_version === the AI model used to process the data
+                 */
+
+            // create DB table if it doesn't exist
+            require_once (ABSPATH . 'wp-admin/includes/upgrade.php');
+            dbDelta($ai_linking_table_table_query);
+        }
     }
 
     /**
      * 
      **/
-    public static function clear_ai_data(){
+    public static function clear_ai_data($params = []){
         global $wpdb;
 
         // NOTE: some tables are intentionally not being cleared until we get past teh initial rollout... We might need things like log data
-        $tables = array(
-            $wpdb->prefix . "wpil_ai_post_data",
-            $wpdb->prefix . "wpil_ai_product_data",
-            $wpdb->prefix . "wpil_ai_keyword_data",
-//            $wpdb->prefix . "wpil_ai_token_use_data",
-            $wpdb->prefix . "wpil_ai_embedding_data",
-            $wpdb->prefix . "wpil_ai_embedding_calculation_data",
-            $wpdb->prefix . "wpil_ai_batch_log",
-//            $wpdb->prefix . "wpil_ai_error_log",
-//            $wpdb->prefix . "wpil_ai_system_error_log"
-        );
+        $tables = array();
+//      $wpdb->prefix . "wpil_ai_token_use_data",
+//      $wpdb->prefix . "wpil_ai_error_log",
+//      $wpdb->prefix . "wpil_ai_system_error_log"
+
+        if(empty($params)){
+            $tables = array_merge($tables, [
+                $wpdb->prefix . "wpil_ai_batch_log"
+            ]);
+        }
+
+        if(empty($params) || in_array('post_summary', $params)){
+            $tables = array_merge($tables, [
+                $wpdb->prefix . "wpil_ai_post_data"
+            ]);
+        }
+
+        if(empty($params) || in_array('product_analysis', $params)){
+            $tables = array_merge($tables, [
+                $wpdb->prefix . "wpil_ai_product_data"
+            ]);
+        }
+
+        if(empty($params) || in_array('keyword_analysis', $params)){
+            $tables = array_merge($tables, [
+                $wpdb->prefix . "wpil_ai_keyword_data"
+            ]);
+        }
+
+        if(empty($params) || in_array('relation_analysis', $params)){
+            $tables = array_merge($tables, [
+                $wpdb->prefix . "wpil_ai_embedding_data",
+                $wpdb->prefix . "wpil_ai_embedding_calculation_data",
+                $wpdb->prefix . "wpil_ai_embedding_phrase_data",
+                $wpdb->prefix . "wpil_ai_embedding_phrase_calculation_data",
+                $wpdb->prefix . "wpil_ai_suggested_anchors",
+                $wpdb->prefix . "wpil_ai_processed_sentences"
+            ]);
+        }
 
         foreach($tables as $table){
             $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$table}'");
@@ -1041,19 +1434,25 @@ class Wpil_AI
             }
         }
 
-        // clear any AI keywords
-        $target_keywords_table = $wpdb->prefix . "wpil_target_keyword_data";
-        $wpdb->delete($target_keywords_table, array('keyword_type' => 'ai-generated-keyword'));
-
-        // clear any AI created sitemaps
-        $ai_sitemap = Wpil_Sitemap::get_sitemap_list('ai_sitemap');
-        if(!empty($ai_sitemap) && isset($ai_sitemap[0], $ai_sitemap[0]->sitemap_id)){
-            Wpil_Sitemap::delete_sitemap($ai_sitemap[0]->sitemap_id, $ai_sitemap[0]->sitemap_type);
+        if(empty($params) || in_array('keyword_analysis', $params)){
+            // clear any AI keywords
+            $target_keywords_table = $wpdb->prefix . "wpil_target_keyword_data";
+            $wpdb->delete($target_keywords_table, array('keyword_type' => 'ai-generated-keyword'));
         }
 
-        $product_sitemap = Wpil_Sitemap::get_sitemap_list('ai_product_sitemap');
-        if(!empty($product_sitemap) && isset($product_sitemap[0], $product_sitemap[0]->sitemap_id)){
-            Wpil_Sitemap::delete_sitemap($product_sitemap[0]->sitemap_id, $product_sitemap[0]->sitemap_type);
+        if(empty($params) || in_array('product_analysis', $params)){
+            $product_sitemap = Wpil_Sitemap::get_sitemap_list('ai_product_sitemap');
+            if(!empty($product_sitemap) && isset($product_sitemap[0], $product_sitemap[0]->sitemap_id)){
+                Wpil_Sitemap::delete_sitemap($product_sitemap[0]->sitemap_id, $product_sitemap[0]->sitemap_type);
+            }
+        }
+
+        if(empty($params) || in_array('relation_analysis', $params)){
+            // clear any AI created sitemaps
+            $ai_sitemap = Wpil_Sitemap::get_sitemap_list('ai_sitemap');
+            if(!empty($ai_sitemap) && isset($ai_sitemap[0], $ai_sitemap[0]->sitemap_id)){
+                Wpil_Sitemap::delete_sitemap($ai_sitemap[0]->sitemap_id, $ai_sitemap[0]->sitemap_type);
+            }
         }
 
         // for the time being, we'll just assume that everything worked.
@@ -1320,11 +1719,25 @@ class Wpil_AI
                     $dat->response,
                     $dat->custom_id,
                     $dat->response->status_code,
-                    $dat->response->body,
-                    $dat->response->body->error,
-                    $dat->response->body->error->message) ||
-                    empty($dat->response->body->error->message)
+                    $dat->response->body)
             ){
+                continue;
+            }
+
+            $message = '';
+            if( isset($dat->response->body->error, $dat->response->body->error->message) && 
+                !empty($dat->response->body->error->message)
+            ){
+                $message = $dat->response->body->error->message;
+            }
+
+            if( isset($dat->response->body->body, $dat->response->body->body->error) && 
+                is_string($dat->response->body->body->error) && !empty($dat->response->body->body->error)
+            ){
+                $message = $dat->response->body->body->error;
+            }
+
+            if(empty($message)){
                 continue;
             }
 
@@ -1336,7 +1749,7 @@ class Wpil_AI
                 (($ids[0] === 'post') ? 1: 0),
                 $dat->id,
                 Wpil_Toolbox::json_compress($dat->response),
-                $dat->response->body->error->message,
+                $message,
                 time()
             );
             $place_holders[] = "('%d', '%s', '%d', '%s', '%s', '%s', '%d')";
@@ -1867,34 +2280,102 @@ class Wpil_AI
         return ($slashed) ? $recovered: $string;
     }
 
-    public static function save_response_tokens($response, $process_used = '', $is_batch = false){
+    public static function save_response_tokens($response, $process_used = '', $is_batch = false, $fallback_query_id = '', $process_key = '', $process_id = 0){
         $saved = false;
 
         if(empty($response)){
             return $saved;
         }
 
+        if(empty($process_used) && !empty(self::$purpose)){
+            $process_used = self::$purpose;
+        }
+
+        $process_code = self::get_process_code_from_name($process_used);
+
         if(!is_array($response)){
             $response = array($response);
         }
 
-        foreach($response as $dat){
+        foreach($response as $index => $dat){
+            $query_id = self::extract_query_id_from_response($dat);
             if(is_string($dat)){
                 $dat = self::decode($dat);
+                if(empty($query_id)){
+                    $query_id = self::extract_query_id_from_response($dat);
+                }
+            }
+            if(empty($query_id) && !empty($fallback_query_id)){
+                $query_id = (string) $fallback_query_id;
+            }
+            if(empty($query_id) && isset(self::$query_ids[$index]) && !empty(self::$query_ids[$index])){
+                $query_id = self::$query_ids[$index];
             }
 
             if(isset($dat->response) && !empty($dat->response)){
                 $dat = $dat->response;
             }
 
-            if(!empty($dat) && isset($dat->model) && !empty($dat->model) && isset($dat->usage)){
-                $input = isset($dat->usage->prompt_tokens) && !empty($dat->usage->prompt_tokens) ? $dat->usage->prompt_tokens: 0;
-                $output = isset($dat->usage->completion_tokens) && !empty($dat->usage->completion_tokens) ? $dat->usage->completion_tokens: 0;
-                $total =  isset($dat->usage->total_tokens) && !empty($dat->usage->total_tokens) ? $dat->usage->total_tokens: 0;
-                $cached_prompt = isset($dat->usage->prompt_tokens_details, $dat->usage->prompt_tokens_details->cached_tokens) && !empty($dat->usage->prompt_tokens_details->cached_tokens) ? $dat->usage->prompt_tokens_details->cached_tokens: 0;
-                $reasoning = isset($dat->usage->completion_tokens_details, $dat->usage->completion_tokens_details->reasoning_tokens) && !empty($dat->usage->completion_tokens_details->reasoning_tokens) ? $dat->usage->completion_tokens_details->reasoning_tokens: 0;
-                $credits_used = isset($dat->usage->credit_used) && !empty($dat->usage->credit_used) ? $dat->usage->credit_used: 0;
-                $status = self::save_token_reference($dat->model, $is_batch, self::get_process_code_from_name($process_used), $input, $output, $total, $cached_prompt, $reasoning, $credits_used);
+            if(isset($dat->body) && !empty($dat->body)){
+                $body = is_string($dat->body) ? self::decode($dat->body) : $dat->body;
+                if(is_object($body) && isset($body->usage)){
+                    $dat = $body;
+                }
+            }
+
+            if(!empty($dat) && isset($dat->model) && !empty($dat->model) && isset($dat->usage) && is_object($dat->usage)){
+                $usage = $dat->usage;
+
+                // Support both Chat Completions and Responses-style usage keys.
+                $input = 0;
+                if(isset($usage->prompt_tokens)){
+                    $input = (int) $usage->prompt_tokens;
+                }elseif(isset($usage->input_tokens)){
+                    $input = (int) $usage->input_tokens;
+                }
+
+                $output = 0;
+                if(isset($usage->completion_tokens)){
+                    $output = (int) $usage->completion_tokens;
+                }elseif(isset($usage->output_tokens)){
+                    $output = (int) $usage->output_tokens;
+                }
+
+                $total = isset($usage->total_tokens) ? (int) $usage->total_tokens : 0;
+
+                $cached_prompt = 0;
+                if(isset($usage->prompt_tokens_details, $usage->prompt_tokens_details->cached_tokens)){
+                    $cached_prompt = (int) $usage->prompt_tokens_details->cached_tokens;
+                }elseif(isset($usage->input_tokens_details, $usage->input_tokens_details->cached_tokens)){
+                    $cached_prompt = (int) $usage->input_tokens_details->cached_tokens;
+                }elseif(isset($usage->cached_tokens)){
+                    $cached_prompt = (int) $usage->cached_tokens;
+                }
+
+                $reasoning = 0;
+                if(isset($usage->completion_tokens_details, $usage->completion_tokens_details->reasoning_tokens)){
+                    $reasoning = (int) $usage->completion_tokens_details->reasoning_tokens;
+                }elseif(isset($usage->output_tokens_details, $usage->output_tokens_details->reasoning_tokens)){
+                    $reasoning = (int) $usage->output_tokens_details->reasoning_tokens;
+                }
+
+                $credits_used = 0;
+                if(isset($usage->credit_used)){
+                    $credits_used = (float) $usage->credit_used;
+                }elseif(isset($usage->credits_used)){
+                    $credits_used = (float) $usage->credits_used;
+                }
+
+                // Some provider responses only report cached token details.
+                if($input < 1 && $cached_prompt > 0){
+                    $input = $cached_prompt;
+                }
+
+                if($total < 1 && ($input > 0 || $output > 0)){
+                    $total = ($input + $output);
+                }
+
+                $status = self::save_token_reference($dat->model, $is_batch, $process_code, $input, $output, $total, $cached_prompt, $reasoning, $credits_used, $query_id, 'usage', '', '', 0, 0, $process_key, $process_id);
             
                 if(!$saved && $status){
                     $saved = true;
@@ -1909,7 +2390,7 @@ class Wpil_AI
         return $saved;
     }
 
-    public static function save_token_reference($model = '', $batch_process = false, $process_number = 0, $input_tokens = 0, $output_tokens = 0, $total_tokens = 0, $cached_prompt_tokens = 0, $reasoning_tokens = 0, $credits_used = 0){
+    public static function save_token_reference($model = '', $batch_process = false, $process_number = 0, $input_tokens = 0, $output_tokens = 0, $total_tokens = 0, $cached_prompt_tokens = 0, $reasoning_tokens = 0, $credits_used = 0, $query_id = '', $transaction_type = 'usage', $transaction_ref = '', $transaction_note = '', $process_time = 0, $credits_added = 0, $process_key = '', $process_id = 0){
         global $wpdb;
         $table = $wpdb->prefix . 'wpil_ai_token_use_data';
 
@@ -1921,7 +2402,16 @@ class Wpil_AI
             $total_tokens = ($input_tokens + $output_tokens);
         }
 
+        $context = array('task_key' => '', 'process_id' => 0);
+        if($transaction_type === 'usage'){
+            $context = self::get_current_credit_tracking_context($process_number, $batch_process, $process_key, $process_id);
+        }
+
         $saved = $wpdb->insert($table, [
+            'query_id' => !empty($query_id) ? substr(sanitize_text_field((string)$query_id), 0, 128) : null,
+            'transaction_type' => !empty($transaction_type) ? substr(sanitize_key((string) $transaction_type), 0, 24) : 'usage',
+            'transaction_ref' => !empty($transaction_ref) ? substr(sanitize_text_field((string) $transaction_ref), 0, 128) : null,
+            'transaction_note' => !empty($transaction_note) ? substr(sanitize_text_field((string) $transaction_note), 0, 64) : null,
             'model_version' => $model,
             'batch_processed' => (int) $batch_process,
             'input_tokens' => $input_tokens,
@@ -1930,11 +2420,86 @@ class Wpil_AI
             'reasoning_tokens' => $reasoning_tokens,
             'total_tokens' => $total_tokens,
             'credits_used' => $credits_used,
+            'credits_added' => round((float) $credits_added, 4),
             'process_used' => (int) $process_number,
-            'process_time' => time(),
+            'process_key' => !empty($context['task_key']) ? $context['task_key'] : '',
+            'process_id' => !empty($context['process_id']) ? (int) $context['process_id'] : 0,
+            'process_time' => !empty($process_time) ? (int) $process_time : time(),
         ]);
 
         return !empty($saved);
+    }
+
+    public static function save_credit_deposit_notice($purchase_id = '', $credits = 0, $purchase_type = '', $purchase_time = 0){
+        global $wpdb;
+        $table = $wpdb->prefix . 'wpil_ai_token_use_data';
+        $purchase_id = substr(sanitize_text_field((string) $purchase_id), 0, 128);
+        $credits = round((float) $credits, 4);
+        $purchase_time = !empty($purchase_time) ? (int) $purchase_time : time();
+
+        if(empty($purchase_id) || $credits <= 0){
+            return false;
+        }
+
+        // If this purchase is already in the ledger, we can skip it.
+        $existing = $wpdb->get_var($wpdb->prepare("SELECT token_index FROM {$table} WHERE `transaction_type` = %s AND `transaction_ref` = %s LIMIT 1", 'credit-deposit', $purchase_id));
+        if(!empty($existing)){
+            return true;
+        }
+
+        $saved = self::save_token_reference(
+            'credit-deposit', false, self::get_process_code_from_name('credit-deposit'), 0, 0, 0, 0, 0, 0, '', 'credit-deposit', $purchase_id, $purchase_type, $purchase_time, $credits
+        );
+
+        if(!$saved){
+            // If another request slipped the same purchase in first, count that as a win.
+            $existing = $wpdb->get_var($wpdb->prepare("SELECT token_index FROM {$table} WHERE `transaction_type` = %s AND `transaction_ref` = %s LIMIT 1", 'credit-deposit', $purchase_id));
+            return !empty($existing);
+        }
+
+        return true;
+    }
+
+    private static function extract_query_id_from_response($response = null){
+        if(empty($response)){
+            return '';
+        }
+
+        if(is_string($response)){
+            $decoded = self::decode($response);
+            if(!empty($decoded)){
+                $response = $decoded;
+            }else{
+                return '';
+            }
+        }
+
+        if(is_array($response)){
+            $response = (object) $response;
+        }
+
+        if(!is_object($response)){
+            return '';
+        }
+
+        if(isset($response->custom_id) && !empty($response->custom_id)){
+            return (string) $response->custom_id;
+        }
+
+        if(isset($response->query_id) && !empty($response->query_id)){
+            return (string) $response->query_id;
+        }
+
+        if(isset($response->metadata) && is_object($response->metadata)){
+            if(isset($response->metadata->custom_id) && !empty($response->metadata->custom_id)){
+                return (string) $response->metadata->custom_id;
+            }
+            if(isset($response->metadata->query_id) && !empty($response->metadata->query_id)){
+                return (string) $response->metadata->query_id;
+            }
+        }
+
+        return '';
     }
 
     /**
@@ -1964,8 +2529,8 @@ class Wpil_AI
         // if we're using our AI service
         if(self::$ai_service_connected){
             // just pull the credits and return them
-            $cost = $wpdb->get_var($wpdb->prepare("SELECT SUM(credits_used) FROM {$table} WHERE `process_time` >= %d AND `process_time` <= %d", $start_time, $end_time));
-            return intval($cost);
+            $cost = $wpdb->get_var($wpdb->prepare("SELECT SUM(credits_used) FROM {$table} WHERE `process_time` >= %d AND `process_time` <= %d AND `transaction_type` = %s", $start_time, $end_time, 'usage'));
+            return round((float) $cost, 4);
         }
 
         $tokens = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$table} WHERE `process_time` >= %d AND `process_time` <= %d", $start_time, $end_time));
@@ -1992,7 +2557,7 @@ class Wpil_AI
                             $price = (
                                 ($input * $unprefixed[$model]['input']) + 
                                 ($token->output_tokens * $unprefixed[$model]['output']) +
-                                ($token->output_tokens * ($unprefixed[$model]['input']/2))
+                                ($token->cached_prompt_tokens * ($unprefixed[$model]['input']/2))
                             );
                             $cost += ($token->batch_processed) ? ($price/2): $price;
                             break;
@@ -2039,6 +2604,259 @@ class Wpil_AI
         );
     }
 
+    private static function get_credit_tracking_process_counter_option_name(){
+        return 'wpil_ai_credit_process_counter';
+    }
+
+    private static function get_credit_tracking_process_run_option_name(){
+        return 'wpil_ai_credit_process_runs';
+    }
+
+    private static function get_next_credit_tracking_process_id(){
+        $option = self::get_credit_tracking_process_counter_option_name();
+        $process_id = ((int) get_option($option, 0)) + 1;
+        update_option($option, $process_id, false);
+
+        return $process_id;
+    }
+
+    private static function get_credit_tracking_process_runs(){
+        $runs = get_option(self::get_credit_tracking_process_run_option_name(), array());
+
+        return (is_array($runs)) ? $runs: array();
+    }
+
+    private static function update_credit_tracking_process_runs($runs = array()){
+        update_option(self::get_credit_tracking_process_run_option_name(), (is_array($runs)) ? $runs: array(), false);
+    }
+
+    private static function get_credit_tracking_context_cache_key($context_key = ''){
+        $context_key = trim((string) $context_key);
+
+        return (!empty($context_key)) ? md5('credit_task_run_' . $context_key): '';
+    }
+
+    private static function sanitize_credit_tracking_task_key($task_key = ''){
+        $task_key = substr(sanitize_key((string) $task_key), 0, 64);
+
+        return (!empty($task_key)) ? $task_key: '';
+    }
+
+    public static function begin_credit_tracking_task_run($task_key = '', $context_key = '', $persist = true){
+        $task_key = self::sanitize_credit_tracking_task_key($task_key);
+        if(empty($task_key)){
+            return array('task_key' => '', 'process_id' => 0, 'context_key' => '');
+        }
+
+        $cache_key = self::get_credit_tracking_context_cache_key(!empty($context_key) ? $context_key: $task_key);
+        $process_id = 0;
+
+        if($persist){
+            $runs = self::get_credit_tracking_process_runs();
+            if(isset($runs[$cache_key]['process_id'], $runs[$cache_key]['task_key']) &&
+                !empty($runs[$cache_key]['process_id']) &&
+                $runs[$cache_key]['task_key'] === $task_key)
+            {
+                $process_id = (int) $runs[$cache_key]['process_id'];
+            }else{
+                $process_id = self::get_next_credit_tracking_process_id();
+            }
+
+            $runs[$cache_key] = array(
+                'task_key' => $task_key,
+                'process_id' => $process_id,
+                'updated_at' => time(),
+            );
+            self::update_credit_tracking_process_runs($runs);
+        }else{
+            if(isset(self::$request_credit_tracking_runs[$cache_key]['process_id'], self::$request_credit_tracking_runs[$cache_key]['task_key']) &&
+                !empty(self::$request_credit_tracking_runs[$cache_key]['process_id']) &&
+                self::$request_credit_tracking_runs[$cache_key]['task_key'] === $task_key)
+            {
+                $process_id = (int) self::$request_credit_tracking_runs[$cache_key]['process_id'];
+            }else{
+                $process_id = self::get_next_credit_tracking_process_id();
+                self::$request_credit_tracking_runs[$cache_key] = array(
+                    'task_key' => $task_key,
+                    'process_id' => $process_id,
+                    'updated_at' => time(),
+                );
+            }
+        }
+
+        self::$active_credit_tracking_context = array(
+            'task_key' => $task_key,
+            'process_id' => $process_id,
+            'context_key' => $cache_key,
+            'persist' => !empty($persist),
+        );
+
+        return self::$active_credit_tracking_context;
+    }
+
+    public static function clear_credit_tracking_task_run($context_key = ''){
+        $cache_key = self::get_credit_tracking_context_cache_key($context_key);
+
+        if(!empty($cache_key)){
+            $runs = self::get_credit_tracking_process_runs();
+            if(isset($runs[$cache_key])){
+                unset($runs[$cache_key]);
+                self::update_credit_tracking_process_runs($runs);
+            }
+
+            if(isset(self::$request_credit_tracking_runs[$cache_key])){
+                unset(self::$request_credit_tracking_runs[$cache_key]);
+            }
+
+            if(isset(self::$active_credit_tracking_context['context_key']) && self::$active_credit_tracking_context['context_key'] === $cache_key){
+                self::$active_credit_tracking_context = array();
+            }
+
+            return;
+        }
+
+        self::$active_credit_tracking_context = array();
+    }
+
+    public static function clear_all_credit_tracking_task_runs(){
+        self::$active_credit_tracking_context = array();
+        self::$request_credit_tracking_runs = array();
+        delete_option(self::get_credit_tracking_process_run_option_name());
+    }
+
+    public static function get_credit_tracking_task_key_from_linking_process_key($process_key = ''){
+        $process_key = sanitize_text_field((string) $process_key);
+        if(empty($process_key)){
+            return '';
+        }
+
+        $task_map = array(
+            md5('one-click-setup') => 'one-click-ai-suggestions',
+            md5('orphan-post-search') => 'fix-orphaned-posts',
+            md5('link-coverage-search') => 'fix-link-coverage',
+            md5('link-quality-search') => 'fix-link-quality',
+            md5('broken-link-search') => 'fix-broken-links',
+            md5('external-focus-search') => 'fix-external-focus',
+        );
+
+        return isset($task_map[$process_key]) ? $task_map[$process_key]: 'ai-linking-task';
+    }
+
+    public static function get_credit_tracking_task_key_from_purpose($purpose = ''){
+        $purpose = sanitize_key((string) $purpose);
+        if(empty($purpose)){
+            return '';
+        }
+
+        $task_map = array(
+            'post-summarizing' => 'site-analysis-post-summarizing',
+            'product-detecting' => 'site-analysis-product-detection',
+            'create-post-embeddings' => 'site-analysis-relation-analysis',
+            'keyword-detecting' => 'site-analysis-keyword-analysis',
+            'summary-and-product-searching' => 'site-analysis-summary-product-search',
+            'summary-and-keyword-searching' => 'site-analysis-summary-keyword-search',
+            'product-and-keyword-searching' => 'site-analysis-product-keyword-search',
+            'summary-keyword-and-product-searching' => 'site-analysis-summary-keyword-product-search',
+            'create-post-sentence-embeddings' => 'create-post-sentence-embeddings',
+            'assess-sentence-anchors' => 'assess-sentence-anchors',
+            'assess-outbound-links' => 'assess-outbound-links',
+            'assess-inbound-links' => 'assess-inbound-links',
+            'broken-link-replacement' => 'broken-link-replacement',
+            'get-available-credits' => 'credit-balance-check',
+        );
+
+        return isset($task_map[$purpose]) ? $task_map[$purpose]: self::sanitize_credit_tracking_task_key($purpose);
+    }
+
+    public static function get_credit_tracking_task_key_from_process_code($process_code = 0){
+        return self::get_credit_tracking_task_key_from_purpose(self::get_process_name_from_code((int) $process_code));
+    }
+
+    public static function get_credit_tracking_task_pretty_name($task_key = '', $process_id = 0, $include_run = false){
+        $task_key = self::sanitize_credit_tracking_task_key($task_key);
+        $label_map = array(
+            'one-click-ai-suggestions' => 'One Click AI Suggestions',
+            'fix-orphaned-posts' => 'Fix Orphaned Posts',
+            'fix-link-coverage' => 'Fix Link Coverage',
+            'fix-link-quality' => 'Fix Link Quality',
+            'fix-broken-links' => 'Fix Broken Links',
+            'fix-external-focus' => 'Fix External Focus',
+            'ai-linking-task' => 'AI Linking Task',
+            'site-analysis-post-summarizing' => 'Site Analysis: Post Summarizing',
+            'site-analysis-product-detection' => 'Site Analysis: Product Detection',
+            'site-analysis-relation-analysis' => 'Site Analysis: Relation Analysis',
+            'site-analysis-keyword-analysis' => 'Site Analysis: Keyword Analysis',
+            'site-analysis-summary-product-search' => 'Site Analysis: Summary + Product Search',
+            'site-analysis-summary-keyword-search' => 'Site Analysis: Summary + Keyword Search',
+            'site-analysis-product-keyword-search' => 'Site Analysis: Product + Keyword Search',
+            'site-analysis-summary-keyword-product-search' => 'Site Analysis: Summary + Keyword + Product Search',
+            'create-post-sentence-embeddings' => 'Create Post Sentence Embeddings',
+            'assess-sentence-anchors' => 'Assess Sentence Anchors',
+            'assess-outbound-links' => 'Assess Outbound Links',
+            'assess-inbound-links' => 'Assess Inbound Links',
+            'broken-link-replacement' => 'Broken Link Replacement',
+            'credit-balance-check' => 'Credit Balance Check',
+        );
+
+        $label = isset($label_map[$task_key]) ? $label_map[$task_key] : ucwords(str_replace('-', ' ', $task_key));
+
+        if($include_run && !empty($process_id)){
+            $label .= ' (Run #' . (int) $process_id . ')';
+        }
+
+        return $label;
+    }
+
+    private static function get_current_credit_tracking_context($process_number = 0, $batch_process = false, $task_key = '', $process_id = 0){
+        $task_key = self::sanitize_credit_tracking_task_key($task_key);
+        $process_id = (int) $process_id;
+
+        if(!empty($task_key) && !empty($process_id)){
+            return array('task_key' => $task_key, 'process_id' => $process_id);
+        }
+
+        if(!empty($task_key) &&
+            !empty(self::$active_credit_tracking_context['task_key']) &&
+            !empty(self::$active_credit_tracking_context['process_id']) &&
+            self::$active_credit_tracking_context['task_key'] === $task_key)
+        {
+            return array(
+                'task_key' => self::$active_credit_tracking_context['task_key'],
+                'process_id' => (int) self::$active_credit_tracking_context['process_id'],
+            );
+        }
+
+        if(!empty(self::$active_linking_process_key)){
+            $task_key = self::get_credit_tracking_task_key_from_linking_process_key(self::$active_linking_process_key);
+            if(!empty($task_key)){
+                return self::begin_credit_tracking_task_run($task_key, 'linking:' . self::$active_linking_process_key, true);
+            }
+        }
+
+        if(!empty(self::$purpose)){
+            $task_key = self::get_credit_tracking_task_key_from_purpose(self::$purpose);
+            if(!empty($task_key)){
+                return self::begin_credit_tracking_task_run($task_key, 'purpose:' . self::$purpose, !empty($batch_process));
+            }
+        }
+
+        if(!empty($process_number)){
+            $task_key = self::get_credit_tracking_task_key_from_process_code($process_number);
+            if(!empty($task_key)){
+                return self::begin_credit_tracking_task_run($task_key, 'request:' . $task_key, false);
+            }
+        }
+
+        if(!empty(self::$active_credit_tracking_context['task_key']) && !empty(self::$active_credit_tracking_context['process_id'])){
+            return array(
+                'task_key' => self::$active_credit_tracking_context['task_key'],
+                'process_id' => (int) self::$active_credit_tracking_context['process_id'],
+            );
+        }
+
+        return array('task_key' => '', 'process_id' => 0);
+    }
+
     public static function get_process_code_from_name($name = ''){
         if(is_int($name)){
             return $name;
@@ -2079,6 +2897,21 @@ class Wpil_AI
             case 'assess-sentence-anchors':
                 $code = 11;
                 break;
+            case 'assess-outbound-links':
+                $code = 12;
+                break;
+            case 'assess-inbound-links':
+                $code = 13;
+                break;
+            case 'broken-link-replacement':
+                $code = 14;
+                break;
+            case 'get-available-credits':
+                $code = 15;
+                break;
+            case 'credit-deposit': // beseeching forgiveness of future selves is in order...
+                $code = 16;
+                break;
         }
 
         return $code;
@@ -2098,9 +2931,52 @@ class Wpil_AI
             9 => 'summary-keyword-and-product-searching',
             10 => 'create-post-sentence-embeddings',
             11 => 'assess-sentence-anchors',
+            12 => 'assess-outbound-links',
+            13 => 'assess-inbound-links',
+            14 => 'broken-link-replacement',
+            15 => 'get-available-credits',
+            16 => 'credit-deposit', // further beseeching forgiveness is in order...
         );
 
         return (isset($process_list[$code])) ? $process_list[$code]: 'unknown';
+    }
+
+    public static function get_process_pretty_name_from_code($code = 0, $transaction_note = ''){
+        $process_list = array(
+            0 => 'Unknown',
+            1 => 'Suggestion Scoring',
+            2 => 'Post Summarizing',
+            3 => 'Product Detection',
+            4 => 'Create Post Embeddings',
+            5 => 'Keyword Detection',
+            6 => 'Summary + Product Search',
+            7 => 'Summary + Keyword Search',
+            8 => 'Product + Keyword Search',
+            9 => 'Summary + Keyword + Product Search',
+            10 => 'Create Post Sentence Embeddings',
+            11 => 'Assess Sentence Anchors',
+            12 => 'Assess Outbound Links',
+            13 => 'Assess Inbound Links',
+            14 => 'Broken Link Replacement',
+            15 => 'Credit Balance Check',
+            16 => 'Credits Added',
+        );
+
+        $label = isset($process_list[$code]) ? $process_list[$code] : 'Unknown';
+        if(16 === (int) $code && !empty($transaction_note)){
+            $label .= ' (' . ucwords(str_replace(array('-', '_'), ' ', (string) $transaction_note)) . ')';
+        }
+
+        return $label;
+    }
+
+    public static function get_credit_history_filter_processes(){
+        $processes = array();
+        for($i = 1; $i <= 16; $i++){
+            $processes[$i] = self::get_process_pretty_name_from_code($i);
+        }
+
+        return $processes;
     }
 
     /**
@@ -2123,6 +2999,7 @@ class Wpil_AI
         $grouped = array();
         foreach($active_processes as $process){
             if(self::check_batch_status_completed($process)){
+                self::clear_credit_tracking_task_run('purpose:' . $process);
                 continue;
             }
 
@@ -3280,6 +4157,7 @@ class Wpil_AI
                     $pid = $res->meta_id;
                 }else{
                     // come up with a way of marking the post completed, because there's no way to tell if we're done or not...
+                    $sentence_post_id = null;
                 }
 
                 //$id = ($sentence . '|||' . $pid);
@@ -3324,7 +4202,7 @@ class Wpil_AI
                     self::$origin_post->id,
                     self::$origin_post->type,
                     ((self::$origin_post->type === 'post') ? 1: 0),
-                    $sentence_post_id,
+                    (!empty($sentence_post_id) ? $sentence_post_id: null),
                     $sentence_id,
                     Wpil_Toolbox::json_compress($res->words),
                     ($enable_notes) ? $res->free_form: '', //Wpil_Toolbox::json_compress($res->free_form): '',
@@ -3373,6 +4251,438 @@ class Wpil_AI
 
         // return the total number of phrases processed
         return $total_count;
+    }
+
+    /**
+     * Saves AI generated LINING suggestions to their own table.
+     * TOTALLY DIFFERENT FROM THE LAST IMPLEMENTATION!!!
+     * @return int Returns the total number of processed and inserted suggestions
+     **/
+    public static function save_ai_linking_suggestions($data = array(), $process_key = ''){
+        global $wpdb;
+        $linking_table = $wpdb->prefix . 'wpil_ai_linking';
+
+        if(empty($data)){
+            return 0;
+        }
+        
+        if(!is_array($data)){
+            $data = array($data);
+        }
+
+        if(empty($process_key)){
+            if(!empty(self::$active_linking_process_key)){
+                $process_key = self::$active_linking_process_key;
+            }else{
+                $process_key = get_option('wpil_ai_linking_process_key', '');
+            }
+        }
+        $process_key = is_string($process_key) ? sanitize_text_field($process_key) : '';
+        $orphan_only_targets = self::is_orphan_fix_process_key($process_key);
+
+        $total_count = 0;
+        $count = 0;
+        $cols = [   'post_id', // cause I'm sick of long strings!
+                    'post_type',
+                    'data_type',
+                    'target_id',
+                    'target_type',
+                    'target_data_type',
+                    'sentence_text',
+                    'sentence_id',
+                    'sentence_with_anchor_text',
+                    'ai_relation_score',
+                    'ignored',
+                    'process_key',
+                    'process_time',
+                    'model_version'
+                ];
+        $insert_query = "INSERT INTO {$linking_table} (" . implode(',', $cols) .") VALUES ";
+        $suggestion_data = array();
+        $place_holders = array();
+        $total = count($data);
+        $limit = 1000;
+        $ai_relation_data_cache = array();
+        foreach($data as $key => $dat){
+            $total_count++;
+
+            $unwrapped = self::unwrap_linking_batch_item($dat);
+            if(!$unwrapped['ok'] || empty($unwrapped['custom_id'])){
+                continue;
+            }
+
+            $results = $unwrapped['results'];
+            $model   = $unwrapped['model'];
+
+            if(!empty($results) && isset($results->results) && !empty($results->results)){
+                $results = $results->results;
+            }elseif(!empty($results) && isset($results[0]) && !empty($results[0])){
+                $results = $results[0];
+            }
+
+            if(empty($results)){
+                continue;
+            }
+
+            $source_post_bits = explode('_', $unwrapped['custom_id']);
+            if(!isset($source_post_bits[0], $source_post_bits[1])){
+                continue;
+            }
+
+            $source_post_type = sanitize_text_field($source_post_bits[0]);
+            $source_post_id = (int)$source_post_bits[1];
+            $source_data_type = (($source_post_type === 'post') ? 1: 0);
+            $source_pid = $source_post_type . '_' . $source_post_id;
+            if(!isset($ai_relation_data_cache[$source_pid])){
+                $ai_relation_data_cache[$source_pid] = self::get_embedding_relatedness_data($source_post_id, $source_post_type);
+            }
+
+            $target_data = self::parse_linking_target($results);
+            if($orphan_only_targets && !self::is_orphaned_target_for_ai_suggestion((int)$target_data['id'], (string)$target_data['type'])){
+                continue;
+            }
+
+            $target_post = new Wpil_Model_Post((int)$target_data['id'], $target_data['type']);
+            $target_pid = $target_post->get_pid();
+
+            $ai_relation_score = 0;
+            if(!empty($ai_relation_data_cache[$source_pid]) && !empty($target_pid) && isset($ai_relation_data_cache[$source_pid]->$target_pid) && !empty($ai_relation_data_cache[$source_pid]->$target_pid)){
+                $ai_relation_score = (float)$ai_relation_data_cache[$source_pid]->$target_pid;
+            }
+
+            $sentence_text = wp_kses($results->sentence_text, 'post');
+            $sentence_with_anchor_text = wp_kses($results->sentence_with_anchor_text, 'post');
+            $sentence_id = (!empty($sentence_text)) ? md5($sentence_text) : '';
+
+            array_push(
+                $suggestion_data, 
+                $source_post_id,
+                $source_post_type,
+                $source_data_type,
+                $target_data['id'],
+                $target_data['type'],
+                $target_data['data_type'],
+                $sentence_text,
+                $sentence_id,
+                $sentence_with_anchor_text,
+                $ai_relation_score,
+                (!empty($sentence_text) && !empty($sentence_with_anchor_text)) ? 0: 1,
+                $process_key,
+                time(),
+                $model
+            );
+
+            $place_holders[] = "('%d', '%s', '%d', '%d', '%s', '%d', '%s', '%s', '%s', '%f', '%d', '%s', '%d', '%s')";
+
+            // if we've hit the limit
+            if($count > $limit || ($key + 1) >= $total){
+                // assemble the insert
+                $insert = ($insert_query . implode(', ', $place_holders));
+                $insert = $wpdb->prepare($insert, $suggestion_data);
+                // insert the data
+                $wpdb->query($insert);
+                // reset the data variables
+                $suggestion_data = [];
+                $place_holders = [];
+                $count = 0;
+            }
+
+            $count++;
+        }
+
+        // if we still have data that hasn't been inserted
+        if(!empty($suggestion_data) && !empty($place_holders)){
+            // assemble the insert
+            $insert = ($insert_query . implode(', ', $place_holders));
+            $insert = $wpdb->prepare($insert, $suggestion_data);
+            // and insert the data
+            $wpdb->query($insert);
+        }
+
+        // return the total number of suggestions processed
+        return $total_count;
+    }
+
+    public static function unwrap_linking_batch_item($item){
+        $out = array(
+            'ok'        => false,
+            'model'     => '',
+            'custom_id' => '',
+            'results'   => array(),
+        );
+
+        if(empty($item)){
+            return $out;
+        }
+
+        // Decode if it's a JSON string
+        if(!is_object($item)){
+            $item = self::decode($item);
+        }
+
+        if(empty($item) || !is_object($item)){
+            return $out;
+        }
+
+        // Basic required wrapper fields
+        if(
+            !isset($item->response) ||
+            !isset($item->response->status_code) ||
+            (int)$item->response->status_code !== 200 ||
+            !isset($item->response->body) ||
+            !isset($item->response->body->choices) ||
+            empty($item->response->body->choices) ||
+            !isset($item->response->body->choices[0]) ||
+            !isset($item->response->body->choices[0]->message) ||
+            !isset($item->response->body->choices[0]->message->content)
+        ){
+            return $out;
+        }
+
+        $out['custom_id'] = isset($item->custom_id) ? (string)$item->custom_id : '';
+        $out['model']     = isset($item->response->body->model) ? (string)$item->response->body->model : '';
+
+        $content = $item->response->body->choices[0]->message->content;
+        if(empty($content)){
+            return $out;
+        }
+
+        // Content is JSON-as-string
+        $decoded = self::decode($content);
+        if(empty($decoded)){
+            return $out;
+        }
+
+        // Normalize "results"
+        $results = null;
+
+        if(is_object($decoded) && isset($decoded->results)){
+            $results = $decoded->results;
+        } else {
+            // allow raw array/object without results key
+            $results = $decoded;
+        }
+
+        // If single object, wrap into array
+        if(is_object($results)){
+            $results = array($results);
+        }
+
+        if(!is_array($results) || empty($results)){
+            return $out;
+        }
+
+        $out['ok'] = true;
+        $out['results'] = $results;
+
+        return $out;
+    }
+
+    public static function save_ai_outbound_linking_suggestions($live_response, $source_post = null, $process_key = ''){
+        global $wpdb;
+        $linking_table = $wpdb->prefix . 'wpil_ai_linking';
+
+        // Source post fallback to the static origin post if it's set
+        if(empty($source_post) && !empty(self::$origin_post)){
+            $source_post = self::$origin_post;
+        }
+
+        if(empty($source_post) || !is_object($source_post) || empty($source_post->id)){
+            return 0;
+        }
+
+        if(empty($live_response)){
+            return 0;
+        }
+
+        $unwrapped = self::unwrap_linking_live_completion($live_response);
+        if(!$unwrapped['ok']){
+            return 0;
+        }
+
+        $results = $unwrapped['results'];
+        $model   = $unwrapped['model'];
+
+        $cols = array(
+            'post_id',
+            'post_type',
+            'data_type',
+            'target_id',
+            'target_type',
+            'target_data_type',
+            'sentence_text',
+            'sentence_id',
+            'sentence_with_anchor_text',
+            'ai_relation_score',
+            'ignored',
+            'process_time',
+            'model_version',
+            'process_key'
+        );
+
+        $insert_query = "INSERT INTO {$linking_table} (" . implode(',', $cols) . ") VALUES ";
+
+        $suggestion_data = array();
+        $place_holders   = array();
+
+        $count = 0;
+        $limit = 1000;
+
+        $source_post_id   = (int) $source_post->id;
+        $source_post_type = !empty($source_post->type) ? (string)$source_post->type : 'post';
+        $data_type        = (($source_post_type === 'post') ? 1 : 0);
+
+        // Get AI relation data for the source post
+        $ai_relation_data = self::get_embedding_relatedness_data($source_post->id, $source_post->type);
+
+        foreach($results as $r){
+            $target_data = self::parse_linking_target($r);
+            $target_id = (int) $target_data['id'];
+            $target_type = $target_data['type'];
+
+            $sentence_text = wp_kses((string)$r->sentence_text, 'post');
+            $sentence_id = (!empty($sentence_text)) ? md5($sentence_text) : '';
+            $sentence_with = wp_kses((string)$r->sentence_with_anchor_text, 'post');
+
+            // Calculate ai_relation_score the same way as insert_links_into_link_table
+            $ai_relation_score = 0;
+            if(!empty($ai_relation_data)){
+                $target_post = new Wpil_Model_Post($target_id, $target_type);
+                $pid = $target_post->get_pid();
+                if(isset($ai_relation_data->$pid) && !empty($ai_relation_data->$pid)){
+                    $ai_relation_score = $ai_relation_data->$pid;
+                }
+            }
+
+            $ignored = (!empty($sentence_text) && !empty($sentence_with)) ? 0 : 1;
+
+            array_push(
+                $suggestion_data,
+                $source_post_id,
+                $source_post_type,
+                $data_type,
+                $target_id,
+                $target_type,
+                $target_data['data_type'],
+                $sentence_text,
+                $sentence_id,
+                $sentence_with,
+                $ai_relation_score,
+                $ignored,
+                time(),
+                $model,
+                $process_key
+            );
+
+            $place_holders[] = "('%d','%s','%d','%d','%s','%d','%s','%s','%s','%f','%d','%d','%s','%s')";
+            $count++;
+
+            // Flush chunk
+            if($count >= $limit){
+                $insert = $insert_query . implode(', ', $place_holders);
+                $insert = $wpdb->prepare($insert, $suggestion_data);
+                $wpdb->query($insert);
+
+                $suggestion_data = array();
+                $place_holders   = array();
+                $count = 0;
+            }
+        }
+
+        // Final flush!
+        if(!empty($suggestion_data) && !empty($place_holders)){
+            $insert = $insert_query . implode(', ', $place_holders);
+            $insert = $wpdb->prepare($insert, $suggestion_data);
+            $wpdb->query($insert);
+        }
+
+        return count($results);
+    }
+
+    /**
+     * Unwraps for the OUTBOUND suggestions
+     **/
+    public static function unwrap_linking_live_completion($item){
+        $out = array(
+            'ok'      => false,
+            'model'   => '',
+            'results' => array(),
+        );
+
+        if(empty($item)){
+            return $out;
+        }
+
+        // Decode if it's a JSON string
+        if(!is_object($item)){
+            $item = self::decode($item);
+        }
+
+        if(empty($item) || !is_object($item)){
+            return $out;
+        }
+
+        // Live chat completion shape: choices[0].message.content
+        if(
+            !isset($item->choices) ||
+            empty($item->choices) ||
+            !isset($item->choices[0]) ||
+            !isset($item->choices[0]->message) ||
+            !isset($item->choices[0]->message->content)
+        ){
+            return $out;
+        }
+
+        $out['model'] = isset($item->model) ? (string)$item->model : '';
+
+        $content = $item->choices[0]->message->content;
+        if(empty($content) || !is_string($content)){
+            return $out;
+        }
+
+        // content is JSON-as-string: {"results":[...]}
+        $decoded = self::decode($content);
+        if(empty($decoded)){
+            return $out;
+        }
+
+        $results = null;
+
+        if(is_object($decoded) && isset($decoded->results)){
+            $results = $decoded->results;
+        } else {
+            // Allow raw array/object without results key
+            $results = $decoded;
+        }
+
+        if(is_object($results)){
+            $results = array($results);
+        }
+
+        if(!is_array($results) || empty($results)){
+            return $out;
+        }
+
+        // Validate basic required fields for each item
+        $clean = array();
+        foreach($results as $r){
+            if(!is_object($r)){
+                continue;
+            }
+            if(!isset($r->sentence_text) || !isset($r->sentence_with_anchor_text) || !isset($r->target_id)){
+                continue;
+            }
+            $clean[] = $r;
+        }
+
+        if(empty($clean)){
+            return $out;
+        }
+
+        $out['ok'] = true;
+        $out['results'] = $clean;
+
+        return $out;
     }
 
     /**
@@ -3748,6 +5058,9 @@ class Wpil_AI
 
         self::save_completed_batch_log_entry($batch->id, $batch->status);
         self::delete_batch_log_data($batch->id);
+        if(isset($batch->metadata, $batch->metadata->purpose) && !empty($batch->metadata->purpose)){
+            self::clear_credit_tracking_task_run('purpose:' . $batch->metadata->purpose);
+        }
 
         $batch_cache = get_option('wpil_oai_batch_data', array());
         $batch_completed = get_option('wpil_oai_completed_batch_data', array());
@@ -3821,7 +5134,7 @@ class Wpil_AI
                 }
             }
 
-            $results = self::call_linkwhisper_ai($message_list);
+            $results = self::call_linkwhisper_ai($message_list, '', '', ['dimensions' => Wpil_Settings::get_ai_dimension_limit()]);
 
             if(!empty($results)){
                 foreach($results as $key => $dat){
@@ -3921,7 +5234,7 @@ class Wpil_AI
                         self::save_site_embeddings($dat_object);
                     }
         
-                    self::save_response_tokens($dat);
+                    self::save_response_tokens($dat, self::$purpose, false, isset(self::$query_ids[$key]) ? self::$query_ids[$key] : '');
                 }
             }
         }else{
@@ -4130,6 +5443,7 @@ class Wpil_AI
         }
 
         $model = Wpil_Settings::getChatGPTVersion('create-post-embeddings');
+        $dimensions = Wpil_Settings::get_ai_dimension_limit();
         self::$purpose = 'create-post-sentence-embeddings'; // TODO: create link cleanup that will check to see if the links have changed between the processed and new text and will tell the stupid AI if it should reprocessed the posit content.
         $phrases = Wpil_Suggestion::getPhrases($post->getContent(), false, array(), false, array(), ('sentence_text' === Wpil_Suggestion::get_phrase_text_prop()));
         //$phrases = Wpil_Suggestion::getPhrases($post->getContent()); // TODO: Review and see if we need to id text instead of sentence_text
@@ -4156,13 +5470,13 @@ class Wpil_AI
                 self::$query_ids[] = $post->get_pid(); // get the pid for this post because any errors will be indexed for it
             }
 
-            $results = self::call_linkwhisper_ai($message_list, $model);
+            $results = self::call_linkwhisper_ai($message_list, $model, '', ['dimensions' => $dimensions]);
         }else{
             foreach($phrase_list as $text => $dat){
                 $message_list[] = array(
                     "model" => $model,
                     "input" => $text,
-                    "dimensions" => 2048
+                    "dimensions" => $dimensions
                 );
 
                 self::$query_ids[] = $post->get_pid(); // get the pid for this post because any errors will be indexed for it
@@ -4263,7 +5577,7 @@ class Wpil_AI
                     $phrase_id = $inds[$key];
                     $embedding_data[$phrase_id] = $response->data;
                 }
-                self::save_response_tokens($dat);
+                self::save_response_tokens($dat, self::$purpose, false, isset(self::$query_ids[$key]) ? self::$query_ids[$key] : '');
             }
         }
 
@@ -4275,7 +5589,7 @@ class Wpil_AI
      **/
     public static function process_streamed_data($handle_id, $content, $info){
         $skip_streaming = array(
-            'create-post-sentence-embeddings',
+            'create-post-sentence-embeddings'
         );
 
         // if the current action isn't supposed to be streamed
@@ -4366,7 +5680,13 @@ class Wpil_AI
                     $dat_object = array($dat_object);
                     self::save_error_log_data('live_download', $dat_object, self::$purpose);
                     // and mark the post as processed if there isn't a temp/quota error
-                    if(!self::$insufficient_quota && !self::$rate_limited && !self::$invalid_request && !self::$invalid_api_key && !self::$user_not_exist){
+                    if( !self::$insufficient_quota && 
+                        !self::$rate_limited && 
+                        !self::$invalid_request && 
+                        !self::$invalid_api_key && 
+                        !self::$user_not_exist || 
+                        (self::$ai_service_connected) // or if we're using the LW AI service 
+                    ){
                         self::save_empty_post_data(self::$query_ids[$handle_id], self::$model, self::$purpose);
                     }
                     return true;
@@ -4387,7 +5707,7 @@ class Wpil_AI
                 self::save_site_embeddings($dat_object);
             }
 
-            self::save_response_tokens($content);
+            self::save_response_tokens($content, self::$purpose, false, isset(self::$query_ids[$handle_id]) ? self::$query_ids[$handle_id] : '');
         }else{
             // if there was no response but we did have content to supply
             if(empty($content) && isset(self::$query_ids[$handle_id]) && !empty(self::$query_ids[$handle_id])){
@@ -4486,6 +5806,10 @@ class Wpil_AI
                 // TODO: make more elegant in the future
                 if(self::$purpose === 'assess-sentence-anchors'){
                     self::save_ai_suggestion_words($dat_object);
+                }elseif(self::$purpose === 'assess-inbound-links'){
+                    self::save_ai_linking_suggestions($dat_object);
+                }elseif(self::$purpose === 'assess-outbound-links'){
+                    //self::save_ai_linking_suggestions($dat_object); // TODO: configure if we move to mlulltiple process runs
                 }else{
                     self::save_site_keywords($dat_object);
                     //self::save_site_post_summaries($dat_object);
@@ -4662,7 +5986,14 @@ class Wpil_AI
                         $processed_embeddings[$id]->calculation = array();
                     }
 
-                    $processed_embeddings[$id]->calculation[$sub_id] = self::compare_post_embeddings($dat, $d);
+                    $calculation = self::compare_post_embeddings($dat, $d);
+
+                    // if we pass the threshold for minimum relatability
+                    if($calculation > 0.40){ // TODO: make into a setting if we have trouble with generating enough suggestions
+                        // add it to the list
+                        $processed_embeddings[$id]->calculation[$sub_id] = $calculation;
+                    }
+                    
                     if($processed_embeddings[$id]->calc_index < $d->embed_index){
                         $processed_embeddings[$id]->calc_index = $d->embed_index;
                     }
@@ -5324,11 +6655,17 @@ class Wpil_AI
             $total_count++;
             $ids = explode('_', $key);
             if($partial){
+                if (! is_array($dat->calculation)) {
+                    $dat->calculation = array();
+                }
                 $embeddings = Wpil_Toolbox::json_compress($dat->calculation);
                 $last_embedding_index = $dat->calc_index;
                 $calc_count = count($dat->calculation);
                 $model = $dat->model_version;
             }else{
+                if (! is_array($dat['embeddings'])) {
+                    $dat['embeddings'] = array();
+                }
                 $embeddings = Wpil_Toolbox::json_compress($dat['embeddings']);
                 $calc_count = count($dat['embeddings']);
                 $model = $dat['model_version'];
@@ -5911,23 +7248,29 @@ class Wpil_AI
         $message = array(
             'title' => __('Processing Halted.', 'wpil'),
             'text'  => __("Link Whisper has processed all of the posts that it's able to, and has stopped.", 'wpil'),
+            'code'  => 'unknown',
         );
 
         if(self::$rate_limited){
             $message['title']   = __("Unable to Complete: Rate Limiting Active", 'wpil');
             $message['text']    = sprintf(__("It seems that the API key's %s per hour has been reached, and you may need to wait for the processing limits to reset. If you haven't already, please wait an hour and then try again.", "wpil") . '<br><br>' . __("If you see this message again after waiting an hour, please wait 24 hours before restarting the process.", 'wpil'), '<a href="https://platform.openai.com/docs/guides/rate-limits/usage-tiers?context=tier-one">' . __('limit on how much data can be processed', 'wpil') .'</a>' );
+            $message['code']    = 'rate_limited';
         }elseif(self::$insufficient_quota){
             $message['title']   = __("Unable to Complete: Credit Limit Reached", 'wpil');
             $message['text']    = __("It seems that the credit limit for the API key has been reached, and further processing isn't possible without more credit.", 'wpil') . '<br><br>' . __('To add more credit to the account, please go here: ', 'wpil') . '<br><br>' . '<a href="https://platform.openai.com/settings/organization/billing/overview" target="_blank">OpenAI Account Billing</a>';
+            $message['code']    = 'insufficient_credits';
         }elseif(self::$invalid_api_key){
             $message['title']   = __("Unable to Complete: Invalid API Key", 'wpil');
             $message['text']    = __("It seems that there was a mistake when entering the API key, and OpenAI is rejecting our contact request.", 'wpil') . '<br><br>' . __('If you have the API key written down, please try re-entering it in the settings.', 'wpil') . '<br><br>' . sprintf(__('If you don\'t have the API key written down, please %s and enter it in the Settings.', 'wpil'), '<a href="https://platform.openai.com/api-keys" target="_blank">' . __('generate a new one from your OpenAI account', 'wpil') . '</a>');
+            $message['code']    = 'invalid_api_key';
         }elseif(self::$invalid_request){
             $message['title']   = __("Unable to Complete: Invalid Request", 'wpil');
             $message['text']    = __("It seems that there was an error when reaching out to OpenAI, and post content wasn't able to be processed. Link Whisper isn't sure what caused the error, but it should be logged in the \"System Error Log\" area of the Settings.", 'wpil');
+            $message['code']    = 'invalid_request';
         }else{
             $message['title']   = __("Unable to Complete: Unknown Error", 'wpil');
             $message['text']    = __('It seems that there was an error and some posts may not have been processed by OpenAI. If you see any indications that posts haven\'t been processed, please try waiting an hour and then try restarting the process.', 'wpil');
+            $message['code']    = 'unknown';
         }
 
         //$message .= (!empty(self::$error_message)) ? "\n\n" . __('During processing, OpenAI sent along this error message: ', 'wpil') . self::$error_message . "\n\n" . __('If you need to contact support about the issue, please be sure to include this message in your ticket.', 'wpil'): '';
@@ -5942,23 +7285,29 @@ class Wpil_AI
         $message = array(
             'title' => __('Processing Halted.', 'wpil'),
             'text'  => __("Link Whisper has processed all of the posts that it's able to, and has stopped.", 'wpil'),
+            'code'  => 'unknown',
         );
 
         if(self::$rate_limited){
 //            $message['title']   = __("Unable to Complete: Rate Limiting Active", 'wpil');
 //            $message['text']    = sprintf(__("It seems that the API key's %s per hour has been reached, and you may need to wait for the processing limits to reset. If you haven't already, please wait an hour and then try again.", "wpil") . '<br><br>' . __("If you see this message again after waiting an hour, please wait 24 hours before restarting the process.", 'wpil'), '<a href="https://platform.openai.com/docs/guides/rate-limits/usage-tiers?context=tier-one">' . __('limit on how much data can be processed', 'wpil') .'</a>' );
+            $message['code']    = 'rate_limited';
         }elseif(self::$invalid_api_key){
             $message['title']   = __("Unable to Complete: API Not Accessible", 'wpil');
             $message['text']    = __("Link Whisper isn't able to make contact with the AI server. This could be caused by network traffic, or a configuration issue.", 'wpil') . '<br><br>' .__("If this is the first time this has happened, please wait 30 minutes and try again.", 'wpil') . '<br><br>' .  sprintf(__('If its happed before, please reach out to Link Whisper support %s so we can help you with this issue.', 'wpil'), '<a href="'.esc_url(WPIL_STORE_URL . '/support').'">right here</a>');
+            $message['code']    = 'ai_connection';
         }elseif(self::$user_not_exist){
             $message['title']   = __("Unable to Complete: AI User Not Logged", 'wpil');
             $message['text']    = __("Unfortunately, it looks like there was an error when setting up the AI connection, and Link Whisper can't access our AI server.", 'wpil') . '<br><br>' . sprintf(__('To resolve this, please reach out to Link Whisper support %s', 'wpil'), '<a href="'.esc_url(WPIL_STORE_URL . '/support').'">right here</a>');
+            $message['code']    = 'ai_user_missing';
         }elseif(self::$insufficient_quota){
             $message['title']   = __("Unable to Complete: Insufficient Credits", 'wpil');
             $message['text']    = __("Unfortunately, there aren't enough AI credits available to process the posts.", 'wpil') . '<br><br>' . __('To add more to your account, please go here: ', 'wpil') . '<br><br>' . '<a href="' .admin_url('admin.php?page=link_whisper_ai_subscription'). '" target="_blank">AI Subscription Management</a>';
+            $message['code']    = 'insufficient_credits';
         }else{
             $message['title']   = __("Unable to Complete: Unknown Error", 'wpil');
             $message['text']    = __('It seems that there was an error and some posts may not have been processed by OpenAI. If you see any indications that posts haven\'t been processed, please try waiting an hour and then try restarting the process.', 'wpil');
+            $message['code']    = 'unknown';
         }
 
         //$message .= (!empty(self::$error_message)) ? "\n\n" . __('During processing, OpenAI sent along this error message: ', 'wpil') . self::$error_message . "\n\n" . __('If you need to contact support about the issue, please be sure to include this message in your ticket.', 'wpil'): '';
@@ -6058,6 +7407,49 @@ class Wpil_AI
     }
 
     /**
+     * Estimates the number of credits needed to process the site
+     **/
+    public static function estimate_site_processing_credit_cost($ai_linking_process_key = '', $include_ai_linking = true){
+        $estimate = 0; // we're pretty much rocking 1 credit per process per post, so we'll run with that
+
+        // get the active processes
+        $selected_processes = Wpil_Settings::get_selected_ai_batch_processes(true);
+
+        // the total number of posts that need processing
+        $total_posts = self::get_total_processable_posts();
+
+        // the number of posts that are already processed
+        $processed_posts = self::get_completed_post_stats(true);
+
+        // go over the processes
+        foreach($selected_processes as $process){
+            if(isset($processed_posts[$process])){
+                $estimate += ($total_posts - $processed_posts[$process]);
+            }else{
+                $estimate += $total_posts;
+            }
+        }
+
+        // if we're going to be doing post linking too
+        if($include_ai_linking && (!empty($ai_linking_process_key) || null === $ai_linking_process_key)){
+            if(!empty($ai_linking_process_key)){
+                $remaining = Wpil_LinkMapping::get_relation_map_pending_ai_item_count($ai_linking_process_key, array(), array(), true);
+                if($remaining < 1 && Wpil_LinkMapping::get_relation_map_total_item_count($ai_linking_process_key) < 1){
+                    $remaining = $total_posts;
+                }
+            }else{
+                $remaining = $total_posts;
+            }
+
+            // throw it on the stack of posts
+            $estimate += ($remaining * 4);
+        }
+
+        // the result is our estimate!
+        return $estimate;
+    }
+
+    /**
      * Gets the current number of credits that the user has available
      **/
     public static function get_available_ai_credits($refresh = false, $precision = false){
@@ -6068,14 +7460,24 @@ class Wpil_AI
         $credits = get_transient('wpil_ai_credit_balance');
         
         if(empty($credits) || $refresh){
+            $stored_credits = self::get_stored_ai_credit_balance();
             $credits = self::call_linkwhisper_ai('return_credits', '', 'get-available-credits');
             if(!empty($credits)){
+                $credits = round((float) $credits, 4);
                 set_transient('wpil_ai_credit_balance', $credits, 60 * MINUTE_IN_SECONDS);
+                self::set_stored_ai_credit_balance($credits);
+
+                if(null !== $stored_credits && $credits > ($stored_credits + 0.00009)){
+                    self::refresh_ai_credit_purchase_data();
+                }
             }else{
                 set_transient('wpil_ai_credit_balance', 'no-credits', 60 * MINUTE_IN_SECONDS);
+                self::set_stored_ai_credit_balance(0);
             }
         }elseif($credits === 'no-credits'){
             return 0;
+        }else{
+            self::set_stored_ai_credit_balance($credits);
         }
 
         return ($precision) ? round((float) $credits, 4): (int) $credits;
@@ -6100,39 +7502,168 @@ class Wpil_AI
             $credits = ($credits - $credits_spent);
             // and update
             set_transient('wpil_ai_credit_balance', $credits, HOUR_IN_SECONDS);
+            self::set_stored_ai_credit_balance($credits);
         }
+    }
+
+    private static function get_stored_ai_credit_balance(){
+        $credits = get_option('wpil_ai_last_known_credit_balance', null);
+        return is_numeric($credits) ? round((float) $credits, 4) : null;
+    }
+
+    private static function set_stored_ai_credit_balance($credits = 0){
+        update_option('wpil_ai_last_known_credit_balance', round(max(0, (float) $credits), 4), false);
+    }
+
+    private static function refresh_ai_credit_purchase_data(){
+        // When the balance jumps, do a quiet subscription check so the new purchase rows get logged too.
+        self::check_ai_subscription(true, true);
+    }
+
+    /**
+     * Checks the AI subscription state and refreshes the stored data when needed
+     **/
+    public static function check_ai_subscription($refresh = false, $sync_purchases = true){
+        $cached_subscription = get_transient('wpil_user_ai_subscription');
+        $cached_credits = get_transient('wpil_ai_credit_balance');
+        $stored_credits = self::get_stored_ai_credit_balance();
+        $ai_id = trim((string) Wpil_Settings::get_linkwhisper_ai_user_id());
+
+        if('no-credits' === $cached_credits){
+            $cached_credits = 0;
+        }elseif(is_numeric($cached_credits)){
+            $cached_credits = round((float) $cached_credits, 4);
+        }else{
+            $cached_credits = (null !== $stored_credits) ? $stored_credits: null;
+        }
+
+        if(empty($ai_id)){
+            return array(
+                'success' => false,
+                'code' => 'ai_id_missing',
+                'subscription' => false,
+                'credits' => null,
+                'purchases_synced' => 0,
+            );
+        }
+
+        if(!$refresh && !empty($cached_subscription)){
+            return array(
+                'success' => ('no-subscription' !== $cached_subscription),
+                'code' => ('no-subscription' !== $cached_subscription) ? 'ok': 'no_subscription',
+                'subscription' => ('no-subscription' !== $cached_subscription) ? $cached_subscription: false,
+                'credits' => $cached_credits,
+                'purchases_synced' => 0,
+            );
+        }
+
+        $response = wp_remote_post(WPIL_STORE_URL . '/wp-json/lwasc-checkout/v1/get-subscription', array(
+            'headers' => array('Content-Type' => 'application/json'),
+            'body' => wp_json_encode(array('ai_id' => $ai_id)),
+            'timeout' => 45,
+        ));
+
+        if(is_wp_error($response)){
+            return array(
+                'success' => false,
+                'code' => 'request_failed',
+                'subscription' => (!empty($cached_subscription) && 'no-subscription' !== $cached_subscription) ? $cached_subscription: false,
+                'credits' => $cached_credits,
+                'purchases_synced' => 0,
+            );
+        }
+
+        $response_body = wp_remote_retrieve_body($response);
+        $response = json_decode($response_body);
+        if(empty($response_body) || (null === $response && JSON_ERROR_NONE !== json_last_error())){
+            return array(
+                'success' => false,
+                'code' => 'request_failed',
+                'subscription' => (!empty($cached_subscription) && 'no-subscription' !== $cached_subscription) ? $cached_subscription: false,
+                'credits' => $cached_credits,
+                'purchases_synced' => 0,
+            );
+        }
+
+        $credits = $cached_credits;
+        if(isset($response->credits) && is_numeric($response->credits)){
+            $credits = round((float) $response->credits, 4);
+            if($credits > 0){
+                set_transient('wpil_ai_credit_balance', $credits, 60 * MINUTE_IN_SECONDS);
+                self::set_stored_ai_credit_balance($credits);
+            }else{
+                set_transient('wpil_ai_credit_balance', 'no-credits', 60 * MINUTE_IN_SECONDS);
+                self::set_stored_ai_credit_balance(0);
+                $credits = 0;
+            }
+        }
+
+        $purchases_synced = 0;
+        if($sync_purchases && isset($response->purchases) && is_array($response->purchases)){
+            foreach($response->purchases as $purchase){
+                if(!is_object($purchase) && !is_array($purchase)){
+                    continue;
+                }
+
+                $purchase = (object) $purchase;
+                $purchase_id = isset($purchase->purchase_id) ? $purchase->purchase_id: '';
+                $purchase_credits = isset($purchase->credits) ? $purchase->credits: 0;
+                $purchase_type = isset($purchase->purchase_type) ? $purchase->purchase_type: '';
+                $purchase_time = isset($purchase->purchase_time) ? $purchase->purchase_time: 0;
+
+                if(self::save_credit_deposit_notice($purchase_id, $purchase_credits, $purchase_type, $purchase_time)){
+                    $purchases_synced++;
+                }
+            }
+        }
+
+        if(isset($response->success) && !empty($response->success) && isset($response->subscription)){
+            set_transient('wpil_user_ai_subscription', $response->subscription, 24 * HOUR_IN_SECONDS);
+
+            return array(
+                'success' => true,
+                'code' => 'ok',
+                'subscription' => $response->subscription,
+                'credits' => $credits,
+                'purchases_synced' => $purchases_synced,
+            );
+        }
+
+        $no_subscription = false;
+        if((isset($response->code) && 'no_subscription' === sanitize_key((string) $response->code)) ||
+            (isset($response->message) && false !== stripos((string) $response->message, 'no subscription')) ||
+            (isset($response->success) && !empty($response->success) && empty($response->subscription)))
+        {
+            $no_subscription = true;
+        }
+
+        if($no_subscription){
+            set_transient('wpil_user_ai_subscription', 'no-subscription', 24 * HOUR_IN_SECONDS);
+
+            return array(
+                'success' => false,
+                'code' => 'no_subscription',
+                'subscription' => false,
+                'credits' => $credits,
+                'purchases_synced' => $purchases_synced,
+            );
+        }
+
+        return array(
+            'success' => false,
+            'code' => 'request_failed',
+            'subscription' => (!empty($cached_subscription) && 'no-subscription' !== $cached_subscription) ? $cached_subscription: false,
+            'credits' => $credits,
+            'purchases_synced' => $purchases_synced,
+        );
     }
 
     /**
      * 
      **/
     public static function get_user_ai_subscription($reset = false){
-        if(!self::$ai_service_connected){
-            return null;
-        }
-
-        $subscription = get_transient('wpil_user_ai_subscription');
-        if(empty($subscription) || $reset){
-            $response = wp_remote_post(WPIL_STORE_URL . '/wp-json/lwasc-checkout/v1/get-subscription', [
-                'headers' => [ 'Content-Type' => 'application/json' ],
-                'body'    => json_encode([ 'ai_id' => Wpil_Settings::get_linkwhisper_ai_user_id() ]),
-                'timeout' => 45,
-            ]);
-
-            if(!is_wp_error($response)){
-                $response = json_decode(wp_remote_retrieve_body($response));
-            }
-
-            if(isset($response->success) && !empty($response->success) && isset($response->subscription)){
-                $subscription = $response->subscription;
-            }else{
-                $subscription = 'no-subscription';
-            }
-
-            set_transient('wpil_user_ai_subscription', $subscription, 24 * HOUR_IN_SECONDS);
-        }
-
-        return ($subscription !== 'no-subscription') ? $subscription: false;
+        $subscription = self::check_ai_subscription($reset, false);
+        return !empty($subscription['subscription']) ? $subscription['subscription']: false;
     }
 
     /**
@@ -6187,16 +7718,2221 @@ class Wpil_AI
     }
 
     /**
+     * Gets the auth return url that the wizard uses when it's time to finish the LW auth
+     **/
+    public static function get_wizard_ai_auth_return_url(){
+        return admin_url('admin.php?page=link_whisper_ai_subscription&ai_auth_complete=1&origin=wizard');
+    }
+
+    /**
+     * Gets the auth url that the wizard uses once the email has been verified
+     **/
+    public static function get_wizard_ai_auth_url($email = ''){
+        $params = array(
+            'free_activation' => '1',
+            'origin' => 'wizard'
+        );
+
+        if(!empty($email) && is_email($email)){
+            $params['uemail'] = $email;
+        }
+
+        return self::get_linkwhisper_ai_auth_url(self::get_wizard_ai_auth_return_url(), $params);
+    }
+
+    /**
+     * Starts the free activation flow on Link Whisper's side
+     **/
+    public static function start_wizard_free_activation($email = ''){
+        $email = sanitize_email($email);
+        if(empty($email) || !is_email($email)){
+            return array(
+                'status' => 'invalid',
+                'email' => '',
+                'activation_token' => '',
+                'auth_url' => '',
+                'message' => __('Please enter a valid email address to connect Link Whisper AI.', 'wpil'),
+            );
+        }
+
+        return self::run_wizard_free_activation_request('start-free-activation', array(
+            'email' => $email,
+            'site_url' => site_url(),
+            'uid' => get_current_user_id(),
+            'origin' => 'wizard',
+            'free_activation' => 1,
+        ), $email);
+    }
+
+    /**
+     * Checks to see if the free activation email has been verified yet
+     **/
+    public static function check_wizard_free_activation($activation_token = '', $email = ''){
+        $activation_token = sanitize_text_field($activation_token);
+        $email = sanitize_email($email);
+
+        if(empty($activation_token)){
+            return array(
+                'status' => 'expired',
+                'email' => $email,
+                'activation_token' => '',
+                'auth_url' => '',
+                'message' => __('This activation request has expired. Please enter your email again to start over.', 'wpil'),
+            );
+        }
+
+        return self::run_wizard_free_activation_request('check-free-activation', array(
+            'activation_token' => $activation_token,
+        ), $email);
+    }
+
+    /**
+     * Runs a free activation request against Link Whisper and cleans up the response so the wizard can use it
+     **/
+    private static function run_wizard_free_activation_request($path = '', $payload = array(), $email = ''){
+        $path = trim((string) $path, '/');
+        $email = sanitize_email($email);
+
+        if(empty($path)){
+            return array(
+                'status' => 'invalid',
+                'email' => $email,
+                'activation_token' => '',
+                'auth_url' => '',
+                'message' => __('We could not start the Link Whisper AI activation right now. Please try again.', 'wpil'),
+            );
+        }
+
+        $response = wp_remote_post(WPIL_STORE_URL . '/wp-json/lwasc-checkout/v1/' . $path, array(
+            'headers' => array('Content-Type' => 'application/json'),
+            'body' => wp_json_encode($payload),
+            'timeout' => 45,
+        ));
+
+        if(is_wp_error($response)){
+            return array(
+                'status' => 'invalid',
+                'email' => $email,
+                'activation_token' => '',
+                'auth_url' => '',
+                'message' => __('We could not reach Link Whisper AI right now. Please try again in a moment.', 'wpil'),
+            );
+        }
+
+        $response_body = wp_remote_retrieve_body($response);
+        $response_data = json_decode($response_body, true);
+        if(empty($response_body) || !is_array($response_data)){
+            return array(
+                'testing' => $response_body,
+                'status' => 'invalid',
+                'email' => $email,
+                'activation_token' => '',
+                'auth_url' => '',
+                'message' => __('We got an unexpected response while starting Link Whisper AI. Please try again.', 'wpil'),
+            );
+        }
+
+        $status = !empty($response_data['status']) ? sanitize_key($response_data['status']) : 'invalid';
+        if(!in_array($status, array('connected', 'auth_ready', 'verification_required', 'rate_limited', 'blocked', 'invalid', 'expired'), true)){
+            $status = 'invalid';
+        }
+
+        $response_email = !empty($response_data['email']) ? sanitize_email($response_data['email']) : $email;
+        $activation_token = !empty($response_data['activation_token']) ? sanitize_text_field($response_data['activation_token']) : '';
+        $auth_url = !empty($response_data['auth_url']) ? esc_url_raw($response_data['auth_url']) : '';
+
+        if('connected' === $status){
+            $status = 'auth_ready';
+        }
+
+        if('auth_ready' === $status && empty($auth_url)){
+            $auth_url = self::get_wizard_ai_auth_url($response_email);
+        }
+
+        $message = !empty($response_data['message']) ? sanitize_text_field($response_data['message']) : '';
+        if(empty($message)){
+            $message = self::get_wizard_free_activation_message($status);
+        }
+
+        return array(
+            'status' => $status,
+            'email' => $response_email,
+            'activation_token' => $activation_token,
+            'auth_url' => $auth_url,
+            'message' => $message,
+        );
+    }
+
+    /**
+     * Gives the wizard a nice default message for each activation state
+     **/
+    private static function get_wizard_free_activation_message($status = ''){
+        switch($status){
+            case 'auth_ready':
+                return __('Your Link Whisper AI account is ready. Finish the secure popup to connect this site.', 'wpil');
+            case 'verification_required':
+                return __('Check your email for the Link Whisper verification message, then come back here and click the button below.', 'wpil');
+            case 'expired':
+                return __('This activation request has expired. Please enter your email again to start over.', 'wpil');
+            case 'rate_limited':
+                return __('We have received a few activation requests already. Please wait a minute and try again.', 'wpil');
+            case 'blocked':
+                return __('We could not start the free activation for this request. Please contact support if this keeps happening.', 'wpil');
+            default:
+                return __('We could not start the Link Whisper AI activation right now. Please try again.', 'wpil');
+        }
+    }
+
+    /**
      * 
      **/
-    public static function get_linkwhisper_ai_auth_url($return_url = null){
+    public static function get_linkwhisper_ai_auth_url($return_url = null, $extra_params = array()){
         $params = array(
             'target' => base64_encode(get_rest_url(null, '/' . Wpil_Rest::REST_SLUG . '/' . Wpil_Rest::AI_AUTH)),
             'return_url' => (!empty($return_url)) ? base64_encode($return_url): base64_encode(admin_url('admin.php?page=link_whisper_ai_subscription')),
             'site_url' => base64_encode(site_url()),
             'uid' => base64_encode(get_current_user_id())
         );
+
+        if(!empty($extra_params) && is_array($extra_params)){
+            foreach($extra_params as $key => $value){
+                $key = sanitize_key($key);
+                if(empty($key) || is_array($value) || is_object($value)){
+                    continue;
+                }
+
+                if('uemail' === $key){
+                    $value = sanitize_email($value);
+                }else{
+                    $value = sanitize_text_field((string) $value);
+                }
+
+                if('' === $value || $value === null){
+                    continue;
+                }
+
+                $params[$key] = $value;
+            }
+        }
+
         $url = add_query_arg($params, WPIL_STORE_URL . '/connect-link-whisper-ai/');
         return $url;
+    }
+
+    /**
+     * Guess the "about me/us" page.
+     * Returns: ['post_id' => int|null, 'confidence' => 0..1, 'candidates' => array]
+     */
+    public static function guess_about_page($limit = 50){
+        $exclude_slugs = [
+            'contact', 'privacy-policy', 'terms', 'terms-and-conditions', 'checkout',
+            'cart', 'my-account', 'account', 'shop', 'store', 'blog'
+        ];
+
+        $about_keywords = [
+            'about', 'about me', 'about-me', 'about us', 'about-us',
+            'bio', 'biography', 'my story', 'my-story', 'our story', 'our-story',
+            'who i am', 'who-i-am', 'who we are', 'who-we-are',
+            'team'
+        ];
+
+        $menu_page_ids = self::lw_collect_menu_page_ids();
+
+        $pages = get_posts([
+            'post_type'      => 'page',
+            'post_status'    => 'publish',
+            'numberposts'    => $limit,
+            'orderby'        => 'date',
+            'order'          => 'DESC',
+            'fields'         => 'ids',
+            'no_found_rows'  => true,
+            'suppress_filters' => true,
+        ]);
+
+        $front_id  = (int) get_option('page_on_front');
+        $posts_id  = (int) get_option('page_for_posts');
+
+        $scored = [];
+
+        foreach ($pages as $page_id) {
+            if ((int)$page_id === $front_id || (int)$page_id === $posts_id) {
+                continue;
+            }
+
+            $post = get_post($page_id);
+            if (!$post) continue;
+
+            $slug  = '';
+            $title = '';
+            if(isset($post->post_name) && !empty($post->post_name)){
+                $slug  = strtolower($post->post_name);
+            }
+
+            if(isset($post->post_title) && !empty($post->post_title)){
+                $title = strtolower($post->post_title);
+            }
+
+
+            // Exclude obvious non-about pages
+            foreach ($exclude_slugs as $bad) {
+                if ($slug === $bad || strpos($slug, $bad) !== false) {
+                    continue 2;
+                }
+            }
+
+            $content = strtolower(wp_strip_all_tags($post->post_content ?? ''));
+            $score = 0;
+            $reasons = [];
+
+            // Slug and title keyword scoring
+            foreach ($about_keywords as $kw) {
+                $kw_norm = strtolower($kw);
+
+                if ($kw_norm && strpos($slug, str_replace(' ', '-', $kw_norm)) !== false) {
+                    $score += 50;
+                    $reasons[] = "slug-match:$kw_norm";
+                } elseif ($kw_norm && strpos($title, $kw_norm) !== false) {
+                    $score += 35;
+                    $reasons[] = "title-match:$kw_norm";
+                }
+            }
+
+            // Menu presence
+            if (isset($menu_page_ids[$page_id])) {
+                $score += 25;
+                $reasons[] = "in-menu";
+
+                $menu_info = $menu_page_ids[$page_id];
+                if (!empty($menu_info['label']) && strpos(strtolower($menu_info['label']), 'about') !== false) {
+                    $score += 25;
+                    $reasons[] = "menu-label-about";
+                }
+                if (!empty($menu_info['is_top_level'])) {
+                    $score += 10;
+                    $reasons[] = "menu-top-level";
+                }
+            }
+
+            // Page template hint
+            $tpl = (string) get_post_meta($page_id, '_wp_page_template', true);
+            if ($tpl && strpos(strtolower($tpl), 'about') !== false) {
+                $score += 15;
+                $reasons[] = "template-about";
+            }
+
+            // Content phrase hints
+            $phrases = [
+                "my name is", "hi i'm", "hi im", "i am ", "about me", "about us",
+                "my story", "our story", "mission", "values", "background"
+            ];
+            foreach ($phrases as $p) {
+                if (strpos($content, $p) !== false) {
+                    $score += 8;
+                    $reasons[] = "content-phrase:$p";
+                }
+            }
+
+            // First person ratio
+            $words = preg_split('/\s+/', trim($content));
+            $word_count = is_array($words) ? count($words) : 0;
+
+            if ($word_count > 50) {
+                $first_person = 0;
+                $first_person += preg_match_all('/\b(i|me|my|mine|im|i\'m|ive|i\'ve)\b/', $content, $m);
+                $ratio = $first_person / max(1, $word_count);
+
+                // Scale contribution: 0.01 ratio adds a little, 0.05 adds more
+                $score += (int) min(20, max(0, $ratio * 400));
+                $reasons[] = "first-person-ratio:" . round($ratio, 4);
+            }
+
+            // Mild penalty if content is extremely short
+            if ($word_count > 0 && $word_count < 80) {
+                $score -= 10;
+                $reasons[] = "very-short";
+            }
+
+            $scored[] = [
+                'post_id' => (int)$page_id,
+                'score'   => (int)$score,
+                'title'   => $post->post_title,
+                'slug'    => $post->post_name,
+                'reasons' => $reasons,
+            ];
+        }
+
+        usort($scored, function($a, $b){ return $b['score'] <=> $a['score']; });
+
+        $best = $scored[0] ?? null;
+        $best_score = $best['score'] ?? 0;
+
+        // Simple confidence: compare best vs second best, and absolute score
+        $second_score = $scored[1]['score'] ?? 0;
+        $gap = max(0, $best_score - $second_score);
+
+        $confidence = 0.0;
+        if ($best_score >= 40) {
+            $confidence = min(1.0, 0.4 + ($best_score / 200) + ($gap / 120));
+        }
+
+        return [
+            'post_id'     => $best['post_id'] ?? null,
+            'confidence'  => round($confidence, 3),
+            'candidates'  => array_slice($scored, 0, 10),
+        ];
+    }
+
+    /**
+     * Collect page IDs that appear in menus, plus label and top level status.
+     * Returns: [page_id => ['label' => string, 'is_top_level' => bool]]
+     */
+    private static function lw_collect_menu_page_ids(){
+        $out = [];
+
+        $locations = get_nav_menu_locations();
+        if (empty($locations) || !is_array($locations)) return $out;
+
+        foreach ($locations as $loc => $menu_id) {
+            if (!$menu_id) continue;
+
+            $items = wp_get_nav_menu_items($menu_id);
+            if (empty($items)) continue;
+
+            foreach ($items as $item) {
+                if (empty($item->object_id) || $item->object !== 'page') continue;
+
+                $page_id = (int) $item->object_id;
+                $label = (string) (isset($item->title) && !empty($item->title) ? $item->title: '');
+
+                // Keep the “best” label if it contains about
+                $is_about_label = (stripos($label, 'about') !== false);
+                $is_top_level = empty($item->menu_item_parent) || (int)$item->menu_item_parent === 0;
+
+                if (!isset($out[$page_id])) {
+                    $out[$page_id] = ['label' => $label, 'is_top_level' => $is_top_level];
+                } else {
+                    if ($is_about_label) $out[$page_id]['label'] = $label;
+                    $out[$page_id]['is_top_level'] = $out[$page_id]['is_top_level'] || $is_top_level;
+                }
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Gets the linking recommendations for a specfic post.
+     * 
+     * @param $post_id the ide of the post that we're linking from
+     * @param $process_key The id of the mapp that we're pulling the data from
+     * @param $direction are these inbound or outbound links? Default, outbound
+     **/
+    public static function create_link_suggestions_from_map($post_id, $process_key = '', $direction = 'outbound'){
+        if(empty($post_id) || empty($process_key)){
+            return false;
+        }
+
+        $pid = self::normalize_pid($post_id);
+        $pid_parts = self::parse_pid($pid);
+        if(empty($pid_parts['id'])){
+            return false;
+        }
+
+        $post_id = $pid_parts['id'];
+        $post_type = $pid_parts['type'];
+
+        // dashboard fixes should treat money pages as inbound-only so we don't send links out from them
+        if($direction === 'outbound' && self::should_skip_dashboard_fix_money_page_source($pid, $process_key)){
+            return false;
+        }
+
+        $work_scope = '';
+        if($process_key === md5('link-coverage-search') && in_array($direction, array('outbound', 'inbound'), true)){
+            $work_scope = Wpil_LinkMapping::normalize_relation_work_scope($direction);
+        }
+
+        $map_item = Wpil_LinkMapping::get_relation_map_item($process_key, $post_id, $post_type, true, false, $work_scope);
+        $local_model = 'gpt-4o-mini';
+
+        if( empty($map_item) || 
+            !isset($map_item['related_posts']) || 
+            empty($map_item['related_posts'])
+        ){
+            return false;
+        }
+
+        $relations = $map_item['related_posts'];
+        $data = [];
+        $input = [];
+
+        // get the post that we'll be focussing on
+        $post = new Wpil_Model_Post($post_id, $post_type);
+
+        // make sure the current post has a title
+        if(empty($post->getTitle())){
+            return false; /// exist if it doesn't
+        }
+
+        if($direction === 'outbound' && self::has_reached_ai_outbound_processing_limit($post)){
+            return false;
+        }
+
+        // if we're creating links in this post pointing to other posts
+        if($direction === 'outbound'){
+            // check to make sure that we're reasonably sure that we can create links in the post
+            $phrases = Wpil_Suggestion::getPhrases($post->getContent(), false, array(), false, array(), true);
+            if(empty($phrases)){
+                return false; // if we can't, oh darn!
+            }
+
+            // get the post's current links
+            // if we're preventing twoway linking
+            if(get_option('wpil_prevent_two_way_linking', false)){
+                // get the inbound && the outbound internal links
+                $post_links = Wpil_Post::getLinkedPostIDs($post, true);
+            }else{
+                $report_links = Wpil_Report::getReportOutboundLinks($post)['internal'];
+                $post_links = [];
+
+                if(!empty($report_links)){
+                    foreach($report_links as $dat){
+                        if(empty($dat->post) || empty($dat->post->id)){
+                            continue;
+                        }
+                        $post_links[] = $dat->post->id;
+                    }
+                }
+            }
+
+
+            // get the post's keywrods
+            $post_keywords = Wpil_TargetKeyword::get_active_keyword_list($post_id, $post_type);
+
+            // set the origin post id
+            self::$origin_post = $post;
+
+            // get the keywords for the posts that we'll be mapping to
+            $target_data = [];
+            foreach($relations as $relation_pid){
+                $relation_parts = self::parse_pid($relation_pid);
+                if(empty($relation_parts['id'])){
+                    continue;
+                }
+                $target_data[$relation_parts['type'] . '_' . $relation_parts['id']] = [
+                    'id' => $relation_parts['id'],
+                    'type' => $relation_parts['type'],
+                    'keywords' => Wpil_TargetKeyword::get_active_keyword_list($relation_parts['id'], $relation_parts['type'])
+                ];
+            }
+
+            $phrases = self::filter_ai_source_phrases_for_keyword_cannibalization($phrases, $post, array_keys($target_data));
+            $content = self::get_ai_source_content_from_phrases($phrases);
+
+            if(empty($content)){
+                return false;
+            }
+
+            // assemble the data object
+            $input['source'] = ['content' => self::trim_text_to_token_limit($content, $local_model, 20000), 'keywords' => $post_keywords];
+            $input['targets'] = [];
+            $token_size = 300 + self::count_tokens($input['source']['content'] . implode(',', $input['source']['keywords']), $local_model);
+            $limit = 100000;
+            $target_limit = 15;
+            foreach($target_data as $target_pid => $target){
+                if(count($input['targets']) > $target_limit){
+                    break;
+                }
+
+                if(in_array($target['id'], $post_links)){
+                    continue;
+                }
+
+                $tp = new Wpil_Model_Post($target['id'], $target['type']);
+
+                $title = $tp->getTitle();
+                if(empty($title)){
+                    continue;
+                }
+
+                $dat = [
+                    'title' => $title,
+                    'keywords' => !empty($target['keywords']) ? $target['keywords']: [],
+                    'target_id' => $tp->id,
+                    'target_type' => $tp->type
+                ];
+
+                $query = self::count_tokens(($dat['title'] . ((!empty($dat['keywords']) && is_array($dat['keywords'])) ? implode(',', $dat['keywords']): '') . $dat['target_id']), $local_model);
+                if($token_size + $query < $limit){
+                    $token_size += $query;
+                    $input['targets'][] = $dat;
+                }else{
+                    break;
+                }
+            }
+
+            // if there are no viable targets
+            if(empty($input['targets'])){
+                return false; // exist
+            }
+
+            // json encode the whole thinkg
+            $input = json_encode($input);
+
+            // if there was an error
+            if(empty($input) || !empty(json_last_error())){
+                return false; // todo: maybe consider some error logging here!
+            }
+
+            // log the query id
+            self::$query_ids[] = $post->get_pid();
+
+            // send off our carefully assembled data!
+            $data = self::determine_linking_candidates($input, $direction, $process_key);
+            // and save the results!
+            self::save_ai_outbound_linking_suggestions($data, $post, $process_key);
+        }elseif($direction === 'inbound'){ // if we're trying to point links to the current post
+            // get the existing links
+            $internal_links = Wpil_Post::getLinkedPostIDs($post, true);
+
+            // get the post's keywrods
+            $post_keywords = Wpil_TargetKeyword::get_active_keyword_list($post_id, $post_type);
+
+            // get the keywords for the posts that we'll be mapping to
+            // limit
+            $limit = 6;
+
+            // assemble the data objects
+            foreach($relations as $relation_pid){
+                if(count($input) > $limit){
+                    break;
+                }
+
+                $relation_parts = self::parse_pid($relation_pid);
+                if(empty($relation_parts['id']) || in_array($relation_parts['id'], $internal_links)){
+                    continue;
+                }
+
+                $source_pid = $relation_parts['type'] . '_' . $relation_parts['id'];
+                if(self::should_skip_dashboard_fix_money_page_source($source_pid, $process_key)){
+                    continue;
+                }
+
+                $tp = new Wpil_Model_Post($relation_parts['id'], $relation_parts['type']);
+                if(self::has_reached_ai_outbound_processing_limit($tp)){
+                    continue;
+                }
+
+                // check to make sure that we're reasonably sure that we can create links in the post
+                $phrases = Wpil_Suggestion::getPhrases($tp->getContent(), false, array(), false, array(), true);
+                $phrases = self::filter_ai_source_phrases_for_keyword_cannibalization($phrases, $tp, array($post->get_pid()));
+                $content = self::get_ai_source_content_from_phrases($phrases);
+
+                if(empty($content)){
+                    continue; // if we can't, skip to the next
+                }
+
+                $kwords = Wpil_TargetKeyword::get_active_keyword_list($tp->id, $tp->type);
+
+                $dat = json_encode([
+                    'source' => [
+                        'content' => self::trim_text_to_token_limit($content, 'gpt-4o-mini', 25000),
+                        'keywords' => (!empty($kwords) ? $kwords: [])
+                    ],
+                    'target' => [
+                        'title' => $post->getTitle(),
+                        'keywords' => !empty($post_keywords) ? $post_keywords: [],
+                        'target_id' => $post->id,
+                        'target_type' => $post->type
+                    ]
+                ]);
+
+                // if there was an error
+                if(empty($dat) || !empty(json_last_error())){
+                    // skip to hte next post
+                    continue; // todo: maybe consider some error logging here!
+                }
+
+                self::$query_ids[] = $tp->get_pid();
+                $input[] = $dat;
+            }
+
+            // if there is no input
+            if(empty($input)){
+                return false; // todo: maybe consider some error logging here!
+            }
+
+            // send off our carefully assembled data!
+            $data = self::determine_linking_candidates($input, $direction, $process_key);
+        }
+
+        return $data;
+    }
+    
+    /**
+     * Uses teh spooky power of AI to determine which and wehere links should be made!
+     **/
+    public static function determine_linking_candidates($data = array(), $direction = 'inbound', $process_key = ''){
+        global $wpdb;
+
+        // get the max outbound links for a post
+        $max_outbound = (int)get_option('wpil_max_links_per_post', 0);
+
+        // get the max inbound links for a post
+        $max_inbound = (int)get_option('wpil_max_inbound_links_per_post', 0);
+
+        // get if we're allowed to rewrite sentences for better fits
+        $rewrite_sentences = 0; // TODO: implement a setting later
+
+        /*
+        basic structure
+        $data[
+            source => [
+                'content' => '',
+                'keywords' => []
+            ]        
+            targets[
+                [
+                    'title' => '',
+                    'keywords' => []
+                ],
+                [
+                    'title' => '',
+                    'keywords' => []
+                ],
+                [
+                    'title' => '',
+                    'keywords' => []
+                ],
+            ]
+        ]
+
+        */
+
+        // and call!
+        self::$purpose = ($direction === 'outbound') ? 'assess-outbound-links': 'assess-inbound-links';
+        $prev_process_key = self::$active_linking_process_key;
+        self::$active_linking_process_key = (string) $process_key;
+        try{
+            $results = self::call_linkwhisper_ai($data, 'gpt-5-mini', '', ['rewrite_sentences' => $rewrite_sentences, 'max_outbound_links' => $max_outbound, 'max_inbound_links' => $max_inbound]);
+        }finally{
+            self::$active_linking_process_key = $prev_process_key;
+        }
+
+        // return the fruits of our labours!
+        return $results;
+    }
+
+    private static function normalize_pid($pid){
+        if(empty($pid)){
+            return '';
+        }
+
+        if(is_numeric($pid)){
+            return 'post_' . (int)$pid;
+        }
+
+        if(is_string($pid) && strpos($pid, '_') !== false){
+            return $pid;
+        }
+
+        return '';
+    }
+
+    public static function normalize_pid_list($ids = []){
+        if(empty($ids)){
+            return [];
+        }
+
+        if(!is_array($ids)){
+            $ids = [$ids];
+        }
+
+        $out = [];
+        foreach($ids as $id){
+            $pid = self::normalize_pid($id);
+            if(!empty($pid)){
+                $out[] = $pid;
+            }
+        }
+
+        return array_values(array_unique($out));
+    }
+
+    private static function parse_pid($pid){
+        $out = [
+            'type' => 'post',
+            'id' => 0,
+            'pid' => ''
+        ];
+
+        $pid = self::normalize_pid($pid);
+        if(empty($pid)){
+            return $out;
+        }
+
+        $bits = explode('_', $pid, 2);
+        if(count($bits) === 2){
+            $type = $bits[0];
+            $id = (int)$bits[1];
+            if($type === 'term'){
+                $out['type'] = 'term';
+            }
+            $out['id'] = $id;
+            $out['pid'] = $out['type'] . '_' . $id;
+        }
+
+        return $out;
+    }
+
+    private static function parse_linking_target($result){
+        $target_type = '';
+        $target_id = 0;
+
+        if(is_object($result)){
+            if(isset($result->target_type)){
+                $target_type = (string)$result->target_type;
+            }
+            if(isset($result->target_id)){
+                $target_id = $result->target_id;
+            }
+        }else{
+            $target_id = $result;
+        }
+
+        if(is_string($target_id) && strpos($target_id, '_') !== false){
+            $parts = self::parse_pid($target_id);
+            if(!empty($parts['id'])){
+                $target_id = $parts['id'];
+                $target_type = $parts['type'];
+            }
+        }
+
+        if(empty($target_type)){
+            $target_type = 'post';
+        }
+
+        return [
+            'id' => (int)$target_id,
+            'type' => $target_type,
+            'data_type' => ($target_type === 'post') ? 1 : 0
+        ];
+    }
+
+    /**
+     * Retuns a list of the currently available Dashboartd fix with ai actions
+     **/
+    public static function get_dashboard_fix_process_keys(){
+        return array(
+            md5('orphan-post-search'),
+            md5('link-coverage-search'),
+            md5('link-quality-search'),
+            md5('broken-link-search'),
+            md5('external-focus-search'),
+        );
+    }
+
+    /**
+     * Returns true when the process key belongs to orphaned-post fixing.
+     **/
+    private static function is_orphan_fix_process_key($process_key = ''){
+        $process_key = is_string($process_key) ? sanitize_text_field($process_key) : '';
+        if($process_key === ''){
+            return false;
+        }
+
+        return ($process_key === md5('orphan-post-search'));
+    }
+
+    /**
+     * Lets us tell when a process came from one of the dashboard fix tools.
+     **/
+    private static function is_dashboard_fix_process_key($process_key = ''){
+        $process_key = is_string($process_key) ? sanitize_text_field($process_key) : '';
+        if($process_key === ''){
+            return false;
+        }
+
+        return in_array($process_key, self::get_dashboard_fix_process_keys(), true);
+    }
+
+    /**
+     * Checks if the pid belongs to one of the pages we want to keep inbound-only.
+     **/
+    private static function is_money_page_pid($pid = ''){
+        $parts = self::parse_pid($pid);
+        if(empty($parts['id'])){
+            return false;
+        }
+
+        return in_array($parts['pid'], Wpil_Settings::get_money_page_pid_list(true), true);
+    }
+
+    /**
+     * Dashboard fix runs can still target money pages, but they shouldn't use them as source posts.
+     **/
+    private static function should_skip_dashboard_fix_money_page_source($pid = '', $process_key = ''){
+        return (self::is_dashboard_fix_process_key($process_key) && self::is_money_page_pid($pid));
+    }
+
+    /**
+     * Pulls the sentence text out of the phrase objects so we can hand it off to the AI.
+     **/
+    private static function get_ai_source_content_from_phrases($phrases = array()){
+        if(empty($phrases) || !is_array($phrases)){
+            return '';
+        }
+
+        $sentences = array();
+        foreach($phrases as $phrase){
+            if(!is_object($phrase)){
+                continue;
+            }
+
+            $sentence = '';
+            if(isset($phrase->sentence_src) && !empty($phrase->sentence_src)){
+                $sentence = $phrase->sentence_src;
+            }elseif(isset($phrase->text) && !empty($phrase->text)){
+                $sentence = $phrase->text;
+            }
+
+            if(!empty($sentence)){
+                $sentences[] = $sentence;
+            }
+        }
+
+        return !empty($sentences) ? implode('|||', $sentences): '';
+    }
+
+    /**
+     * When the setting is on, strip out any source sentences that are trying to rank another post's keyword.
+     * We still keep sentences that are talking about the current post or the target post we're linking to.
+     **/
+    private static function filter_ai_source_phrases_for_keyword_cannibalization($phrases = array(), $source_post = null, $allowed_target_pids = array()){
+        if(empty($phrases) || !is_array($phrases) || !is_a($source_post, 'Wpil_Model_Post') || !Wpil_Settings::get_prevent_keyword_cannibalization()){
+            return $phrases;
+        }
+
+        $keyword_data = self::get_keyword_cannibalization_keyword_data();
+        if(empty($keyword_data['keywords'])){
+            return $phrases;
+        }
+
+        $allowed_lookup = array();
+        $allowed_lookup[$source_post->get_pid()] = true;
+        if(!empty($allowed_target_pids)){
+            foreach($allowed_target_pids as $pid){
+                $parts = self::parse_pid($pid);
+                if(empty($parts['id'])){
+                    continue;
+                }
+
+                $allowed_lookup[$parts['pid']] = true;
+            }
+        }
+
+        $filtered = array();
+        foreach($phrases as $phrase){
+            if(!is_object($phrase)){
+                continue;
+            }
+
+            $sentence = '';
+            if(isset($phrase->sentence_src) && !empty($phrase->sentence_src)){
+                $sentence = $phrase->sentence_src;
+            }elseif(isset($phrase->text) && !empty($phrase->text)){
+                $sentence = $phrase->text;
+            }
+
+            if(empty($sentence)){
+                continue;
+            }
+
+            $matched_owner_pids = self::get_ai_sentence_keyword_owner_pids($sentence, $keyword_data['keywords'], $keyword_data['more_specific_keywords']);
+            if(empty($matched_owner_pids)){
+                $filtered[] = $phrase;
+                continue;
+            }
+
+            $keep_phrase = true;
+            foreach($matched_owner_pids as $pid => $matched){
+                if(empty($allowed_lookup[$pid])){
+                    $keep_phrase = false;
+                    break;
+                }
+            }
+
+            if($keep_phrase){
+                $filtered[] = $phrase;
+            }
+        }
+
+        return $filtered;
+    }
+
+    /**
+     * Loads the active keyword data once so we don't keep hammering the DB on every AI call.
+     **/
+    private static function get_keyword_cannibalization_keyword_data(){
+        if(!is_null(self::$keyword_cannibalization_keywords)){
+            return self::$keyword_cannibalization_keywords;
+        }
+
+        $keywords = Wpil_TargetKeyword::get_all_active_keywords([],[],['ai-generated-keyword']);
+
+        $formatted_keywords = array();
+        if(!empty($keywords)){
+            foreach($keywords as $keyword){
+                $formatted = is_a($keyword, 'Wpil_Model_Keyword') ? $keyword: new Wpil_Model_Keyword($keyword);
+                if(empty($formatted->post_id) || empty($formatted->keywords)){
+                    continue;
+                }
+
+                $formatted_keywords[] = $formatted;
+            }
+        }
+
+        self::$keyword_cannibalization_keywords = array(
+            'keywords' => $formatted_keywords,
+            'more_specific_keywords' => []//!empty($formatted_keywords) ? Wpil_Suggestion::getMoreSpecificKeywords($formatted_keywords, $formatted_keywords): array(),
+        );
+
+        return self::$keyword_cannibalization_keywords;
+    }
+
+    /**
+     * Mirrors the regular suggestion matching so the AI flow respects the same target keyword guard rails.
+     **/
+    private static function get_ai_sentence_keyword_owner_pids($sentence = '', $target_keywords = array(), $more_specific_keywords = array()){
+        if(empty($sentence) || empty($target_keywords)){
+            return array();
+        }
+
+        $matched_posts = array();
+        $sentence = Wpil_Word::strtolower($sentence);
+        $stemmed_sentence = Wpil_Word::getStemmedSentence($sentence);
+        $normalized_sentence = Wpil_Word::getStemmedSentence(Wpil_Word::remove_accents($stemmed_sentence), true);
+
+        foreach($target_keywords as $keyword){
+            if(empty($keyword) || empty($keyword->post_id) || empty($keyword->keywords) || 3 > strlen($keyword->keywords) || $keyword->keyword_type === 'ai-generated-keyword'){
+                continue;
+            }
+
+            if(!self::ai_sentence_has_target_keyword_match($sentence, $stemmed_sentence, $normalized_sentence, $keyword)){
+                continue;
+            }
+
+            if(isset($more_specific_keywords[$keyword->stemmed])){
+                $skip_keyword = false;
+                foreach($more_specific_keywords[$keyword->stemmed] as $specific_keyword){
+                    if(self::ai_sentence_has_target_keyword_match($sentence, $stemmed_sentence, $normalized_sentence, $specific_keyword)){
+                        $skip_keyword = true;
+                        break;
+                    }
+                }
+
+                if($skip_keyword){
+                    continue;
+                }
+            }
+
+            $matched_posts[(($keyword->post_type === 'term') ? 'term_' : 'post_') . (int) $keyword->post_id] = true;
+        }
+
+        return $matched_posts;
+    }
+
+    /**
+     * Checks the sentence against a keyword using the same gentle matching rules as the normal suggestion builder.
+     **/
+    private static function ai_sentence_has_target_keyword_match($sentence = '', $stemmed_sentence = '', $normalized_sentence = '', $target_keyword = null){
+        if(empty($target_keyword) || empty($target_keyword->keywords) || empty($target_keyword->stemmed)){
+            return false;
+        }
+
+        $keyword = Wpil_Word::strtolower($target_keyword->keywords);
+        $in_unstemmed = false !== strpos($sentence, $keyword);
+        $in_stemmed = false !== strpos($stemmed_sentence, $target_keyword->stemmed);
+        $in_normalized = false;
+
+        if(!$in_unstemmed && !$in_stemmed){
+            $in_normalized = !empty($normalized_sentence) && !empty($target_keyword->normalized) && false !== strpos($normalized_sentence, $target_keyword->normalized);
+        }
+
+        if(!$in_unstemmed && !$in_stemmed && !$in_normalized){
+            return false;
+        }
+
+        if($in_unstemmed && !$in_stemmed){
+            $pos = Wpil_Word::mb_strpos($sentence, $keyword);
+            if(Wpil_Word::isPartOfWord($sentence, $keyword, $pos)){
+                return false;
+            }
+        }
+
+        if($in_stemmed){
+            $pos = Wpil_Word::mb_strpos($stemmed_sentence, $target_keyword->stemmed);
+            if(Wpil_Word::isPartOfWord($stemmed_sentence, $target_keyword->stemmed, $pos)){
+                return false;
+            }
+        }
+
+        if($in_normalized){
+            $pos = Wpil_Word::mb_strpos($normalized_sentence, $target_keyword->normalized);
+            if(Wpil_Word::isPartOfWord($normalized_sentence, $target_keyword->normalized, $pos)){
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Once a post hits the outbound cap, leave it alone for AI outbound work.
+     **/
+    private static function has_reached_ai_outbound_processing_limit($post = null){
+        if(!is_a($post, 'Wpil_Model_Post')){
+            return false;
+        }
+
+        $limit = (int) Wpil_Settings::get_ai_suggestion_outbound_limit();
+        if($limit < 1){
+            return false;
+        }
+
+        return ($post->getOutboundInternalLinks(true) >= $limit);
+    }
+
+    /**
+     * Live orphan check for target items used in AI suggestions.
+     **/
+    private static function is_orphaned_target_for_ai_suggestion($target_id = 0, $target_type = 'post'){
+        $target_id = (int) $target_id;
+        $target_type = ($target_type === 'term') ? 'term' : 'post';
+        if($target_id <= 0){
+            return false;
+        }
+
+        $target_state = self::get_live_target_state($target_id, $target_type);
+
+        return !empty($target_state['orphan_eligible']);
+    }
+
+    /**
+     * Gets the current live link state for a target post/term.
+     **/
+    private static function get_live_target_state($target_id = 0, $target_type = 'post'){
+        $target_id = (int) $target_id;
+        $target_type = ($target_type === 'term') ? 'term' : 'post';
+        $state = array(
+            'inbound_internal' => 0,
+            'outbound_internal' => 0,
+            'outbound_external' => 0,
+            'orphan_eligible' => false,
+        );
+
+        if($target_id <= 0){
+            return $state;
+        }
+
+        $target_post = new Wpil_Model_Post($target_id, $target_type);
+        if(empty($target_post) || !$target_post->check_if_post_exists()){
+            return $state;
+        }
+
+        $state['inbound_internal'] = (int) $target_post->getInboundInternalLinks(true);
+        $state['outbound_internal'] = (int) $target_post->getOutboundInternalLinks(true);
+        $state['outbound_external'] = (int) $target_post->getOutboundExternalLinks(true);
+        $state['orphan_eligible'] = ($state['inbound_internal'] <= 0);
+
+        return $state;
+    }
+
+    /**
+     * Checks if the suggestion's source now links to the target in the live report data.
+     **/
+    private static function did_suggestion_create_live_link($suggestion){
+        if(empty($suggestion) || !is_object($suggestion) || empty($suggestion->post_id) || empty($suggestion->post_type) || empty($suggestion->target_id) || empty($suggestion->target_type)){
+            return false;
+        }
+
+        $source_post = new Wpil_Model_Post((int) $suggestion->post_id, (string) $suggestion->post_type);
+        if(empty($source_post) || !$source_post->check_if_post_exists()){
+            return false;
+        }
+
+        $outbound_links = Wpil_Report::link_table_is_created() ? Wpil_Report::getReportOutboundLinks($source_post) : Wpil_Report::getOutboundLinks($source_post);
+        $internal_links = (!empty($outbound_links['internal']) && is_array($outbound_links['internal'])) ? $outbound_links['internal'] : array();
+        if(empty($internal_links)){
+            return false;
+        }
+
+        foreach($internal_links as $link){
+            if(empty($link->post) || empty($link->post->id) || empty($link->post->type)){
+                continue;
+            }
+
+            if((int) $link->post->id === (int) $suggestion->target_id && (string) $link->post->type === (string) $suggestion->target_type){
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Applies a suggestion and reports what actually happened.
+     **/
+    private static function apply_linking_suggestion($suggestion, $ignore_on_fail = false){
+        global $wpdb;
+        $linking_table = $wpdb->prefix . 'wpil_ai_linking';
+
+        $response = array(
+            'applied' => false,
+            'stale' => false,
+            'message' => '',
+            'reason' => '',
+            'process_key' => (!empty($suggestion->process_key)) ? (string) $suggestion->process_key : '',
+            'link_id' => (!empty($suggestion->ai_index)) ? (int) $suggestion->ai_index : 0,
+        );
+
+        if(empty($suggestion) || !is_object($suggestion) || empty($suggestion->ai_index)){
+            $response['message'] = 'Suggestion not found.';
+            $response['reason'] = 'missing_suggestion';
+            return $response;
+        }
+
+        $process_key = !empty($suggestion->process_key) ? (string) $suggestion->process_key : '';
+        if(self::is_orphan_fix_process_key($process_key)){
+            $target_state = self::get_live_target_state((int) $suggestion->target_id, (string) $suggestion->target_type);
+            if(empty($target_state['orphan_eligible'])){
+                $wpdb->update($linking_table, ['ignored' => 1], ['ai_index' => (int) $suggestion->ai_index]);
+                $response['stale'] = true;
+                $response['message'] = 'The target already has inbound links.';
+                $response['reason'] = 'target_not_orphaned';
+                return $response;
+            }
+        }
+
+        $target_link = self::build_target_link_from_suggestion($suggestion);
+        if(empty($target_link)){
+            if($ignore_on_fail){
+                $wpdb->update($linking_table, ['ignored' => 1], ['ai_index' => (int) $suggestion->ai_index]);
+            }
+
+            $response['message'] = 'Unable to build the proposed link from the current suggestion data.';
+            $response['reason'] = 'invalid_target_link';
+            return $response;
+        }
+
+        $meta = [[
+            'id' => $suggestion->target_id,
+            'type' => $suggestion->target_type,
+            'post_origin' => 'internal',
+            'site_url' => '',
+            'sentence' => $suggestion->sentence_text,
+            'sentence_with_anchor' => '',
+            'custom_sentence' => $target_link,
+        ]];
+
+        Wpil_Base::clear_tracked_action('link_inserted');
+
+        if(!empty($suggestion->post_type) && $suggestion->post_type === 'term'){
+            Wpil_Toolbox::update_encoded_term_meta($suggestion->post_id, 'wpil_links', $meta);
+            Wpil_Term::addLinksToTerm($suggestion->post_id);
+        }else{
+            Wpil_Post::addLinksToContent(null, ['ID' => $suggestion->post_id], array(), false, true, $meta);
+        }
+
+        $applied = Wpil_Base::action_happened('link_inserted') || self::did_suggestion_create_live_link($suggestion);
+        Wpil_Base::clear_tracked_action('link_inserted');
+
+        if($applied){
+            self::mark_suggestion_inserted_and_ignore_sentence_matches($suggestion);
+            $response['applied'] = true;
+            $response['message'] = 'Link inserted.';
+            $response['reason'] = 'inserted';
+            return $response;
+        }
+
+        if($ignore_on_fail){
+            $wpdb->update($linking_table, ['ignored' => 1], ['ai_index' => (int) $suggestion->ai_index]);
+        }
+
+        $response['message'] = 'Unable to insert the link into the current content.';
+        $response['reason'] = 'insert_failed';
+        return $response;
+    }
+
+    /**
+     * 
+     **/
+    public static function ignore_linking_suggestions($ids = []){
+        global $wpdb;
+        $linking_table = $wpdb->prefix . 'wpil_ai_linking';
+
+        if(empty($ids)){
+            return false;
+        }
+
+        if(!is_array($ids)){
+            $ids = array($ids);
+        }
+
+        foreach($ids as $id){
+            $wpdb->update($linking_table, ['ignored' => 1], ['ai_index' => $id]);
+        }
+    }
+
+    /**
+     * Creates links from the database
+     **/
+    public static function create_links_from_linking_suggestions($ids = []){
+        global $wpdb;
+        $linking_table = $wpdb->prefix . 'wpil_ai_linking';
+
+        if(empty($ids)){
+            return array(
+                'applied' => false,
+                'stale' => false,
+                'message' => 'No suggestions were supplied.',
+                'reason' => 'missing_ids',
+                'process_key' => '',
+                'link_id' => 0,
+            );
+        }
+
+        $ids = implode(',', $ids);
+
+        $data = $wpdb->get_results("SELECT * FROM {$linking_table} WHERE `ai_index` in ({$ids}) AND `ignored` < 1 AND `inserted` < 1");
+
+        if(empty($data)){
+            return array(
+                'applied' => false,
+                'stale' => false,
+                'message' => 'Suggestion not found or already processed.',
+                'reason' => 'missing_suggestion',
+                'process_key' => '',
+                'link_id' => 0,
+            );
+        }
+
+        $links_inserted = 0;
+        $results = array();
+        foreach($data as $dat){
+            if(Wpil_Base::overTimeLimit(5,30)){
+                break;
+            }
+
+            $result = self::apply_linking_suggestion($dat, true);
+            $results[(int) $dat->ai_index] = $result;
+            if(!empty($result['applied'])){
+                $links_inserted++;
+            }
+        }
+
+        if(!empty($links_inserted)){
+            Wpil_Telemetry::log_event('linkwhisper_ai_link_inserted', array('count' => $links_inserted));
+        }
+
+        if(count($results) === 1){
+            return reset($results);
+        }
+
+        return $results;
+    }
+
+    /**
+     * Automatically inserts links from suggestions
+     **/
+    public static function auto_create_links_from_suggestions($source_post_id = 0, $source_post_type = '', $process_key = ''){
+        global $wpdb;
+        $linking_table = $wpdb->prefix . 'wpil_ai_linking';
+
+        $source_post_id = (int) $source_post_id;
+        $source_post_type = ($source_post_type === 'term') ? 'term' : (($source_post_type === 'post') ? 'post' : '');
+        $process_key = is_string($process_key) ? sanitize_text_field($process_key) : '';
+
+        $where = "WHERE `ignored` < 1 AND `inserted` < 1";
+        if(!empty($process_key)){
+            $where .= $wpdb->prepare(" AND `process_key` = %s", $process_key);
+        }
+        if($source_post_id > 0){
+            $where .= $wpdb->prepare(" AND `post_id` = %d", $source_post_id);
+            if(!empty($source_post_type)){
+                $where .= $wpdb->prepare(" AND `post_type` = %s", $source_post_type);
+            }
+        }
+
+        $data = $wpdb->get_results("SELECT * FROM {$linking_table} {$where} ORDER BY COALESCE(ai_relation_score, 0) DESC, ai_index ASC LIMIT 50");
+
+        if(empty($data)){
+            return true; // return true for the benefit of whoever is listening
+        }
+
+        // get the max outbound links for a post
+        $max_outbound = (int)get_option('wpil_max_links_per_post', 0);
+
+        // get the max inbound links for a post
+        $max_inbound = (int)get_option('wpil_max_inbound_links_per_post', 0);
+
+        // get the minimum relatedness score required to auto-insert
+        $auto_insert_threshold = Wpil_Settings::get_ai_auto_insert_relatedness_threshold();
+
+        $links_inserted = 0;
+        foreach($data as $dat){
+            if(Wpil_Base::overTimeLimit(5,60)){
+                break;
+            }
+
+            $row_process_key = !empty($dat->process_key) ? (string)$dat->process_key : $process_key;
+            $orphan_only_targets = self::is_orphan_fix_process_key($row_process_key);
+            if($orphan_only_targets && !self::is_orphaned_target_for_ai_suggestion((int)$dat->target_id, (string)$dat->target_type)){
+                $wpdb->update($linking_table, ['ignored' => 1], ['ai_index' => $dat->ai_index]);
+                continue;
+            }
+
+            if($auto_insert_threshold > 0){
+                $ai_score = isset($dat->ai_relation_score) ? floatval($dat->ai_relation_score) : null;
+
+                if($ai_score === null || $ai_score <= 0){
+                    $source_post = new Wpil_Model_Post($dat->post_id, $dat->post_type);
+                    $target_post = new Wpil_Model_Post($dat->target_id, $dat->target_type);
+                    $ai_score = self::get_post_relationship_score($source_post, $target_post);
+
+                    if($ai_score > 0){
+                        $wpdb->update($linking_table, ['ai_relation_score' => $ai_score], ['ai_index' => $dat->ai_index]);
+                    }
+                }
+
+                if($ai_score === null || $ai_score < $auto_insert_threshold){
+                    $wpdb->update($linking_table, ['ignored' => 1], ['ai_index' => $dat->ai_index]);
+                    continue;
+                }
+            }
+            
+            $source_post = new Wpil_Model_Post($dat->post_id, $dat->post_type);
+            $target_post = new Wpil_Model_Post($dat->target_id, $dat->target_type);
+
+            // if we're at the linking limits
+            if( self::has_reached_ai_outbound_processing_limit($source_post) ||
+                ($max_outbound > 0 && $source_post->getOutboundInternalLinks(true) >= $max_outbound) ||
+                ($max_inbound > 0 && $target_post->getInboundInternalLinks(true) >= $max_inbound) ||
+                ($orphan_only_targets && $target_post->getInboundInternalLinks(true) > 0)
+            ){
+                // marke the link as processed
+                $wpdb->update($linking_table, ['ignored' => 1], ['ai_index' => $dat->ai_index]);
+                // and skip inserting this suggestion
+                continue;
+            }
+
+            $result = self::apply_linking_suggestion($dat, true);
+            if(!empty($result['applied'])){
+                $links_inserted++;
+            }
+        }
+
+        if(!empty($links_inserted)){
+            Wpil_Telemetry::log_event('linkwhisper_ai_link_inserted', array('count' => $links_inserted));
+        }
+
+        return false; // just assume that we're not done with processing
+    }
+
+    /**
+     * Marks the inserted suggestion row and suppresses duplicate target suggestions for the same sentence.
+     *
+     * @param object $suggestion
+     * @return void
+     */
+    private static function mark_suggestion_inserted_and_ignore_sentence_matches($suggestion){
+        global $wpdb;
+        $linking_table = $wpdb->prefix . 'wpil_ai_linking';
+
+        if(empty($suggestion) || !is_object($suggestion) || empty($suggestion->ai_index)){
+            return;
+        }
+
+        $sentence_id = !empty($suggestion->sentence_id) ? (string)$suggestion->sentence_id : '';
+        if($sentence_id === '' && !empty($suggestion->sentence_text)){
+            $sentence_id = md5((string)$suggestion->sentence_text);
+        }
+        $process_key = !empty($suggestion->process_key) ? (string)$suggestion->process_key : '';
+
+        $wpdb->update($linking_table, ['inserted' => 1], ['ai_index' => (int)$suggestion->ai_index]);
+
+        $sentence_text = !empty($suggestion->sentence_text) ? (string)$suggestion->sentence_text : '';
+
+        // Independent rule 1: ignore all sibling suggestions for the same source sentence.
+        if($sentence_id !== ''){
+            $sql = "UPDATE {$linking_table}
+                    SET ignored = 1
+                    WHERE ai_index != %d
+                        AND inserted < 1
+                        AND ignored < 1
+                        AND post_id = %d
+                        AND post_type = %s
+                        AND (
+                            sentence_id = %s
+                            OR ((sentence_id = '' OR sentence_id IS NULL) AND sentence_text = %s)
+                        )";
+            $params = [
+                (int)$suggestion->ai_index,
+                (int)$suggestion->post_id,
+                (string)$suggestion->post_type,
+                $sentence_id,
+                $sentence_text,
+            ];
+            if($process_key !== ''){
+                $sql .= " AND process_key = %s";
+                $params[] = $process_key;
+            }
+
+            $wpdb->query($wpdb->prepare($sql, $params));
+        }
+
+        // Independent rule 2: ignore all sibling suggestions for the same source -> target pair.
+        $sql = "UPDATE {$linking_table}
+                SET ignored = 1
+                WHERE ai_index != %d
+                    AND inserted < 1
+                    AND ignored < 1
+                    AND post_id = %d
+                    AND post_type = %s
+                    AND target_id = %d
+                    AND target_type = %s";
+        $params = [
+            (int)$suggestion->ai_index,
+            (int)$suggestion->post_id,
+            (string)$suggestion->post_type,
+            (int)$suggestion->target_id,
+            (string)$suggestion->target_type,
+        ];
+        if($process_key !== ''){
+            $sql .= " AND process_key = %s";
+            $params[] = $process_key;
+        }
+
+        $wpdb->query($wpdb->prepare($sql, $params));
+    }
+
+
+    /**
+     * @param object $linking_data
+     **/
+    public static function build_target_link_from_suggestion($linking_data = array()){
+        if(empty($linking_data)){
+            return false;
+        }
+
+        // get the target URL
+        $target = new Wpil_Model_Post($linking_data->target_id, $linking_data->target_type);
+
+        // make sure the post exists
+        if(!$target->check_if_post_exists() || empty($target->getViewLink())){
+            return false;
+        }
+
+        // get the anchor
+        preg_match_all('~<a\b[^>]*href\s*=\s*([\'"])wpil-link-proposal\1[^>]*>(.*?)</a>~is', $linking_data->sentence_with_anchor_text, $m);
+
+        if(!isset($m[2]) || empty($m[2])){
+            return false;
+        }
+
+        $anchor = $m[2][0];
+
+        // create a clean sentence version
+        $sentence = preg_replace('~<a\b[^>]*href\s*=\s*([\'"])wpil-link-proposal\1[^>]*>(.*?)</a>~is', '$2', $linking_data->sentence_with_anchor_text);
+        
+        // build the link
+        $link = Wpil_Post::build_link_with_attrs($target->getViewLink(), $anchor, $sentence);
+
+        // and return it
+        return $link;
+    }
+
+    public static function ajax_get_review_links(){
+        global $wpdb;
+        $table = $wpdb->prefix . 'wpil_ai_linking';
+        $report_links_table = $wpdb->prefix . 'wpil_report_links';
+
+        Wpil_Base::verify_nonce('wizard-scanning-nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'No permission'), 403);
+        }
+
+        $max = 5;
+        $fetch_limit = 50;
+        $user_id = get_current_user_id();
+        $sort_key = !empty($_POST['sort_key']) ? sanitize_key(wp_unslash($_POST['sort_key'])) : 'ai';
+        $sort_dir = !empty($_POST['sort_dir']) ? strtolower(sanitize_text_field(wp_unslash($_POST['sort_dir']))) : 'desc';
+        $sort_dir = ($sort_dir === 'asc') ? 'asc' : 'desc';
+        $has_process_key = isset($_POST['process_key']);
+        $process_key = $has_process_key ? sanitize_text_field(wp_unslash($_POST['process_key'])) : '';
+        if(!$has_process_key && empty($process_key)){
+            $process_key = get_option('wpil_ai_linking_process_key', '');
+        }
+        $fix_type = !empty($_POST['fix_type']) ? sanitize_key(wp_unslash($_POST['fix_type'])) : '';
+        if($fix_type === 'orphaned_posts' && !self::is_orphan_fix_process_key($process_key)){
+            $process_key = md5('orphan-post-search');
+        }
+        if(self::is_release_disabled_ai_linking_process($process_key, $fix_type)){
+            wp_send_json_success(array(
+                'items' => array(),
+                'remaining' => 0,
+                'process_key' => $process_key,
+            ));
+        }
+        $orphan_only_targets = self::is_orphan_fix_process_key($process_key);
+        $dashboard_fix_keys = self::get_dashboard_fix_process_keys();
+        $is_dashboard_fix_process = (!empty($process_key) && in_array($process_key, $dashboard_fix_keys, true));
+        $fix_special_options = $is_dashboard_fix_process ? Wpil_Settings::get_ai_fix_special_options($process_key) : array();
+        $fix_filter_sql = '';
+        $fix_filter_params = array();
+        if(!empty($fix_special_options['link_to_category_pages'])){
+            $fix_filter_sql .= " AND a.target_type = 'term'";
+        }
+        if(!empty($fix_special_options['link_from_category_pages'])){
+            $fix_filter_sql .= " AND a.post_type = 'term'";
+        }
+        if(!empty($fix_special_options['select_post_types']) && !empty($fix_special_options['selected_post_types']) && is_array($fix_special_options['selected_post_types'])){
+            $selected_types = array_values(array_unique(array_filter(array_map('sanitize_text_field', $fix_special_options['selected_post_types']))));
+            if(!empty($selected_types)){
+                $type_placeholders = implode(',', array_fill(0, count($selected_types), '%s'));
+                $fix_filter_sql .= " AND (
+                    a.target_type <> 'post'
+                    OR EXISTS (
+                        SELECT 1
+                        FROM {$wpdb->posts} fix_posts
+                        WHERE fix_posts.ID = a.target_id
+                            AND fix_posts.post_type IN ({$type_placeholders})
+                    )
+                )";
+                $fix_filter_params = array_merge($fix_filter_params, $selected_types);
+            }
+        }
+
+        $hidden_link_ids = get_transient('wpil_hide_ai_link_id');
+        if(!is_array($hidden_link_ids)){
+            $hidden_link_ids = array();
+        }
+        $hidden_link_ids = array_values(array_unique(array_filter(array_map('intval', $hidden_link_ids))));
+
+        $table_data = $wpdb->get_row("SELECT table_collation, SUBSTRING_INDEX(table_collation, '_', 1) AS character_set FROM information_schema.tables WHERE table_schema = '{$wpdb->dbname}' AND table_name = '{$wpdb->posts}'");
+        $report_collation = (!empty($table_data) && !empty($table_data->table_collation)) ? $table_data->table_collation : 'utf8mb4_unicode_ci';
+        $report_charset = (!empty($table_data) && !empty($table_data->character_set)) ? $table_data->character_set : 'utf8mb4';
+        $target_type_compare_sql = "CONVERT(rl.target_type USING {$report_charset}) COLLATE {$report_collation} = CONVERT(a.target_type USING {$report_charset}) COLLATE {$report_collation}";
+        $post_type_compare_sql = "CONVERT(rl.post_type USING {$report_charset}) COLLATE {$report_collation} = CONVERT(a.target_type USING {$report_charset}) COLLATE {$report_collation}";
+
+        $allowed_sort_keys = array('ai', 'type', 'tax', 'inbound', 'outbound_internal', 'outbound_external', 'post_id', 'language');
+        if(!in_array($sort_key, $allowed_sort_keys, true)){
+            $sort_key = 'ai';
+        }
+
+        $params = array();
+        $where = "WHERE a.inserted = 0 AND a.ignored = 0";
+        if($has_process_key && $process_key === ''){
+            $where .= " AND 1 = 0";
+        }
+        if(!empty($process_key) && $process_key !== 'all'){
+            $where .= " AND a.process_key = %s";
+            $params[] = $process_key;
+        }
+        if($orphan_only_targets){
+            $where .= " AND NOT EXISTS (
+                SELECT 1
+                FROM {$report_links_table} rl
+                WHERE rl.target_id = a.target_id
+                    AND ((a.target_type = 'post' AND rl.target_type = 'post') OR (a.target_type = 'term' AND rl.target_type = 'term'))
+            )";
+        }
+        if(!empty($fix_filter_sql)){
+            $where .= $fix_filter_sql;
+            $params = array_merge($params, $fix_filter_params);
+        }
+        if(!empty($hidden_link_ids)){
+            $where .= " AND a.ai_index NOT IN (" . implode(',', array_fill(0, count($hidden_link_ids), '%d')) . ")";
+            $params = array_merge($params, $hidden_link_ids);
+        }
+
+        $select_sql = "SELECT a.*";
+        $order_sql = "ORDER BY a.ai_relation_score DESC, a.ai_index DESC";
+        if(in_array($sort_key, array('inbound', 'outbound_internal', 'outbound_external'), true)){
+            switch($sort_key){
+                case 'inbound':
+                    $sort_count_sql = "(SELECT COUNT(*) FROM {$report_links_table} rl WHERE rl.target_id = a.target_id AND {$target_type_compare_sql})";
+                    break;
+                case 'outbound_internal':
+                    $sort_count_sql = "(SELECT COUNT(*) FROM {$report_links_table} rl WHERE rl.post_id = a.target_id AND {$post_type_compare_sql} AND rl.internal = 1)";
+                    break;
+                case 'outbound_external':
+                default:
+                    $sort_count_sql = "(SELECT COUNT(*) FROM {$report_links_table} rl WHERE rl.post_id = a.target_id AND {$post_type_compare_sql} AND rl.internal = 0)";
+                    break;
+            }
+
+            $select_sql .= ", {$sort_count_sql} AS report_sort_count";
+            $order_sql = "ORDER BY report_sort_count {$sort_dir}, a.ai_relation_score DESC, a.ai_index DESC";
+        }
+
+        $sql = "{$select_sql} FROM {$table} a {$where} {$order_sql} LIMIT %d";
+        $params[] = $fetch_limit;
+        $prepared = $wpdb->prepare($sql, $params);
+        $rows = $wpdb->get_results($prepared, ARRAY_A);
+
+        $items = array();
+        if (!empty($rows)) {
+            foreach ($rows as $row) {
+                $target_title = '';
+                $target_hint  = '';
+                $target_data  = array(
+                    'title' => '',
+                    'type' => '',
+                    'taxonomy' => '',
+                    'categories' => '',
+                    'tags' => '',
+                    'inbound_internal' => 0,
+                    'outbound_internal' => 0,
+                    'outbound_external' => 0,
+                    'post_id' => 0,
+                    'language' => '',
+                    'view_link' => '',
+                    'ai_relatedness' => ''
+                );
+
+                $source_post = null;
+                $source_view_link = '';
+                if(!empty($row['post_id']) && !empty($row['post_type'])){
+                    $source_post = new Wpil_Model_Post((int)$row['post_id'], $row['post_type']);
+                    if(!empty($source_post)){
+                        $source_view_link = $source_post->getLinks()->view;
+                        if(!empty($source_view_link)){
+                            $source_view_link = Wpil_Link::filter_staging_to_live_domain($source_view_link);
+                        }
+                    }
+                }
+
+                if (!empty($row['target_id']) && !empty($row['target_type'])) {
+                    $target_post = new Wpil_Model_Post((int)$row['target_id'], $row['target_type']);
+                    $target_title = $target_post->getTitle();
+                    $target_state = self::get_live_target_state((int) $row['target_id'], (string) $row['target_type']);
+
+                    if($orphan_only_targets && empty($target_state['orphan_eligible'])){
+                        continue;
+                    }
+
+                    $categories = '';
+                    $tags = '';
+                    if($target_post->type === 'post'){
+                        $taxonomies = Wpil_Settings::getTermTypes();
+                        $terms = get_terms(array(
+                            'taxonomy' => $taxonomies,
+                            'hide_empty' => false,
+                            'object_ids' => $target_post->id,
+                        ));
+
+                        $categories_list = array();
+                        $tags_list = array();
+                        if(!is_wp_error($terms) && !empty($terms)){
+                            foreach($terms as $term){
+                                $taxonomy = get_taxonomy($term->taxonomy);
+                                if($taxonomy && $taxonomy->hierarchical){
+                                    $categories_list[] = $term->name;
+                                }else{
+                                    $tags_list[] = $term->name;
+                                }
+                            }
+                        }
+
+                        if(!empty($categories_list)){
+                            $categories = implode(', ', $categories_list);
+                        }
+                        if(!empty($tags_list)){
+                            $tags = implode(', ', $tags_list);
+                        }
+                    }
+
+                    $view_link = $target_post->getLinks()->view;
+                    if(!empty($view_link)){
+                        $view_link = Wpil_Link::filter_staging_to_live_domain($view_link);
+                    }
+
+                    $ai_relatedness = '';
+                    if(isset($row['ai_relation_score']) && is_numeric($row['ai_relation_score']) && !empty($row['ai_relation_score'])){
+                        $ai_relatedness = (round((float)$row['ai_relation_score'], 4) * 100) . '%';
+                    }
+
+                    $target_data = array(
+                        'title' => $target_title,
+                        'type' => $target_post->getType(),
+                        'taxonomy' => ($target_post->type === 'term') ? $target_post->getRealType() : '',
+                        'categories' => $categories,
+                        'tags' => $tags,
+                        'inbound_internal' => (int) $target_state['inbound_internal'],
+                        'outbound_internal' => (int) $target_state['outbound_internal'],
+                        'outbound_external' => (int) $target_state['outbound_external'],
+                        'post_id' => (int)$target_post->id,
+                        'language' => Wpil_Post::getPostLanguageCode($target_post),
+                        'view_link' => $view_link,
+                        'ai_relatedness' => $ai_relatedness
+                    );
+                }
+
+                $sentence_link = self::build_target_link_from_suggestion((object)$row);
+                if(empty($sentence_link)){
+                    self::ignore_linking_suggestions([(int)$row['ai_index']]);
+                    continue;
+                }
+
+                $sentence_id = isset($row['sentence_id']) ? (string)$row['sentence_id'] : '';
+                if($sentence_id === '' && !empty($row['sentence_text'])){
+                    $sentence_id = md5((string)$row['sentence_text']);
+                }
+
+                $items[] = array(
+                    'id' => (int)$row['ai_index'],
+                    'post_id' => (int)$row['post_id'],
+                    'post_type' => isset($row['post_type']) ? (string)$row['post_type'] : '',
+                    'sentence_id' => $sentence_id,
+                    'target_id' => (int)$row['target_id'],
+                    'target_type' => isset($row['target_type']) ? (string)$row['target_type'] : '',
+                    'post_title' => (!empty($source_post) ? $source_post->getTitle() : get_the_title((int)$row['post_id'])),
+                    'source_view_link' => $source_view_link,
+                    'target_title' => $target_title,
+                    'target_hint'  => $target_hint,
+                    'proposed_sentence_html' => $sentence_link,
+                    'ai_relation_score' => isset($row['ai_relation_score']) ? floatval($row['ai_relation_score']) : null,
+                    'target_data' => $target_data,
+                );
+            }
+        }
+
+        if(!empty($items)){
+            $numeric_sort_keys = array(
+                'ai' => true,
+                'inbound' => true,
+                'outbound_internal' => true,
+                'outbound_external' => true,
+                'post_id' => true
+            );
+
+            $extract_sort_value = function($item) use ($sort_key){
+                $target_data = isset($item['target_data']) && is_array($item['target_data']) ? $item['target_data'] : array();
+                switch($sort_key){
+                    case 'ai':
+                        return isset($item['ai_relation_score']) ? $item['ai_relation_score'] : null;
+                    case 'type':
+                        return isset($target_data['type']) ? $target_data['type'] : '';
+                    case 'tax':
+                        if(!empty($target_data['categories'])) return $target_data['categories'];
+                        if(!empty($target_data['tags'])) return $target_data['tags'];
+                        return isset($target_data['taxonomy']) ? $target_data['taxonomy'] : '';
+                    case 'inbound':
+                        return isset($target_data['inbound_internal']) ? $target_data['inbound_internal'] : null;
+                    case 'outbound_internal':
+                        return isset($target_data['outbound_internal']) ? $target_data['outbound_internal'] : null;
+                    case 'outbound_external':
+                        return isset($target_data['outbound_external']) ? $target_data['outbound_external'] : null;
+                    case 'post_id':
+                        return isset($target_data['post_id']) ? $target_data['post_id'] : null;
+                    case 'language':
+                        return isset($target_data['language']) ? $target_data['language'] : '';
+                    default:
+                        return isset($item['ai_relation_score']) ? $item['ai_relation_score'] : null;
+                }
+            };
+
+            usort($items, function($a, $b) use ($extract_sort_value, $numeric_sort_keys, $sort_key, $sort_dir){
+                $a_val = $extract_sort_value($a);
+                $b_val = $extract_sort_value($b);
+                $is_numeric = !empty($numeric_sort_keys[$sort_key]);
+
+                if($is_numeric){
+                    $a_missing = !is_numeric($a_val);
+                    $b_missing = !is_numeric($b_val);
+                    if($a_missing !== $b_missing){
+                        return $a_missing ? 1 : -1;
+                    }
+                    if(!$a_missing){
+                        $a_num = (float) $a_val;
+                        $b_num = (float) $b_val;
+                        if($a_num !== $b_num){
+                            if($sort_dir === 'asc'){
+                                return ($a_num < $b_num) ? -1 : 1;
+                            }
+                            return ($a_num > $b_num) ? -1 : 1;
+                        }
+                    }
+                }else{
+                    $a_str = trim(strtolower((string) $a_val));
+                    $b_str = trim(strtolower((string) $b_val));
+                    $a_missing = ($a_str === '');
+                    $b_missing = ($b_str === '');
+                    if($a_missing !== $b_missing){
+                        return $a_missing ? 1 : -1;
+                    }
+                    if(!$a_missing && $a_str !== $b_str){
+                        if($sort_dir === 'asc'){
+                            return ($a_str < $b_str) ? -1 : 1;
+                        }
+                        return ($a_str > $b_str) ? -1 : 1;
+                    }
+                }
+
+                $a_score = (isset($a['ai_relation_score']) && is_numeric($a['ai_relation_score'])) ? (float)$a['ai_relation_score'] : -INF;
+                $b_score = (isset($b['ai_relation_score']) && is_numeric($b['ai_relation_score'])) ? (float)$b['ai_relation_score'] : -INF;
+                if($a_score !== $b_score){
+                    return ($a_score > $b_score) ? -1 : 1;
+                }
+
+                $a_id = isset($a['id']) ? (int)$a['id'] : 0;
+                $b_id = isset($b['id']) ? (int)$b['id'] : 0;
+                if($a_id === $b_id){
+                    return 0;
+                }
+                return ($a_id > $b_id) ? -1 : 1;
+            });
+        }
+
+        if(count($items) > $max){
+            $items = array_slice($items, 0, $max);
+        }
+
+        if($has_process_key && $process_key === ''){
+            $remaining = 0;
+        }elseif(!empty($process_key) && $process_key !== 'all'){
+            $remaining_where = "a.inserted = 0 AND a.ignored = 0 AND a.process_key = %s";
+            $remaining_params = array($process_key);
+            if($orphan_only_targets){
+                $remaining_where .= " AND NOT EXISTS (
+                    SELECT 1
+                    FROM {$report_links_table} rl
+                    WHERE rl.target_id = a.target_id
+                        AND ((a.target_type = 'post' AND rl.target_type = 'post') OR (a.target_type = 'term' AND rl.target_type = 'term'))
+                )";
+            }
+            if(!empty($fix_filter_sql)){
+                $remaining_where .= $fix_filter_sql;
+                $remaining_params = array_merge($remaining_params, $fix_filter_params);
+            }
+            if(!empty($hidden_link_ids)){
+                $remaining_where .= " AND a.ai_index NOT IN (" . implode(',', array_fill(0, count($hidden_link_ids), '%d')) . ")";
+                $remaining_params = array_merge($remaining_params, $hidden_link_ids);
+            }
+
+            $remaining_sql = "SELECT COUNT(*) FROM {$table} a WHERE {$remaining_where}";
+            $remaining = (int) $wpdb->get_var($wpdb->prepare($remaining_sql, $remaining_params));
+        }else{
+            $remaining_where = "a.inserted = 0 AND a.ignored = 0";
+            $remaining_params = array();
+            if(!empty($hidden_link_ids)){
+                $remaining_where .= " AND a.ai_index NOT IN (" . implode(',', array_fill(0, count($hidden_link_ids), '%d')) . ")";
+                $remaining_params = array_merge($remaining_params, $hidden_link_ids);
+            }
+
+            $remaining_sql = "SELECT COUNT(*) FROM {$table} a WHERE {$remaining_where}";
+            $remaining = !empty($remaining_params) ? (int) $wpdb->get_var($wpdb->prepare($remaining_sql, $remaining_params)) : (int) $wpdb->get_var($remaining_sql);
+        }
+
+        wp_send_json_success(array(
+            'items' => $items,
+            'remaining' => $remaining,
+            'process_key' => $process_key,
+        ));
+    }
+
+    public static function ajax_get_review_link_count(){
+        global $wpdb;
+        $table = $wpdb->prefix . 'wpil_ai_linking';
+        $report_links_table = $wpdb->prefix . 'wpil_report_links';
+
+        Wpil_Base::verify_nonce('wizard-scanning-nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'No permission'), 403);
+        }
+
+        $has_process_key = isset($_POST['process_key']);
+        $process_key = $has_process_key ? sanitize_text_field(wp_unslash($_POST['process_key'])) : '';
+        if(!$has_process_key && empty($process_key)){
+            $process_key = get_option('wpil_ai_linking_process_key', '');
+        }
+        $fix_type = !empty($_POST['fix_type']) ? sanitize_key(wp_unslash($_POST['fix_type'])) : '';
+        if($fix_type === 'orphaned_posts' && !self::is_orphan_fix_process_key($process_key)){
+            $process_key = md5('orphan-post-search');
+        }
+        if(self::is_release_disabled_ai_linking_process($process_key, $fix_type)){
+            wp_send_json_success(array(
+                'remaining' => 0,
+                'process_key' => $process_key,
+            ));
+        }
+        $orphan_only_targets = self::is_orphan_fix_process_key($process_key);
+        $dashboard_fix_keys = self::get_dashboard_fix_process_keys();
+        $is_dashboard_fix_process = (!empty($process_key) && in_array($process_key, $dashboard_fix_keys, true));
+        $fix_special_options = $is_dashboard_fix_process ? Wpil_Settings::get_ai_fix_special_options($process_key) : array();
+        $fix_filter_sql = '';
+        $fix_filter_params = array();
+        if(!empty($fix_special_options['link_to_category_pages'])){
+            $fix_filter_sql .= " AND a.target_type = 'term'";
+        }
+        if(!empty($fix_special_options['link_from_category_pages'])){
+            $fix_filter_sql .= " AND a.post_type = 'term'";
+        }
+        if(!empty($fix_special_options['select_post_types']) && !empty($fix_special_options['selected_post_types']) && is_array($fix_special_options['selected_post_types'])){
+            $selected_types = array_values(array_unique(array_filter(array_map('sanitize_text_field', $fix_special_options['selected_post_types']))));
+            if(!empty($selected_types)){
+                $type_placeholders = implode(',', array_fill(0, count($selected_types), '%s'));
+                $fix_filter_sql .= " AND (
+                    a.target_type <> 'post'
+                    OR EXISTS (
+                        SELECT 1
+                        FROM {$wpdb->posts} fix_posts
+                        WHERE fix_posts.ID = a.target_id
+                            AND fix_posts.post_type IN ({$type_placeholders})
+                    )
+                )";
+                $fix_filter_params = array_merge($fix_filter_params, $selected_types);
+            }
+        }
+
+        $hidden_link_ids = get_transient('wpil_hide_ai_link_id');
+        if(!is_array($hidden_link_ids)){
+            $hidden_link_ids = array();
+        }
+        $hidden_link_ids = array_values(array_unique(array_filter(array_map('intval', $hidden_link_ids))));
+
+        if($has_process_key && $process_key === ''){
+            $remaining = 0;
+        }elseif(!empty($process_key) && $process_key !== 'all'){
+            $remaining_where = "a.inserted = 0 AND a.ignored = 0 AND a.process_key = %s";
+            $remaining_params = array($process_key);
+            if($orphan_only_targets){
+                $remaining_where .= " AND NOT EXISTS (
+                    SELECT 1
+                    FROM {$report_links_table} rl
+                    WHERE rl.target_id = a.target_id
+                        AND ((a.target_type = 'post' AND rl.target_type = 'post') OR (a.target_type = 'term' AND rl.target_type = 'term'))
+                )";
+            }
+            if(!empty($fix_filter_sql)){
+                $remaining_where .= $fix_filter_sql;
+                $remaining_params = array_merge($remaining_params, $fix_filter_params);
+            }
+            if(!empty($hidden_link_ids)){
+                $remaining_where .= " AND a.ai_index NOT IN (" . implode(',', array_fill(0, count($hidden_link_ids), '%d')) . ")";
+                $remaining_params = array_merge($remaining_params, $hidden_link_ids);
+            }
+
+            $remaining_sql = "SELECT COUNT(*) FROM {$table} a WHERE {$remaining_where}";
+            $remaining = (int) $wpdb->get_var($wpdb->prepare($remaining_sql, $remaining_params));
+        }else{
+            $remaining_where = "a.inserted = 0 AND a.ignored = 0";
+            $remaining_params = array();
+            if(!empty($hidden_link_ids)){
+                $remaining_where .= " AND a.ai_index NOT IN (" . implode(',', array_fill(0, count($hidden_link_ids), '%d')) . ")";
+                $remaining_params = array_merge($remaining_params, $hidden_link_ids);
+            }
+
+            $remaining_sql = "SELECT COUNT(*) FROM {$table} a WHERE {$remaining_where}";
+            $remaining = !empty($remaining_params) ? (int) $wpdb->get_var($wpdb->prepare($remaining_sql, $remaining_params)) : (int) $wpdb->get_var($remaining_sql);
+        }
+        wp_send_json_success(array(
+            'remaining' => $remaining,
+            'process_key' => $process_key,
+        ));
+    }
+
+    public static function wpil_parse_anchor_html($html){
+        $out = array(
+            'href' => '',
+            'text' => '',
+        );
+
+        if (empty($html)) {
+            return $out;
+        }
+
+        // Extract href
+        if (preg_match('/<a\b[^>]*\bhref\s*=\s*([\'"])(.*?)\1/i', $html, $m)) {
+            $out['href'] = html_entity_decode($m[2], ENT_QUOTES, 'UTF-8');
+        } elseif (preg_match('/<a\b[^>]*\bhref\s*=\s*([^\'"\s>]+)/i', $html, $m)) {
+            $out['href'] = html_entity_decode($m[1], ENT_QUOTES, 'UTF-8');
+        }
+
+        // Extract inner text (strip nested tags if any)
+        if (preg_match('/<a\b[^>]*>(.*?)<\/a>/is', $html, $m)) {
+            $text = trim(wp_strip_all_tags($m[1]));
+            $out['text'] = html_entity_decode($text, ENT_QUOTES, 'UTF-8');
+        }
+
+        return $out;
+    }
+
+    /**
+     * Prepare WordPress post content for link analysis by stripping non-essential syntax.
+     *
+     * - Removes Gutenberg block comments (keeps block inner HTML/text)
+     * - Removes shortcode wrappers while preserving enclosed content
+     * - Removes HTML attributes from opening tags, except href on <a> tags
+     *
+     * @param string $content
+     * @return string
+     */
+    public static function prepare_post_content_for_linking($content){
+        if(!is_string($content) || $content === ''){
+            return '';
+        }
+
+        // Remove Gutenberg block comments like:
+        // <!-- wp:paragraph {"align":"center"} -->
+        // <!-- /wp:paragraph -->
+        $content = preg_replace('/<!--\s*\/?wp:[\s\S]*?-->/i', '', $content);
+
+        // Remove shortcode tags while preserving wrapped content where present.
+        if(function_exists('get_shortcode_regex')){
+            $pattern = '/' . get_shortcode_regex() . '/s';
+            $content = preg_replace_callback($pattern, function($matches){
+                // Handle escaped shortcodes like [[tag]]
+                if(isset($matches[1], $matches[6]) && $matches[1] === '[' && $matches[6] === ']'){
+                    return substr($matches[0], 1, -1);
+                }
+
+                // Keep enclosed content for non-self-closing shortcodes.
+                if(isset($matches[5]) && $matches[5] !== ''){
+                    return $matches[5];
+                }
+
+                return '';
+            }, $content);
+        }else{
+            // Fallback: remove shortcode-like tags.
+            $content = preg_replace('/\[(\/?)[^\[\]]+?\]/', '', $content);
+        }
+
+        // Strip all attributes from opening HTML tags except href in anchor tags.
+        $content = preg_replace_callback('/<(?!\/|!|\?)([a-zA-Z][a-zA-Z0-9:-]*)(\s+[^>]*?)?(\s*\/?)>/', function($matches){
+            $tag_name = strtolower($matches[1]);
+            $is_self_closing = (isset($matches[3]) && strpos($matches[3], '/') !== false);
+
+            if($tag_name !== 'a'){
+                return '<' . $matches[1] . ($is_self_closing ? ' /' : '') . '>';
+            }
+
+            $attrs = isset($matches[2]) ? $matches[2] : '';
+            $href = '';
+            if(preg_match('/\bhref\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s"\'>]+))/i', $attrs, $href_match)){
+                if(isset($href_match[1]) && $href_match[1] !== ''){
+                    $href = $href_match[1];
+                }elseif(isset($href_match[2]) && $href_match[2] !== ''){
+                    $href = $href_match[2];
+                }elseif(isset($href_match[3])){
+                    $href = $href_match[3];
+                }
+            }
+
+            if($href === ''){
+                return '<' . $matches[1] . '>';
+            }else{
+                // for the time being, use a placeholder for the href... Just to keep the bot from being stupid
+                $href = 'https://en.wikipedia.org/'; // because wiki !== 'obvious testing domain'
+            }
+
+            return '<' . $matches[1] . ' href="' . esc_attr($href) . '"' . ($is_self_closing ? ' /' : '') . '>';
+        }, $content);
+
+        return $content;
+    }
+
+    public static function ajax_set_review_link_decision(){
+        global $wpdb;
+        $table = $wpdb->prefix . 'wpil_ai_linking';
+
+        Wpil_Base::verify_nonce('wizard-scanning-nonce');
+
+        $link_id = isset($_POST['link_id']) ? sanitize_text_field($_POST['link_id']) : '';
+        $decision = isset($_POST['decision']) ? sanitize_text_field($_POST['decision']) : '';
+        $has_process_key = isset($_POST['process_key']);
+        $process_key = $has_process_key ? sanitize_text_field(wp_unslash($_POST['process_key'])) : '';
+        if(!$has_process_key && empty($process_key)){
+            $process_key = get_option('wpil_ai_linking_process_key', '');
+        }
+        $fix_type = !empty($_POST['fix_type']) ? sanitize_key(wp_unslash($_POST['fix_type'])) : '';
+        if($fix_type === 'orphaned_posts' && !self::is_orphan_fix_process_key($process_key)){
+            $process_key = md5('orphan-post-search');
+        }
+        if(self::is_release_disabled_ai_linking_process($process_key, $fix_type)){
+            wp_send_json_success(array(
+                'link_id' => $link_id,
+                'decision' => $decision,
+                'process_key' => $process_key,
+                'applied' => false,
+                'stale' => false,
+                'message' => 'AI link review is hidden for this release.',
+                'reason' => 'release_disabled',
+            ));
+        }
+
+        if(empty($link_id) || ($decision !== 'approve' && $decision !== 'reject')){
+            wp_send_json_error(array('message' => 'Invalid payload'), 400);
+        }
+
+        $id_list = get_transient('wpil_hide_ai_link_id');
+        if(empty($id_list)){
+            $id_list = [];
+        }
+
+        $id_list[] = $link_id;
+
+        set_transient('wpil_hide_ai_link_id', $id_list, MINUTE_IN_SECONDS); // set a flag so we can tell what ids we're ignoring!
+
+        if($has_process_key && $process_key === ''){
+            wp_send_json_error(array('message' => 'Process key required'), 400);
+        }
+
+        $suggestion = null;
+        if(!empty($process_key) && 'all' !== $process_key){
+            $suggestion = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM {$table} WHERE ai_index = %d AND process_key = %s LIMIT 1",
+                (int) $link_id,
+                $process_key
+            ));
+            if(empty($suggestion)){
+                wp_send_json_error(array('message' => 'Suggestion not found for process'), 404);
+            }
+        }else{
+            $suggestion = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM {$table} WHERE ai_index = %d LIMIT 1",
+                (int) $link_id
+            ));
+            if(empty($suggestion)){
+                wp_send_json_error(array('message' => 'Suggestion not found'), 404);
+            }
+        }
+
+        if($decision === 'approve'){
+            $result = self::create_links_from_linking_suggestions([$link_id]);
+            wp_send_json_success(array(
+                'link_id' => $link_id,
+                'decision' => $decision,
+                'process_key' => $process_key,
+                'applied' => !empty($result['applied']),
+                'stale' => !empty($result['stale']),
+                'message' => !empty($result['message']) ? $result['message'] : '',
+                'reason' => !empty($result['reason']) ? $result['reason'] : '',
+            ));
+        }else{
+            self::ignore_linking_suggestions([$link_id]);
+            wp_send_json_success(array(
+                'link_id' => $link_id,
+                'decision' => $decision,
+                'process_key' => $process_key,
+                'applied' => true,
+                'stale' => false,
+                'message' => 'Suggestion rejected.',
+                'reason' => 'rejected',
+            ));
+        }
     }
 }

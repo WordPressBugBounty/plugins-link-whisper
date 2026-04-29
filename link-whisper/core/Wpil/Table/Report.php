@@ -6,6 +6,7 @@ if (!class_exists('WP_List_Table')) {
 
 class Wpil_Table_Report extends WP_List_Table
 {
+    private static $money_page_pid_lookup = null;
 
     function __construct()
     {
@@ -16,6 +17,18 @@ class Wpil_Table_Report extends WP_List_Table
         ));
 
         $this->prepare_items();
+    }
+
+    private static function is_outbound_coverage_exempt($post){
+        if(empty($post) || !is_object($post) || !method_exists($post, 'get_pid')){
+            return false;
+        }
+
+        if(is_null(self::$money_page_pid_lookup)){
+            self::$money_page_pid_lookup = array_fill_keys(Wpil_Settings::get_money_page_pid_list(true), true);
+        }
+
+        return isset(self::$money_page_pid_lookup[$post->get_pid()]);
     }
 
     function column_default($item, $column_name)
@@ -265,7 +278,7 @@ class Wpil_Table_Report extends WP_List_Table
                             $highlight_title = '';
                             $increase_count = '';
                             $outbound_suggestion_data = '';
-                            if(isset($_REQUEST['link_density']) && $count < 3){
+                            if(isset($_REQUEST['link_density']) && $count < 3 && !self::is_outbound_coverage_exempt($item['post'])){
                                 $add_highlight_class = ' add-density-highlight';
                                 //$highlight_title = 'title="'.esc_attr__('This post needs more outbound internal links.', 'wpil').'"';
                                 $tooltip = __('Add this many outbound internal links.', 'wpil');
@@ -509,12 +522,12 @@ class Wpil_Table_Report extends WP_List_Table
 
 //            $actions['delete-post-links'] = '<a target="_blank" href="' . esc_url($post->getLinks()->edit) . '">' . sprintf(__('Delete All Links On %s', 'wpil'), $object_name) . '</a>';
 
-            if($post->type === 'post' && !empty(EMPTY_TRASH_DAYS)){
-                $actions['trash'] = '<a href="' . esc_url(get_delete_post_link($post->id)) . '" class="wpil-trash-post-link">' . sprintf(__('Trash %s', 'wpil'), $object_name) . '</a>';
-            }
-
             if(isset($_GET['orphaned'])){
                 $actions['ignore-orphaned'] = '<a href="#" class="wpil-ignore-orphaned-post" data-post-id="' . $post->get_pid() . '" data-nonce="'. wp_create_nonce($user->ID . 'ignore-orphaned-post-nonce') .'">' . sprintf(__('Ignore Orphaned %s', 'wpil'), $object_name) . '</a>';
+            }
+
+            if($post->type === 'post' && !empty(EMPTY_TRASH_DAYS)){
+                $actions['trash'] = '<a href="' . esc_url(get_delete_post_link($post->id)) . '" class="wpil-trash-post-link">' . sprintf(__('Trash %s', 'wpil'), $object_name) . '</a>';
             }
 
             if(!isset($_GET['orphaned']) && !isset($_GET['link_density']) && !isset($_GET['link_relation'])){

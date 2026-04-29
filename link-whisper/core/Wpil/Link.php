@@ -7,6 +7,7 @@ class Wpil_Link
 {
     static $url_redirect_cache = array();
     static $cleaned_url_redirect_cache = array();
+    static $remove_link_anchor_text = false;
 
     /**
      * Register services
@@ -111,6 +112,193 @@ class Wpil_Link
         }
 
         return false;
+    }
+
+    /**
+     * Extracts affiliate-related query params from a URL.
+     * Returns an array of key => value pairs.
+     **/
+    public static function get_affiliate_query_params($url = ''){
+        if(empty($url)){
+            return [];
+        }
+
+        $parts = wp_parse_url($url);
+        if(empty($parts) || empty($parts['query'])){
+            return [];
+        }
+
+        parse_str($parts['query'], $params);
+        if(empty($params)){
+            return [];
+        }
+
+        $affiliate_params = [];
+        $patterns = [
+            '/^aff/i',
+            '/affiliate/i',
+            '/^ref/i',
+            '/^tag$/i',
+            '/^utm_/i',
+            '/partner/i',
+            '/subid/i',
+            '/^sid$/i',
+            '/clickid/i',
+            '/gclid/i',
+            '/fbclid/i',
+            '/irclickid/i',
+            '/irgwc/i',
+            '/campaign/i',
+            '/^coupon/i',
+            '/^promo/i',
+        ];
+
+        foreach($params as $key => $value){
+            foreach($patterns as $pattern){
+                if(preg_match($pattern, $key)){
+                    $affiliate_params[$key] = $value;
+                    break;
+                }
+            }
+        }
+
+        return $affiliate_params;
+    }
+
+    /**
+     * Stores affiliate params for a domain so they can be reused.
+     **/
+    public static function set_affiliate_params_for_host($host = '', $params = []){
+        if(empty($host) || empty($params)){
+            return false;
+        }
+
+        $host = str_replace('www.', '', $host);
+        $cache = get_option('wpil_affiliate_params_by_host', []);
+        if(!is_array($cache)){
+            $cache = [];
+        }
+
+        if(empty($cache[$host])){
+            $cache[$host] = $params;
+        }else{
+            $cache[$host] = array_merge($cache[$host], $params);
+        }
+
+        update_option('wpil_affiliate_params_by_host', $cache, false);
+        return true;
+    }
+
+    /**
+     * Retrieves stored affiliate params for a domain.
+     **/
+    public static function get_affiliate_params_for_host($host = ''){
+        if(empty($host)){
+            return [];
+        }
+
+        $host = str_replace('www.', '', $host);
+        $cache = get_option('wpil_affiliate_params_by_host', []);
+        if(!is_array($cache)){
+            return [];
+        }
+
+        return isset($cache[$host]) && is_array($cache[$host]) ? $cache[$host] : [];
+    }
+
+    /**
+     * Applies affiliate params from the old URL to the new URL if the host matches.
+     **/
+    public static function apply_affiliate_params($old_url = '', $new_url = ''){
+        if(empty($old_url) || empty($new_url)){
+            return $new_url;
+        }
+
+        $old_host = wp_parse_url($old_url, PHP_URL_HOST);
+        $new_host = wp_parse_url($new_url, PHP_URL_HOST);
+        if(empty($old_host) || empty($new_host)){
+            return $new_url;
+        }
+
+        $old_host = str_replace('www.', '', $old_host);
+        $new_host = str_replace('www.', '', $new_host);
+
+        $same_host = ($old_host === $new_host);
+        $same_base = (self::get_base_domain($old_host) === self::get_base_domain($new_host));
+
+        if(!$same_host && !$same_base){
+            return $new_url;
+        }
+
+        $affiliate_params = self::get_affiliate_query_params($old_url);
+        if(empty($affiliate_params)){
+            $affiliate_params = self::get_affiliate_params_for_host($old_host);
+            if(empty($affiliate_params) && $same_base){
+                $affiliate_params = self::get_affiliate_params_for_host(self::get_base_domain($old_host));
+            }
+        }
+
+        if(empty($affiliate_params)){
+            return $new_url;
+        }
+
+        $parts = wp_parse_url($new_url);
+        if(empty($parts)){
+            return $new_url;
+        }
+
+        $query = [];
+        if(!empty($parts['query'])){
+            parse_str($parts['query'], $query);
+        }
+
+        foreach($affiliate_params as $key => $value){
+            if(!isset($query[$key])){
+                $query[$key] = $value;
+            }
+        }
+
+        $new_url = self::build_url_from_parts($parts, $query);
+        return $new_url;
+    }
+
+    /**
+     * Gets the base domain (eTLD+1 approximation) for a host.
+     **/
+    public static function get_base_domain($host = ''){
+        if(empty($host)){
+            return '';
+        }
+
+        $host = str_replace('www.', '', $host);
+        $parts = explode('.', $host);
+        if(count($parts) < 2){
+            return $host;
+        }
+
+        $last = array_pop($parts);
+        $second_last = array_pop($parts);
+        return $second_last . '.' . $last;
+    }
+    /**
+     * Builds a URL from parsed parts and query args.
+     **/
+    public static function build_url_from_parts($parts = [], $query_args = []){
+        if(empty($parts)){
+            return '';
+        }
+
+        $scheme   = isset($parts['scheme']) ? $parts['scheme'] . '://' : '';
+        $host     = $parts['host'] ?? '';
+        $port     = isset($parts['port']) ? ':' . $parts['port'] : '';
+        $user     = $parts['user'] ?? '';
+        $pass     = isset($parts['pass']) ? ':' . $parts['pass']  : '';
+        $pass     = ($user || $pass) ? "$pass@" : '';
+        $path     = $parts['path'] ?? '';
+        $query    = (!empty($query_args)) ? '?' . http_build_query($query_args) : '';
+        $fragment = isset($parts['fragment']) ? '#' . $parts['fragment'] : '';
+
+        return "$scheme$user$pass$host$port$path$query$fragment";
     }
 
     /**
@@ -277,7 +465,7 @@ class Wpil_Link
             $return_code = $curl_error_code;
         }
 
-        if($return_code > 0 && ($return_code < 200 || $return_code > 399) && preg_match('/\.jpg|\.jpeg|\.svg|\.png|\.gif|\.ico|\.webp/i', $http_code)){
+        if($return_code > 0 && ($return_code < 200 || $return_code > 399) && preg_match('/\.jpg|\.jpeg|\.svg|\.png|\.gif|\.ico|\.webp/i', $url)){
             return 888;
         }
 
@@ -416,8 +604,8 @@ class Wpil_Link
             curl_setopt($handles[$url], CURLOPT_SSL_VERIFYHOST, 0);
             curl_setopt($handles[$url], CURLOPT_TIMEOUT, 15);
             curl_setopt($handles[$url], CURLOPT_COOKIEFILE, null);
-            curl_setopt($handles[$url], CURLOPT_FORBID_REUSE, true);
-            curl_setopt($handles[$url], CURLOPT_FRESH_CONNECT, true);
+//            curl_setopt($handles[$url], CURLOPT_FORBID_REUSE, true); // TODO: if we don't see a massive uptake in false positives by version 3.1.0, remove
+//            curl_setopt($handles[$url], CURLOPT_FRESH_CONNECT, true);
             curl_setopt($handles[$url], CURLOPT_COOKIESESSION, true);
             curl_setopt($handles[$url], CURLOPT_SSL_VERIFYPEER, false);
 
@@ -430,6 +618,11 @@ class Wpil_Link
             $curl_version = curl_version();
             if (defined('CURLOPT_SSL_FALSESTART') && version_compare(phpversion(), '7.0.7') >= 0 && version_compare($curl_version['version'], '7.42.0') >= 0) {
                 curl_setopt($handles[$url], CURLOPT_SSL_FALSESTART, true);
+            }
+
+            if(version_compare($curl_version['version'], '7.1.0') >= 0){
+                curl_setopt($handles[$url], CURLOPT_LOW_SPEED_LIMIT, 1);  // bytes/sec
+                curl_setopt($handles[$url], CURLOPT_LOW_SPEED_TIME, 10);  // seconds
             }
 
             if(false === $head_call){
@@ -470,21 +663,19 @@ class Wpil_Link
             do {
                 $status = curl_multi_exec($mh, $active);
                 if ($active) {
-                    curl_multi_select($mh);
+                    $rc = curl_multi_select($mh);
+                    if ($rc === -1) {
+                        usleep(100000); // 100ms snooz
+                    }
                 }
             } while ($active && $status == CURLM_OK);
         }
 
         // get any error codes from the operations
         $curl_codes = array();
-        foreach($handles as $handle){
-            $info = curl_multi_info_read($mh);
-            $handle_int = intval($info['handle']);
-            if(isset($info['result'])){
-                $curl_codes[$handle_int] = $info['result'];
-            }else{
-                $curl_codes[$handle_int] = 0;
-            }
+        while($info = curl_multi_info_read($mh)){
+            $handle_int = (int) $info['handle'];
+            $curl_codes[$handle_int] = isset($info['result']) ? $info['result'] : 0;
         }
 
         // when the multihandle is finished, go over the handles and process the responses
@@ -732,7 +923,7 @@ class Wpil_Link
      * @param $post
      * @return bool Returns true if the post is at the limit and false if it is not.
      */
-    public static function at_max_outbound_links($post)
+    public static function at_max_outbound_links($post, $ignore_external = false)
     {
         if(empty($post)){
             return false;
@@ -827,6 +1018,8 @@ class Wpil_Link
              * @param string $url The URL we're currently looking at
              **/
             if(!apply_filters('wpil_max_outbound_links_filter_internal', true, self::isInternal($url), $url)){
+                continue;
+            }elseif($ignore_external && !self::isInternal($url)){
                 continue;
             }
 

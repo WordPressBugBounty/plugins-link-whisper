@@ -4,7 +4,27 @@ jQuery(document).ready(function($){
         $('.wpil-review-offer').css('display', 'flex');
 
         // listen for the user dismissing the email sign up notice, and hide the notice if he does dismiss it
-        $('.wpil-review-offer .notice-dismiss, .wpil-review-offer .notice-temp-dismiss').on('click', function(e){
+        $('.wpil-review-offer .notice-dismiss').on('click', function(e){
+            $(this).css({'opacity': 0.75, 'cursor': 'default', 'background': '#007cba !important'});
+            $(this).parents('.wpil-review-offer').fadeOut(300);
+
+            $.ajax({
+                type: 'POST',
+                url: wpil_ajax.ajax_url,
+                data: {
+                    action: 'perm_dismiss_review_notice',
+                    nonce: wpil_ajax.wpil_review_dismiss_nonce,
+                    current_user: wpil_ajax.current_user,
+                    leaving_review: 0
+                },
+                success: function(response){
+                    console.log(response);
+                },
+            });
+        });
+
+        // "Maybe later" is a temporary dismiss
+        $('.wpil-review-offer .notice-temp-dismiss').on('click', function(e){
             $(this).css({'opacity': 0.75, 'cursor': 'default', 'background': '#007cba !important'});
             $(this).parents('.wpil-review-offer').fadeOut(300);
 

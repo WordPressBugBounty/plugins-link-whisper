@@ -137,7 +137,7 @@ $taxonomies = (!empty($taxonomies)) ? array_keys($taxonomies): array();
                                                 <?php _e('Reasoning for Score:', 'wpil'); ?>
                                                 <br />
                                                 <br />
-                                                <?php echo $phrase->suggestions[$index]->get_ai_related_explanation(); ?>
+                                                <?php echo esc_html($phrase->suggestions[$index]->get_ai_related_explanation()); ?>
                                             </div>
                                         </div>
                                     </div>
@@ -247,7 +247,7 @@ $taxonomies = (!empty($taxonomies)) ? array_keys($taxonomies): array();
                                                                 <?php _e('Reasoning for Score:', 'wpil'); ?>
                                                                 <br />
                                                                 <br />
-                                                                <?php echo $suggestion->get_ai_related_explanation(); ?>
+                                                                <?php echo esc_html($suggestion->get_ai_related_explanation()); ?>
                                                             </div>
                                                         </div>
                                                     </div>
@@ -369,7 +369,7 @@ $taxonomies = (!empty($taxonomies)) ? array_keys($taxonomies): array();
                                         <?php _e('Reasoning for Score:', 'wpil'); ?>
                                         <br />
                                         <br />
-                                        <?php echo $phrase->suggestions[$index]->get_ai_related_explanation(); ?>
+                                        <?php echo esc_html($phrase->suggestions[$index]->get_ai_related_explanation()); ?>
                                     </div>
                                 </div>
                             </div>

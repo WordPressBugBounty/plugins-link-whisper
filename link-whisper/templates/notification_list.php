@@ -24,14 +24,14 @@ if (empty($notifications) || !isset($notifications['data']) || empty($notificati
         
         <div class="notification-item-wrapper">
             <?php if ($has_url): ?>
-                <a href="<?php echo $notification['action_url']; ?>" class="notification-item" target="_blank">
+                <a href="<?php echo esc_url($notification['action_url']); ?>" class="notification-item" target="_blank" rel="noopener noreferrer">
             <?php else: ?>
                 <div class="notification-item notification-item-no-link">
             <?php endif; ?>
             
                 <?php if ($image_url): ?>
                 <div class="notification-cover-wrapper">
-                    <img src="<?php echo $image_url; ?>"
+                    <img src="<?php echo esc_url($image_url); ?>"
                          alt="<?php echo esc_attr($title); ?>"
                          class="notification-cover-image"
                          onerror="this.style.display='none'">
@@ -39,9 +39,9 @@ if (empty($notifications) || !isset($notifications['data']) || empty($notificati
                 <?php endif; ?>
                 
                 <div class="notification-content">
-                    <h4><?php echo $title; ?></h4>
+                    <h4><?php echo esc_html($title); ?></h4>
                     <?php if ($description): ?>
-                        <p><?php echo $description; ?></p>
+                        <p><?php echo esc_html($description); ?></p>
                     <?php endif; ?>
                 </div>
             
