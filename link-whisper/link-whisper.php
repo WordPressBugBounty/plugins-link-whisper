@@ -1,11 +1,11 @@
 <?php
 /**
  * Plugin Name: Link Whisper Free
- * Version: 0.9.3
+ * Version: 0.9.4
  * Description: Quickly build smart internal links both to and from your content. Additionally, gain valuable insights with in-depth internal link reporting.
  * Author: Link Whisper
  * Author URI: https://linkwhisper.com
- * Tested up to: 6.9.1
+ * Tested up to: 6.9.4
  * Text Domain: wpil
  */
 
@@ -24,9 +24,9 @@ function wpil_autoloader( $class_name ) {
     }
 }
 define( 'WPIL_STORE_URL', 'https://linkwhisper.com');
-define( 'WPIL_VERSION_NUMBER', '0.9.3');
-define( 'WPIL_PLUGIN_VERSION_NUMBER', '0.9.3');
-define( 'WPIL_PLUGIN_OLD_VERSION_NUMBER', '0.9.2');
+define( 'WPIL_VERSION_NUMBER', '0.9.4');
+define( 'WPIL_PLUGIN_VERSION_NUMBER', '0.9.4');
+define( 'WPIL_PLUGIN_OLD_VERSION_NUMBER', '0.9.3');
 define( 'WP_INTERNAL_LINKING_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define( 'WP_INTERNAL_LINKING_PLUGIN_URL', plugin_dir_url(__FILE__));
 define( 'WPIL_PLUGIN_NAME', plugin_basename( __FILE__ ));
@@ -50,10 +50,10 @@ define( 'WPIL_LINK_TABLE_IS_CREATED', 'wpil_link_table_is_created');
 define( 'WPIL_STATUS_LINK_TABLE_EXISTS', get_option(WPIL_LINK_TABLE_IS_CREATED, false));
 define( 'WPIL_STATUS_PROCESSING_START', microtime(true));
 define('WPIL_DEBUG_CURL', false);
-define('WPIL_STATUS_PLUGIN_DB_VERSION', '1.52');  // simple version counter that gets incremented when we change the existing DB tables. That way update_tables knows when and what to update.
+define('WPIL_STATUS_PLUGIN_DB_VERSION', '1.54');  // simple version counter that gets incremented when we change the existing DB tables. That way update_tables knows when and what to update.
 define('WPIL_STATUS_SITE_DB_VERSION', get_option('wpil_site_db_version', '0'));  // existing DB version on this site
 define('WPIL_STATUS_HAS_RUN_SCAN', get_option('wpil_has_run_initial_scan', false));
-define('WPIL_DATA_USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36');
+define('WPIL_DATA_USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36');
 
 
 Wpil_Init::register_services();

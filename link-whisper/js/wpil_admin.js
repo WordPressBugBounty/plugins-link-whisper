@@ -77,6 +77,7 @@
         var selectPostTypes = (urlParams.select_post_types) ? urlParams.select_post_types[0] : '';
         var selectedPostTypes = (urlParams.selected_post_types) ? urlParams.selected_post_types[0].split(',') : '';
         var aiRelatednessThreshold = (urlParams.ai_relatedness_threshold) ? urlParams.ai_relatedness_threshold[0]: '';
+        var ignoreMaxLinkLimit = (urlParams.ignore_max_link_limit) ? urlParams.ignore_max_link_limit[0] : '';
         var nonce = (urlParams.nonce) ? urlParams.nonce[0]: '';
 
         if(!nonce){
@@ -106,6 +107,7 @@
                 select_post_types: selectPostTypes,
                 selected_post_types: selectedPostTypes,
                 ai_relatedness_threshold: aiRelatednessThreshold,
+                ignore_max_link_limit: ignoreMaxLinkLimit,
                 type: 'outbound_suggestions',
                 key: key,
             },
@@ -531,17 +533,25 @@
                 success: function (data) {
                     suggestionInsertTracker--;
                     if(!isJSON(data)){
-                        data = extractAndValidateJSON(data, ['err_msg', 'further_processing', 'data']);
+                        data = extractAndValidateJSON(data, ['err_msg', 'further_processing', 'data', 'affected_items']);
                     }
 
                     if (data.err_msg) {
                         wpil_swal('Error', data.err_msg, 'error');
                         button.removeClass('wpil_button_is_active');
                         $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
+                    } else if(isLinksReportRefreshActive()){
+                        storeReportRefreshItems(button, data.affected_items);
+                    }
+
+                    if (data.err_msg) {
+                        return;
                     } else if(undefined != data.further_processing && data.further_processing){
                         continueInsertingInboundLinks(button, data.data);
                     }else {
-                        if (page == 'outbound') {
+                        var reportRefreshItems = mergeReportRefreshItems(data.affected_items, getStoredReportRefreshItems(button));
+
+                        if (page == 'outbound' && !isLinksReportRefreshActive()) {
                             if ($('.editor-post-save-draft').length) {
                                 $('.editor-post-save-draft').click();
                             } else if ($('#save-post').length) {
@@ -556,14 +566,17 @@
 
                             // set the flag so we know that the editor needs to be reloaded
                             reloadGutenberg = true;
-                        } else {
-                            if($('.wpil-link-report').length < 1){
-                                location.reload();
-                            }
+                        } else if(!isLinksReportRefreshActive()){
+                            location.reload();
                         }
 
                         for(var i in rows){
                             $(rows[i]).fadeOut(300, function(){ $(this).remove(); });
+                        }
+
+                        if(isLinksReportRefreshActive()){
+                            refreshReportAfterMutation(reportRefreshItems);
+                            clearStoredReportRefreshItems(button);
                         }
 
                         button.removeClass('wpil_button_is_active');
@@ -599,7 +612,8 @@
             "action": 'wpil_continue_inbound_saving_process',
             "target_id": button.data('id'),
             "target_type": button.data('type'),
-            'data': data
+            'data': data,
+            'affected_items': getStoredReportRefreshItems(button)
         };
 
         $.ajax({
@@ -617,7 +631,7 @@
             },
             success: function (response) {
                 if(!isJSON(response)){
-                    response = extractAndValidateJSON(response, ['err_msg', 'further_processing', 'data']);
+                    response = extractAndValidateJSON(response, ['err_msg', 'further_processing', 'data', 'affected_items']);
                 }
 
                 if (response.err_msg) {
@@ -625,16 +639,239 @@
                     button.removeClass('wpil_button_is_active');
                     $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
                 } else if(undefined != response.further_processing && response.further_processing){
+                    if(isLinksReportRefreshActive()){
+                        storeReportRefreshItems(button, response.affected_items);
+                    }
                     continueInsertingInboundLinks(button, response.data);
                 } else{
                     button.removeClass('wpil_button_is_active');
                     $('.wpil_keywords_list, .tbl-link-reports .wp-list-table').removeClass('ajax_loader');
-                    if($('.linkingstats').length < 1){
+                    if(isLinksReportRefreshActive()){
+                        refreshReportAfterMutation(mergeReportRefreshItems(response.affected_items, getStoredReportRefreshItems(button)));
+                        clearStoredReportRefreshItems(button);
+                    }else if($('.linkingstats').length < 1){
                         location.reload();
                     }
                 }
             }
         })
+    }
+
+    function isLinksReportRefreshActive(){
+        return ($('.wpil-link-report').length > 0 && $('#wpil-refresh-link-report-nonce').length > 0);
+    }
+
+    function getCurrentLinkReportSubType(){
+        var type = $('#wpil-report-sub-type').val();
+        return (type && type.length) ? type: 'links';
+    }
+
+    function getReportRefreshItemKey(id, type){
+        return ((type === 'term') ? 'term': 'post') + '_' + parseInt(id, 10);
+    }
+
+    function normalizeReportRefreshItems(items){
+        var normalized = [],
+            seen = {};
+
+        if(!$.isArray(items)){
+            return normalized;
+        }
+
+        $.each(items, function(index, item){
+            if(!item || undefined === item.id){
+                return;
+            }
+
+            var id = parseInt(item.id, 10),
+                type = (item.type === 'term') ? 'term': 'post';
+
+            if(!id){
+                return;
+            }
+
+            var key = getReportRefreshItemKey(id, type);
+            if(seen[key]){
+                return;
+            }
+
+            seen[key] = true;
+            normalized.push({
+                id: id,
+                type: type,
+                key: key
+            });
+        });
+
+        return normalized;
+    }
+
+    function mergeReportRefreshItems(existingItems, newItems){
+        return normalizeReportRefreshItems([].concat($.isArray(existingItems) ? existingItems: [], $.isArray(newItems) ? newItems: []));
+    }
+
+    function storeReportRefreshItems(target, items){
+        if(!target || !target.length){
+            return;
+        }
+
+        var existing = target.data('wpilReportAffectedItems');
+        target.data('wpilReportAffectedItems', mergeReportRefreshItems(existing, items));
+    }
+
+    function getStoredReportRefreshItems(target){
+        if(!target || !target.length){
+            return [];
+        }
+
+        return normalizeReportRefreshItems(target.data('wpilReportAffectedItems'));
+    }
+
+    function clearStoredReportRefreshItems(target){
+        if(target && target.length){
+            target.removeData('wpilReportAffectedItems');
+        }
+    }
+
+    function getVisibleReportRefreshItems(items){
+        var visibleItems = [];
+
+        $.each(normalizeReportRefreshItems(items), function(index, item){
+            if(
+                $('.tbl-link-reports tr[data-wpil-report-item-key="' + item.key + '"]').length > 0 ||
+                $('.wpil-activity-panel .wpil-activity-panel-suggestions[data-wpil-report-item-key="' + item.key + '"]').length > 0
+            ){
+                visibleItems.push({
+                    id: item.id,
+                    type: item.type
+                });
+            }
+        });
+
+        return visibleItems;
+    }
+
+    function shouldDismissReportSuggestionArea(panel, state){
+        if(!panel || !panel.length || !state){
+            return false;
+        }
+
+        var reportSubType = getCurrentLinkReportSubType(),
+            direction = (panel.data('wpilSuggestionDirection') === 'inbound') ? 'inbound': 'outbound';
+
+        switch(reportSubType){
+            case 'orphaned':
+                return !state.is_orphaned;
+            case 'link_density':
+                return (direction === 'inbound') ? !state.needs_inbound_links: !state.needs_outbound_links;
+            case 'link_relation':
+                return !state.needs_link_quality_fix;
+            default:
+                return false;
+        }
+    }
+
+    function maybeCloseEmptyReportActivityPanel(hadSuggestionAreas){
+        if(!hadSuggestionAreas){
+            return;
+        }
+
+        if($('.wpil-activity-panel .wpil-activity-panel-suggestions').length < 1){
+            if(typeof closeActivityPanel === 'function'){
+                closeActivityPanel();
+            }else if(typeof closePanel === 'function'){
+                closePanel();
+            }
+        }
+    }
+
+    function refreshReportSuggestionAreas(refreshedItems){
+        var hadSuggestionAreas = ($('.wpil-activity-panel .wpil-activity-panel-suggestions').length > 0);
+
+        $('.wpil-activity-panel .wpil-activity-panel-suggestions[data-wpil-report-item-key]').each(function(){
+            var panel = $(this),
+                key = panel.data('wpilReportItemKey'),
+                item = (refreshedItems && undefined !== refreshedItems[key]) ? refreshedItems[key]: null;
+
+            if(!item || !item.state){
+                return;
+            }
+
+            if(shouldDismissReportSuggestionArea(panel, item.state)){
+                panel.fadeOut(300, function(){
+                    $(this).remove();
+                });
+            }
+        });
+
+        setTimeout(function(){
+            maybeCloseEmptyReportActivityPanel(hadSuggestionAreas);
+        }, 350);
+    }
+
+    function refreshReportAfterMutation(items){
+        if(!isLinksReportRefreshActive()){
+            return;
+        }
+
+        var refreshItems = getVisibleReportRefreshItems(items),
+            nonce = $('#wpil-refresh-link-report-nonce').val();
+
+        if(!refreshItems.length || !nonce){
+            return;
+        }
+
+        $.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            dataType: 'json',
+            data: {
+                action: 'wpil_refresh_link_report_rows',
+                nonce: nonce,
+                report_sub_type: getCurrentLinkReportSubType(),
+                current_url: window.location.href,
+                items: refreshItems,
+            },
+            success: function(response){
+                console.log(response);
+
+                if(!isJSON(response)){
+                    response = extractAndValidateJSON(response, ['error', 'success']);
+                }
+
+                if(response.error){
+                    wpil_swal(response.error.title, response.error.text, 'error');
+                    return;
+                }
+
+                if(!response.success || !response.success.items){
+                    return;
+                }
+
+                $.each(response.success.items, function(key, item){
+                    var row = $('.tbl-link-reports tr[data-wpil-report-item-key="' + key + '"]');
+
+                    if(item.state && item.state.remove_row && row.length > 0){
+                        row.fadeOut(300, function(){
+                            $(this).remove();
+                        });
+                        return;
+                    }
+
+                    if(row.length > 0 && item.cells){
+                        $.each(item.cells, function(columnName, html){
+                            var cell = row.find('.column-' + columnName);
+                            if(cell.length){
+                                cell.html(html);
+                            }
+                        });
+                    }
+                });
+
+                runStandardTippy();
+                refreshReportSuggestionAreas(response.success.items);
+            }
+        });
     }
 
     $(document).on('change', '#suggestion_filter_field', filterSuggestionsWaiter);
@@ -3762,12 +3999,24 @@
         });
     });
 
-    $(document).on('click', '#wpil-disconnect-ai-subscription', function(){
+    $(document).on('click', '#wpil-disconnect-ai-subscription', function(e){
+        e.preventDefault();
+
+        var button = $(this);
+
+        if(button.hasClass('wpil_button_is_active')){
+            return;
+        }
+
+        button.addClass('wpil_button_is_active');
+
         $.post(ajaxurl, {
             action: 'wpil_disconnect_from_ai_subscription',
-            nonce: $(this).data('nonce')
+            nonce: button.data('nonce')
         }, function (response) {
             location.reload();
+        }).fail(function(){
+            button.removeClass('wpil_button_is_active');
         });
     });
     

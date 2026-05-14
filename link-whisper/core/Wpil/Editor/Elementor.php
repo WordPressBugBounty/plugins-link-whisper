@@ -77,7 +77,7 @@ class Wpil_Editor_Elementor
                         if( isset($item->settings->tabs[$key]->$tab_index) && 
                             !empty($item->settings->tabs[$key]->$tab_index))
                         {
-                            $content .= "\n" . $item->settings->tabs[$key]->$tab_index;
+                            self::appendProcessableValue($content, $item->settings->tabs[$key]->$tab_index);
                         }
                     }
                 }
@@ -88,7 +88,9 @@ class Wpil_Editor_Elementor
                 if (!empty($item->settings->$key)) {
                     foreach($item->settings->$key as $sub_item){
                         foreach(['desc', 'description', 'caption'] as $content_type){
-                            $content .= "\n" . $sub_item->$content_type;
+                            if (isset($sub_item->$content_type) && !empty($sub_item->$content_type)) {
+                                self::appendProcessableValue($content, $sub_item->$content_type);
+                            }
                         }
                     }
                 }
@@ -125,7 +127,7 @@ class Wpil_Editor_Elementor
             }else{
                 foreach (['editor', 'title', 'caption', 'text', 'description_text', 'testimonial_content', 'html', 'alert_title', 'alert_description', 'description', 'faq_answer', 'accordion_content', 'protected_content_text', 'blockquote_content'] as $key) {
                     if (!empty($item->settings->$key)) {
-                        $content .= "\n" . $item->settings->$key;
+                        self::appendProcessableValue($content, $item->settings->$key);
                     }
                 }
             }

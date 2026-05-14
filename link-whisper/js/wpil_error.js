@@ -52,6 +52,88 @@
         });
     }
 
+    function wpil_ignore_error_links() {
+        if($(this).hasClass('button-disabled')){
+            return;
+        }
+
+        var links = wpil_get_checked_link_ids();
+        if(!links.length){
+            return;
+        }
+
+        if (confirm("Are you sure you want to ignore the selected links?")) {
+            $.ajax({
+                type: 'POST',
+                url: ajaxurl,
+                data: {
+                    links: links,
+                    action: 'wpil_ignore_error_links',
+                    nonce: $(this).data('nonce')
+                },
+                error: function (jqXHR, textStatus) {
+                    var wrapper = document.createElement('div');
+                    $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                    $(wrapper).append(jqXHR.responseText);
+                    wpil_swal({"title": "Error", "content": wrapper, "icon": "error"}).then(wpil_report_next_step());
+                },
+                success: function (response) {
+                    if(!isJSON(response)){
+                        response = extractAndValidateJSON(response, ['error', 'success']);
+                    }
+
+                    if (response.error) {
+                        wpil_swal(response.error.title, response.error.text, 'error');
+                    } else if (response.success) {
+                        flushObjectCache();
+                        location.reload();
+                    }
+                }
+            });
+        }
+    }
+
+    function wpil_snooze_error_links() {
+        if($(this).hasClass('button-disabled')){
+            return;
+        }
+
+        var links = wpil_get_checked_link_ids();
+        if(!links.length){
+            return;
+        }
+
+        if (confirm("Are you sure you want to snooze the selected links for 30 days?\n\nThis will remove them from the broken links report and Link Whisper will not scan them while they are snoozing.")) {
+            $.ajax({
+                type: 'POST',
+                url: ajaxurl,
+                data: {
+                    links: links,
+                    action: 'wpil_snooze_error_links',
+                    nonce: $(this).data('nonce')
+                },
+                error: function (jqXHR, textStatus) {
+                    var wrapper = document.createElement('div');
+                    $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                    $(wrapper).append(jqXHR.responseText);
+                    wpil_swal({"title": "Error", "content": wrapper, "icon": "error"}).then(wpil_report_next_step());
+                },
+                success: function (response) {
+                    if(!isJSON(response)){
+                        response = extractAndValidateJSON(response, ['error', 'success']);
+                    }
+
+                    if (response.error) {
+                        wpil_swal(response.error.title, response.error.text, 'error');
+                    } else if (response.success) {
+                        flushObjectCache();
+                        location.reload();
+                    }
+                }
+            });
+        }
+    }
+
     function wpil_get_checked_link_ids(){
         var links = [];
         $('#report_error table input[type="checkbox"]:checked').each(function () {

@@ -69,7 +69,7 @@
     </div>
     <div class="min-h-screen flex items-center justify-center p-6 antialiased font-sans">
 
-        <div class="bg-white w-full max-w-5xl rounded-2xl shadow-xl overflow-hidden flex flex-col min-h-[600px]">
+        <div class="bg-white w-full max-w-7xl rounded-2xl shadow-xl overflow-hidden flex flex-col min-h-[600px]">
             
             <div class="flex-1 flex flex-col md:flex-row p-8 md:p-16 items-center">
                 

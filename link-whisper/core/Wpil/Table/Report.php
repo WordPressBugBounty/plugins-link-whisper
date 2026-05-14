@@ -8,7 +8,7 @@ class Wpil_Table_Report extends WP_List_Table
 {
     private static $money_page_pid_lookup = null;
 
-    function __construct()
+    function __construct($prepare_items = true)
     {
         parent::__construct(array(
             'singular' => __('Linking Stats', 'wpil'),
@@ -16,7 +16,9 @@ class Wpil_Table_Report extends WP_List_Table
             'ajax' => false
         ));
 
-        $this->prepare_items();
+        if($prepare_items){
+            $this->prepare_items();
+        }
     }
 
     private static function is_outbound_coverage_exempt($post){
@@ -29,6 +31,125 @@ class Wpil_Table_Report extends WP_List_Table
         }
 
         return isset(self::$money_page_pid_lookup[$post->get_pid()]);
+    }
+
+    public static function get_report_item_key($post_id = 0, $post_type = 'post'){
+        return (($post_type === 'term') ? 'term': 'post') . '_' . ((int) $post_id);
+    }
+
+    public static function get_report_sub_type(){
+        if(isset($_REQUEST['orphaned'])){
+            return 'orphaned';
+        }elseif(isset($_REQUEST['link_density'])){
+            return 'link_density';
+        }elseif(isset($_REQUEST['link_relation'])){
+            return 'link_relation';
+        }elseif(isset($_REQUEST['anchor_length'])){
+            return 'anchor_length';
+        }
+
+        return 'links';
+    }
+
+    public static function get_link_quality_state($post){
+        $links_data = (!empty($post) && is_object($post) && method_exists($post, 'getOutboundInternalLinks')) ? $post->getOutboundInternalLinks(): array();
+        $relation_counter = array('on' => 0, 'off' => 0);
+        $count = 0;
+
+        if(is_array($links_data)){
+            foreach($links_data as $link){
+                if (!Wpil_Filter::linksLocation() || $link->location == Wpil_Filter::linksLocation()) {
+                    $count++;
+
+                    if(empty($link->get_ai_relation_percent(true)) || $link->get_ai_relation_percent(true) > 49){
+                        $relation_counter['on']++;
+                    }else{
+                        $relation_counter['off']++;
+                    }
+                }
+            }
+        }
+
+        $related_percent = 0;
+        if($count > 0){
+            if(!empty($relation_counter['off'])){
+                $related_percent = round($relation_counter['on'] / $count, 2) * 100;
+            }elseif(!empty($relation_counter['on'])){
+                $related_percent = 100;
+            }
+        }
+
+        $needs_fix = (!empty($count) && !empty($relation_counter['off']) && (round($relation_counter['off'] / $count, 2) * 100 > 40));
+
+        return array(
+            'related_percent' => $related_percent,
+            'needs_fix'       => $needs_fix,
+            'link_count'      => $count,
+        );
+    }
+
+    public static function get_live_refresh_state($post, $report_sub_type = 'links'){
+        if(empty($post) || !is_object($post) || !method_exists($post, 'getInboundInternalLinks')){
+            return array();
+        }
+
+        $inbound_internal = (int) $post->getInboundInternalLinks(true);
+        $outbound_internal = (int) $post->getOutboundInternalLinks(true);
+        $outbound_external = (int) $post->getOutboundExternalLinks(true);
+        $needs_inbound_links = ($inbound_internal < 1);
+        $needs_outbound_links = (!self::is_outbound_coverage_exempt($post) && $outbound_internal < 3);
+        $is_orphaned = ($inbound_internal <= 0);
+        $link_quality = self::get_link_quality_state($post);
+        $remove_row = false;
+
+        switch($report_sub_type){
+            case 'orphaned':
+                $remove_row = !$is_orphaned;
+                break;
+            case 'link_density':
+                $remove_row = (!$needs_inbound_links && !$needs_outbound_links);
+                break;
+            default:
+                $remove_row = false;
+                break;
+        }
+
+        return array(
+            'inbound_internal'        => $inbound_internal,
+            'outbound_internal'       => $outbound_internal,
+            'outbound_external'       => $outbound_external,
+            'needs_inbound_links'     => $needs_inbound_links,
+            'needs_outbound_links'    => $needs_outbound_links,
+            'is_orphaned'             => $is_orphaned,
+            'needs_link_quality_fix'  => !empty($link_quality['needs_fix']),
+            'link_quality_percent'    => isset($link_quality['related_percent']) ? (int) $link_quality['related_percent'] : 0,
+            'remove_row'              => $remove_row,
+            'report_sub_type'         => $report_sub_type,
+        );
+    }
+
+    public function get_refresh_cells($item = array()){
+        $cells = array();
+        $columns = $this->get_columns();
+
+        foreach($columns as $column_name => $column_label){
+            if(in_array($column_name, Wpil_Report::$meta_keys, true)){
+                $cells[$column_name] = $this->column_default($item, $column_name);
+            }
+        }
+
+        return $cells;
+    }
+
+    function single_row($item) {
+        if(empty($item['post'])){
+            return;
+        }
+
+        $post = $item['post'];
+        echo '<tr class="wpil-report-item-row" data-wpil-report-item-id="' . esc_attr($post->id) . '" data-wpil-report-item-type="' . esc_attr($post->type) . '" data-wpil-report-item-key="' . esc_attr(self::get_report_item_key($post->id, $post->type)) . '">';
+        $this->single_row_columns($item);
+        echo '</tr>';
     }
 
     function column_default($item, $column_name)
@@ -146,7 +267,7 @@ class Wpil_Table_Report extends WP_List_Table
 
                                     if (!empty($link->post)) {
                                         $rep .= '<li class="'.$related.'">
-                                                    <input type="checkbox" class="wpil_link_select" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="'.base64_encode($link->anchor).'" data-url="'.base64_encode($link->url).'">
+                                                    <input type="checkbox" class="wpil_link_select" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="'.base64_encode($link->raw_anchor).'" data-url="'.base64_encode($link->url).'">
                                                     <div>
                                                         <div style="margin: 3px 0;"><b>Origin Post Title:</b> ' . esc_html($link->post->getTitle()) . '</div>
                                                         <div style="margin: 3px 0;"><b>Anchor Text:</b> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $link->post->getLinks()->view)) . '" target="_blank">' . esc_html($link->anchor) . ' <span class="dashicons dashicons-external" style="position: relative;top: 3px;"></span></a></div>
@@ -235,7 +356,7 @@ class Wpil_Table_Report extends WP_List_Table
                                     }
 
                                     $rep .= '<li class="'.$related.'">
-                                                <input type="checkbox" class="wpil_link_select" data-post_id="' . $item['post']->id . '" data-post_type="' . $item['post']->type . '" data-anchor="' . base64_encode($link->anchor) . '" data-url="' . base64_encode($link->url) . '">
+                                                <input type="checkbox" class="wpil_link_select" data-post_id="' . $item['post']->id . '" data-post_type="' . $item['post']->type . '" data-anchor="' . base64_encode($link->raw_anchor) . '" data-url="' . base64_encode($link->url) . '">
                                                 <div>
                                                     <div style="margin: 3px 0;"><b>Link:</b> <a href="' . esc_url($link->url) . '" target="_blank" style="text-decoration: underline">' . esc_html($link->url) . '</a></div>
                                                     <div style="margin: 3px 0;"><b>Anchor Text:</b> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $item['post']->getLinks()->view)) . '" target="_blank">' . esc_html($link->anchor) . ' <span class="dashicons dashicons-external" style="position: relative;top: 3px;"></span></a></div>

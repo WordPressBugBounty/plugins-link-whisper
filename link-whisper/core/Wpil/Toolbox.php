@@ -2234,11 +2234,19 @@ class Wpil_Toolbox
 
         $in_list = implode(',', $tt_ids);
 
-        // Get candidate posts + how many shared terms they have
+        $post_types_query = Wpil_Query::postTypes('p');
+        $post_statuses_query = Wpil_Query::postStatuses('p');
+        $age_limit_query = Wpil_Query::getPostDateQueryLimit('p', 'ai');
+
+        // Get candidate posts + how many shared terms they have, while only keeping processable posts.
         $query = $wpdb->prepare("SELECT tr.object_id, COUNT(DISTINCT tr.term_taxonomy_id) AS shared_terms
                                 FROM {$wpdb->term_relationships} tr
+                                INNER JOIN {$wpdb->posts} p ON p.ID = tr.object_id
                                 WHERE tr.term_taxonomy_id IN ($in_list)
                                 AND tr.object_id != %d
+                                {$post_types_query}
+                                {$post_statuses_query}
+                                {$age_limit_query}
                                 GROUP BY tr.object_id
                                 ORDER BY shared_terms DESC, tr.object_id DESC
                                 LIMIT 1000", (int) $post->id);

@@ -7,6 +7,8 @@ class Wpil_Rest
     const GSC_ROUTE     = 'code';
     const SI_ROUTE      = 'site-interlinking';
     const AI_AUTH       = 'ai-auth';
+    const CALLBACK_AUTH_PARAM = 'wpil_rest_auth';
+    const CALLBACK_AUTH_TRANSIENT_PREFIX = 'wpil_rest_auth_';
 
     public function register ()
     {
@@ -28,7 +30,10 @@ class Wpil_Rest
                     $this,
                     'handler_rest'
                 ],
-                'permission_callback' => "__return_true",
+                'permission_callback' => [
+                    $this,
+                    'gsc_permission_callback'
+                ],
                 'show_in_index'       => false
             ]);
 
@@ -41,7 +46,10 @@ class Wpil_Rest
                     $this,
                     'site_interlinking_handler'
                 ],
-                'permission_callback' => "__return_true",
+                'permission_callback' => [
+                    $this,
+                    'site_interlinking_permission_callback'
+                ],
                 'show_in_index'       => false
             ]);
 
@@ -51,10 +59,102 @@ class Wpil_Rest
                     $this,
                     'ai_auth_handler'
                 ],
-                'permission_callback' => "__return_true",
+                'permission_callback' => [
+                    $this,
+                    'ai_auth_permission_callback'
+                ],
                 'show_in_index'       => false
             ]);
         });
+    }
+
+    /**
+     * Creates a short-lived REST callback URL for external auth flows.
+     *
+     * The GSC and AI endpoints must stay externally reachable, so WP admin nonces
+     * are not enough. This verifier ties a callback to a flow initiated by an
+     * authorized admin without exposing a long-lived site secret.
+     **/
+    public static function get_authenticated_rest_url($route)
+    {
+        $route = sanitize_key($route);
+        $token = wp_generate_password(32, false, false);
+
+        // TODO: Generate these callback URLs through AJAX when the user starts auth
+        // so the expiration window begins on click instead of on page render.
+        set_transient(self::CALLBACK_AUTH_TRANSIENT_PREFIX . $route . '_' . wp_hash($token), 1, DAY_IN_SECONDS);
+
+        return add_query_arg(self::CALLBACK_AUTH_PARAM, rawurlencode($token), get_rest_url(null, '/' . self::REST_SLUG . '/' . $route));
+    }
+
+    public function gsc_permission_callback(WP_REST_Request $request)
+    {
+        return $this->validate_callback_auth($request, self::GSC_ROUTE);
+    }
+
+    public function ai_auth_permission_callback(WP_REST_Request $request)
+    {
+        return $this->validate_callback_auth($request, self::AI_AUTH);
+    }
+
+    public function site_interlinking_permission_callback(WP_REST_Request $request)
+    {
+        if($request->get_method() !== 'POST' || empty(get_option('wpil_link_external_sites', false))){
+            return new WP_Error('wpil_rest_forbidden', __('REST access is not available for this endpoint.', 'wpil'), array('status' => 403));
+        }
+
+        $time = (int) $request->get_param('time');
+        $body_params = $request->get_body_params();
+
+        if(!empty($request->get_param('initok'))){
+            $site_url = Wpil_SiteConnector::process_initial_request_string(
+                sanitize_text_field(wp_unslash($request->get_param('initok'))),
+                $time
+            );
+
+            return !empty($site_url) ? true : new WP_Error('wpil_rest_forbidden', __('Invalid site interlinking request.', 'wpil'), array('status' => 403));
+        }
+
+        if(!empty($request->get_param('fintok'))){
+            $query_data = $body_params;
+            unset($query_data['fintok'], $query_data['target_url'], $query_data['time'], $query_data['page'], $query_data['limit']);
+
+            if(isset($query_data['ping']) && !empty($query_data['ping'])){
+                unset($query_data['ping']);
+            }
+
+            $token_valid = Wpil_SiteConnector::verify_access_token(
+                sanitize_text_field(wp_unslash($request->get_param('fintok'))),
+                esc_url_raw($request->get_param('target_url')),
+                $time,
+                (int) $request->get_param('page'),
+                $query_data
+            );
+
+            return !empty($token_valid) ? true : new WP_Error('wpil_rest_forbidden', __('Invalid site interlinking request.', 'wpil'), array('status' => 403));
+        }
+
+        return new WP_Error('wpil_rest_forbidden', __('Invalid site interlinking request.', 'wpil'), array('status' => 403));
+    }
+
+    private function validate_callback_auth(WP_REST_Request $request, $route)
+    {
+        $token = $request->get_param(self::CALLBACK_AUTH_PARAM);
+
+        if(empty($token)){
+            return new WP_Error('wpil_rest_forbidden', __('Invalid REST callback.', 'wpil'), array('status' => 403));
+        }
+
+        $route = sanitize_key($route);
+        $token = sanitize_text_field(wp_unslash($token));
+        $transient = self::CALLBACK_AUTH_TRANSIENT_PREFIX . $route . '_' . wp_hash($token);
+
+        if(empty(get_transient($transient))){
+            return new WP_Error('wpil_rest_forbidden', __('Invalid REST callback.', 'wpil'), array('status' => 403));
+        }
+
+        delete_transient($transient);
+        return true;
     }
 
     /**

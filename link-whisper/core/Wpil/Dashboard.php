@@ -428,10 +428,11 @@ class Wpil_Dashboard
     public static function get_tracked_link_insert_count(){
         global $wpdb;
         $table = $wpdb->prefix . 'wpil_tracked_link_ids';
+        $links_table = $wpdb->prefix . 'wpil_report_links';
 
         $thirty_days_ago = strtotime('30 days ago');
 
-        return $wpdb->get_var("SELECT COUNT(*) FROM {$table} WHERE `creation_time` > {$thirty_days_ago}");
+        return $wpdb->get_var("SELECT COUNT(*) FROM {$table} t INNER JOIN {$links_table} l ON l.`tracking_id` = t.`link_id` WHERE t.`creation_time` > {$thirty_days_ago} AND t.`link_id` > 0 AND l.`tracking_id` > 0");
     }
 
     /**
@@ -442,8 +443,9 @@ class Wpil_Dashboard
     public static function get_tracked_link_insert_total_count(){
         global $wpdb;
         $table = $wpdb->prefix . 'wpil_tracked_link_ids';
+        $links_table = $wpdb->prefix . 'wpil_report_links';
 
-        return (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table}");
+        return (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} t INNER JOIN {$links_table} l ON l.`tracking_id` = t.`link_id` WHERE t.`link_id` > 0 AND l.`tracking_id` > 0");
     }
 
     /**
@@ -455,11 +457,12 @@ class Wpil_Dashboard
     public static function get_tracked_link_insert_previous_count(){
         global $wpdb;
         $table = $wpdb->prefix . 'wpil_tracked_link_ids';
+        $links_table = $wpdb->prefix . 'wpil_report_links';
 
         $sixty_days_ago = strtotime('60 days ago');
         $thirty_days_ago = strtotime('30 days ago');
 
-        return (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} WHERE `creation_time` > {$sixty_days_ago} AND `creation_time` <= {$thirty_days_ago}");
+        return (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table} t INNER JOIN {$links_table} l ON l.`tracking_id` = t.`link_id` WHERE t.`creation_time` > {$sixty_days_ago} AND t.`creation_time` <= {$thirty_days_ago} AND t.`link_id` > 0 AND l.`tracking_id` > 0");
     }
 
     /**
@@ -632,6 +635,7 @@ class Wpil_Dashboard
                     'link_id' => $link->link_id,
                     'url' => $link->raw_url,
                     'anchor' => strip_tags($link->anchor),
+                    'raw_anchor' => (isset($link->raw_anchor) && !empty($link->raw_anchor)) ? $link->raw_anchor : '',
                     'post' => $p,
                     'link_whisper_created' => (isset($link->link_whisper_created) && !empty($link->link_whisper_created)) ? 1: 0,
                     'is_autolink' => (isset($link->is_autolink) && !empty($link->is_autolink)) ? 1: 0,
@@ -766,6 +770,7 @@ class Wpil_Dashboard
                 'link_id' => $link->link_id,
                 'url' => $link->raw_url,
                 'anchor' => strip_tags($link->anchor),
+                'raw_anchor' => (isset($link->raw_anchor) && !empty($link->raw_anchor)) ? $link->raw_anchor : '',
                 'post' => $p,
                 'link_whisper_created' => (isset($link->link_whisper_created) && !empty($link->link_whisper_created)) ? 1: 0,
                 'is_autolink' => (isset($link->is_autolink) && !empty($link->is_autolink)) ? 1: 0,
@@ -794,7 +799,7 @@ class Wpil_Dashboard
             $county = count($domain['links']);
             foreach($domain['links'] as $link){
                 $response .= '<li>
-                    <input type="checkbox" class="wpil_link_select" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="' . esc_attr(base64_encode($link->anchor)) . '" data-url="'.base64_encode($link->url).'">
+                    <input type="checkbox" class="wpil_link_select" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="' . esc_attr(base64_encode($link->raw_anchor)) . '" data-url="'.base64_encode($link->url).'">
                     <div>
                         <div style="margin: 3px 0;"><b>Post Title:</b> <a href="' . esc_url($link->post->getLinks()->view) . '" target="_blank">' . esc_html($link->post->getTitle()) . '</a></div>
                         <div style="margin: 3px 0;"><b>URL:</b> <a href="' . esc_url($link->url) . '" target="_blank">' . esc_html($link->url) . '</a></div>
@@ -805,7 +810,7 @@ class Wpil_Dashboard
                 $response .= '<a href="#" class="wpil_edit_link" target="_blank">[' . __('Edit URL', 'wpil') . ']</a>
                                 <div class="wpil-domains-report-url-edit-wrapper">
                                     <input class="wpil-domains-report-url-edit" type="text" value="' . esc_attr($link->url) . '">
-                                    <button class="wpil-domains-report-url-edit-confirm wpil-domains-edit-link-btn" data-link_id="' . $link->link_id . '" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="' . esc_attr($link->anchor) . '" data-url="'.esc_url($link->url).'" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->link_id) . '">
+                                    <button class="wpil-domains-report-url-edit-confirm wpil-domains-edit-link-btn" data-link_id="' . $link->link_id . '" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="' . esc_attr($link->raw_anchor) . '" data-url="'.esc_url($link->url).'" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->link_id) . '">
                                         <i class="dashicons dashicons-yes"></i>
                                     </button>
                                     <button class="wpil-domains-report-url-edit-cancel wpil-domains-edit-link-btn">
@@ -1070,6 +1075,7 @@ class Wpil_Dashboard
                         'link_id' => $link->link_id,
                         'url' => $link->raw_url,
                         'anchor' => strip_tags($link->anchor),
+                        'raw_anchor' => (isset($link->raw_anchor) && !empty($link->raw_anchor)) ? $link->raw_anchor : '',
                         'host' => isset($link->host) ? $link->host : '',
                         'internal' => !empty($link->internal),
                         'post' => $p,
@@ -1620,6 +1626,13 @@ class Wpil_Dashboard
                     >
                         <?php echo esc_html($fix_label); ?>
                     </button>
+                    <?php if ($review_enabled) { ?>
+                        <a href="<?php echo esc_url($review_url); ?>"
+                        target="<?php echo esc_attr($review_target); ?>"
+                        class="<?php echo esc_attr($review_class); ?>">
+                            <?php esc_html_e('Fix Manually', 'wpil'); ?>
+                        </a>
+                    <?php } ?>
                 </div>
             </div>
             <?php
@@ -1736,7 +1749,7 @@ class Wpil_Dashboard
                     true,
                     [
                         'data-wpil-count' => (string) $orphan,
-                        'data-wpil-fix-description' => 'This will use AI to create links back to all the orphaned posts that Link Whisper has found.'
+                        'data-wpil-fix-description' => 'Link Whisper will use AI to create links pointing to the orphaned posts on the site. Not all posts are linkable with AI, so there may be some follow up required.'
                     ]
                 ),
             ];

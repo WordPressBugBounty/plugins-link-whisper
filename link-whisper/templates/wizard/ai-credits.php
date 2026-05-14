@@ -59,7 +59,7 @@
 <body class="min-h-screen flex items-center justify-center p-6 antialiased font-sans overflow-hidden relative">
 
     <div class="absolute inset-0 z-0 flex flex-col items-center justify-center pointer-events-none select-none" aria-hidden="true">
-        <div class="bg-white w-full max-w-5xl h-[600px] rounded-2xl shadow-xl border border-gray-100 p-12 opacity-40 filter blur-sm transform scale-[0.98]">
+        <div class="bg-white w-full max-w-7xl h-[600px] rounded-2xl shadow-xl border border-gray-100 p-12 opacity-40 filter blur-sm transform scale-[0.98]">
             <div class="space-y-8">
                 <h1 class="text-3xl font-bold text-gray-900">Scanning Progress</h1>
                 <div class="space-y-6">

@@ -33,6 +33,13 @@
     // if WP Recipes is active, get the selected field list
     $wp_recipe_fields = (defined('WPRM_POST_TYPE')) ? Wpil_Editor_WPRecipe::get_selected_fields(): array();
 
+    $money_page_urls = array();
+    foreach(Wpil_Maintenance::get_pillar_post_items() as $item){
+        if(!empty($item['view'])){
+            $money_page_urls[] = $item['view'];
+        }
+    }
+
     // get the current roles that are available on the site
     $active_roles = Wpil_Settings::get_available_roles(true);
     // and the roles that the user doesn't want to suggest links to
@@ -692,6 +699,22 @@
                                 <div style="clear:both;"></div>
                             </td>
                         </tr>
+                        <tr class="wpil-advanced-settings wpil-setting-row">
+                            <td scope='row'><?php esc_html_e('Money Page URLs', 'wpil'); ?></td>
+                            <td>
+                                <textarea name='wpil_pillar_content_urls' id='wpil_pillar_content_urls' style="max-width: 800px;float:left;width: 100%;" class='regular-text' rows=10><?php echo esc_textarea(implode("\n", $money_page_urls)); ?></textarea>
+                                <div class="wpil_help">
+                                    <i class="dashicons dashicons-editor-help"></i>
+                                    <div class="display-under">
+                                        <?php esc_html_e('Link Whisper will treat the posts and terms at these URLs as Money Pages, the same as the Money Pages selected in the One Click Setup.', 'wpil'); ?>
+                                        <br />
+                                        <br />
+                                        <?php esc_html_e('Please enter each URL on it\'s own line in the text area.', 'wpil'); ?>
+                                    </div>
+                                </div>
+                                <div style="clear:both;"></div>
+                            </td>
+                        </tr>
                         <tr class="wpil-domain-settings wpil-setting-row">
                             <td scope='row' class="wpil-setting-text"><?php esc_html_e('Mark Domains as Internal', 'wpil'); ?></td>
                             <td>
@@ -929,7 +952,7 @@
                                         ?>
                                         <br><br>
                                         <?php 
-                                        esc_html_e('By default, we ask it to process 50 posts, but if you\'re experiencing persistent errors, you may need to reduce the number of posts.', 'wpil');
+                                        esc_html_e('By default, we ask it to process 100 posts, but if you\'re experiencing persistent errors, you may need to reduce the number of posts.', 'wpil');
                                         ?>
                                     </div>
                                 </div>
@@ -961,8 +984,10 @@
                                         esc_html_e('The currently available ChatGPT versions are:', 'wpil');
                                         ?>
                                         <ul>
-                                            <li>- <?php esc_html_e('GPT-4o: Most advanced and capable version, runs slower and is more expensive than GPT-4o Mini', 'wpil'); ?></li><br>
-                                            <li>- <?php esc_html_e('GPT-4o Mini: Best cost-benefit model, runs fastest and is least expensive. This is the recommended model for product detection.', 'wpil'); ?></li><br>
+                                            <li>- <?php esc_html_e('Large models: GPT-5.1, GPT-5, GPT-4.1, and GPT-4o. Most capable safe-price options for deeper analysis; highest cost in this list.', 'wpil'); ?></li><br>
+                                            <li>- <?php esc_html_e('Mini models: GPT-5.4 Mini, GPT-5 Mini, GPT-4.1 Mini, and GPT-4o Mini. Balanced speed, quality, and cost for regular processing runs.', 'wpil'); ?></li><br>
+                                            <li>- <?php esc_html_e('Nano models: GPT-5.4 Nano, GPT-5 Nano, and GPT-4.1 Nano. Fastest, lowest-cost options for large processing runs.', 'wpil'); ?></li><br>
+                                            <li>- <?php esc_html_e('For most sites, we recommend using GPT-5 Mini as it\'s the best balance of intelligence and cost.', 'wpil'); ?></li>
                                         </ul>
                                     </div>
                                 </div>
@@ -994,8 +1019,10 @@
                                         esc_html_e('The currently available ChatGPT versions are:', 'wpil');
                                         ?>
                                         <ul>
-                                            <li>- <?php esc_html_e('GPT-4o: Most advanced and capable version, runs slower and is more expensive than GPT-4o Mini', 'wpil'); ?></li><br>
-                                            <li>- <?php esc_html_e('GPT-4o Mini: Best cost-benefit model, runs fastest and is least expensive. This is the recommended model for creating keywords', 'wpil'); ?></li><br>
+                                            <li>- <?php esc_html_e('Large models: GPT-5.1, GPT-5, GPT-4.1, and GPT-4o. Most capable safe-price options for deeper analysis; highest cost in this list.', 'wpil'); ?></li><br>
+                                            <li>- <?php esc_html_e('Mini models: GPT-5.4 Mini, GPT-5 Mini, GPT-4.1 Mini, and GPT-4o Mini. Balanced speed, quality, and cost for regular processing runs.', 'wpil'); ?></li><br>
+                                            <li>- <?php esc_html_e('Nano models: GPT-5.4 Nano, GPT-5 Nano, and GPT-4.1 Nano. Fastest, lowest-cost options for large processing runs.', 'wpil'); ?></li><br>
+                                            <li>- <?php esc_html_e('For most sites, we recommend using GPT-5 Mini as it\'s the best balance of intelligence and cost.', 'wpil'); ?></li>
                                         </ul>
                                     </div>
                                 </div>
@@ -1140,6 +1167,25 @@
                                             _e('Clicking this button will tell Link Whisper to delete all of its AI Relation Analysis data.', 'wpil');
                                             echo '<BR><BR>';
                                             _e('This will clear the AI Relation data for the rare cases where all posts in suggestions have an "AI Relatedness Score" of "Unknown".', 'wpil');
+                                            ?>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="clear:both;"></div>
+                            </td>
+                        </tr>
+                        <tr class="wpil-ai-settings wpil-setting-row wpil-ai-any-setting <?php echo (!empty($ai_is_active) && Wpil_Settings::use_ai_embedding_calculation_v2()) ? '': 'hide-setting'; ?>">
+                            <td scope='row'><?php _e('Clear V2 Calculations', 'wpil'); ?></td>
+                            <td>
+                                <div style="max-width: 140px">
+                                    <a style="margin-top:5px;" class="wpil-clear-ai-embedding-calculation-v2 button-primary <?php echo (!Wpil_AI::has_ai_processed_data('wpil_ai_embedding_calculation_data_v2')) ? 'button-disabled': '';?>" data-nonce="<?php echo wp_create_nonce(wp_get_current_user()->ID . 'wpil_clear_ai_embedding_calculation_v2'); ?>"><?php esc_html_e('Clear Data', 'wpil'); ?></a>
+                                    <div class="wpil_help" style="float:right;">
+                                        <i class="dashicons dashicons-editor-help"></i>
+                                        <div style="margin: -50px 0px 0px 30px; width: 400px">
+                                            <?php 
+                                            _e('Clicking this button will tell Link Whisper to delete only the experimental V2 AI Relation calculation pages.', 'wpil');
+                                            echo '<BR><BR>';
+                                            _e('This will not clear raw embeddings, V1 AI Relation calculations, phrase data, keyword data, product data, or AI account data.', 'wpil');
                                             ?>
                                         </div>
                                     </div>
@@ -2265,6 +2311,22 @@
                                             <p><?php esc_html_e('These error notices may be visible to your site\'s visitors, so it\'s recommended to only use this for limited periods of time.', 'wpil'); ?></p>
                                             <br>
                                             <p><?php esc_html_e('(If you are already debugging with WP_DEBUG, then there\'s no need to activate this.)', 'wpil'); ?></p>
+                                        </div>
+                                    </div>
+                                    <br>
+                                </div>
+                                <div class="setting-control">
+                                    <input type="hidden" name="wpil_enable_ai_embedding_calculation_v2" value="0" />
+                                    <input type='checkbox' name="wpil_enable_ai_embedding_calculation_v2" <?php checked(get_option('wpil_enable_ai_embedding_calculation_v2', 0), 1); ?> value="1" />
+                                    <label><?php esc_html_e('Enable V2 Calculations?', 'wpil'); ?></label>
+                                    <div class="wpil_help" style="float:right;">
+                                        <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
+                                        <div style="margin: -220px 0 0 30px;">
+                                            <p><?php esc_html_e('Checking this will tell Link Whisper to use the experimental V2 AI Relation calculation storage.', 'wpil'); ?></p>
+                                            <br>
+                                            <p><?php esc_html_e('The V2 system stores relation calculations in smaller ID pages so lookups can open less data at a time.', 'wpil'); ?></p>
+                                            <br>
+                                            <p><?php esc_html_e('Existing AI Relation data will be left in place and can still be used if V2 data has not been built yet.', 'wpil'); ?></p>
                                         </div>
                                     </div>
                                     <br>

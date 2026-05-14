@@ -876,6 +876,65 @@
         });
     }
 
+    $(document).on('click', '.wpil-clear-ai-embedding-calculation-v2', clearAIEmbeddingCalculationV2);
+    function clearAIEmbeddingCalculationV2(e){
+        e.preventDefault();
+        var button = this;
+
+        if($(button).hasClass('button-disabled')){
+            return;
+        }
+
+        wpil_swal({
+            title: 'Please Confirm',
+            text: "Please confirm that you want to delete only Link Whisper's V2 AI Relation calculations.",
+            icon: 'info',
+            buttons: ['Cancel', 'Delete Data'],
+        }).then((begin) => {
+            if (begin) {
+                // animate the button
+                $(button).addClass('wpil_button_is_active');
+                // and start the process
+                ajaxClearAIEmbeddingCalculationV2(button);
+            }
+        });
+    }
+    function ajaxClearAIEmbeddingCalculationV2(button){
+        var nonce = $(button).data('nonce');
+        jQuery.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            data: {
+                action: 'wpil_clear_ai_embedding_calculation_v2',
+                nonce: nonce,
+            },
+            error: function (jqXHR, textStatus, errorThrown) {
+                var wrapper = document.createElement('div');
+                $(wrapper).append('<strong>' + textStatus + '</strong><br>');
+                $(wrapper).append(jqXHR.responseText);
+                wpil_swal({"title": "Error", "content": wrapper, "icon": "error"});
+            },
+            success: function(response){
+                console.log(response);
+                // if there was an error
+                if(response.error){
+                    // output the error message
+                    wpil_swal(response.error.title, response.error.text, 'error');
+                    // and exit
+                    return;
+                }else if(response.success){
+                    wpil_swal(response.success.title, response.success.text, 'success').then(() => {
+                        location.reload();
+                    });
+                }
+            },
+            complete: function(){
+                // in any case, deanimate the button
+                $(button).removeClass('wpil_button_is_active');
+            }
+        });
+    }
+
     $(document).on('click', '.wpil-clear-ai-keyword-data', clearAIKeywordData);
     function clearAIKeywordData(e){
         e.preventDefault();

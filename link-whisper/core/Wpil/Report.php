@@ -27,6 +27,7 @@ class Wpil_Report
         add_filter('set_screen_option_report_options', [$this, 'saveOptions'], 12, 3);
         add_action('wp_ajax_get_link_report_dropdown_data', array(__CLASS__, 'ajax_assemble_link_report_dropdown_data'));
         add_action('wp_ajax_get_link_report_link_data', array(__CLASS__, 'ajax_assemble_link_report_link_data'));
+        add_action('wp_ajax_wpil_refresh_link_report_rows', array(__CLASS__, 'ajax_refresh_link_report_rows'));
         add_action('wp_ajax_get_domain_report_data', array('Wpil_Dashboard', 'ajax_get_domain_report_data'));
         add_action('wp_ajax_wpil_save_screen_options', array(__CLASS__, 'ajax_save_screen_options'));
         add_action('wp_ajax_wpil_dismiss_popup_notice', array(__CLASS__, 'ajax_dismiss_popup_notice'));
@@ -78,10 +79,13 @@ class Wpil_Report
                 $title = ''; // $title is title used in the link report
                 $report_description = '';
                 $sub_report = '';
+                $report_sub_type = 'links';
                 if(isset($_GET['orphaned'])){
                     $title = __('Orphaned Posts Report', 'wpil');
+                    $report_sub_type = 'orphaned';
                 }elseif(isset($_REQUEST['link_density'])){
                     $title = __('Link Coverage Report', 'wpil');
+                    $report_sub_type = 'link_density';
                     $report_description = 
                     '<div style="float: left; background: #fff; padding: 10px; border-radius: 5px; border: 1px solid #cdcdcd; width:100%">
                         <div style="font-size: 18px;">'. esc_html__('SEO best practices recommend posts have at least 1 Inbound Internal link, and 3 or more Outbound Internal links.', 'wpil') .'</div>'
@@ -91,14 +95,15 @@ class Wpil_Report
                         <div style="font-size: 14px;">' . esc_html__('Known money pages are treated as inbound-only, so they are excluded from the outbound link target in this report.', 'wpil') .'</div></div>';
                 }elseif(isset($_REQUEST['anchor_length'])){
                     $title = __('Anchor Length Report', 'wpil');
+                    $report_sub_type = 'anchor_length';
                     $report_description = 
                     '<div style="float: left; background: #fff; padding: 10px; border-radius: 5px; border: 1px solid #cdcdcd; width:100%">
                         <div style="font-size: 18px;">'. esc_html__('SEO best practices recommend link anchor texts be between 3 and 7 words in length.', 'wpil') .'</div>'
                         . '<br>
                         <div style="font-size: 16px;">' . sprintf(esc_html__('To help you meet these goals, this report shows posts with out-of-guideline anchor text and %s where the percentage of compliant links is low.', 'wpil'), '<span style="background: #7645b1;border-radius: 10px;padding: 2px 6px;color: #fefefe;font-weight: bold;">highlights</span>').'</div></div>';
-                    $sub_report = '<input id="wpil-report-sub-type" type="hidden" value="anchor_length">';
                 }elseif(isset($_REQUEST['link_relation'])){
                     $title = __('Link Quality Report', 'wpil');
+                    $report_sub_type = 'link_relation';
                     $report_description = 
                     '<div style="float: left; background: #fff; padding: 10px; border-radius: 5px; border: 1px solid #cdcdcd; width:100%">
                         <div style="font-size: 18px;">'. esc_html__('SEO best practices recommend linking between related posts, and avoiding links between unrelated posts.', 'wpil') .'</div>'
@@ -168,6 +173,146 @@ class Wpil_Report
                 include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/report_dashboard_v4.php';
                 break;
         }
+    }
+
+    public static function set_report_refresh_context($report_sub_type = 'links'){
+        foreach(array('orphaned', 'link_density', 'link_relation', 'anchor_length') as $key){
+            unset($_GET[$key], $_POST[$key], $_REQUEST[$key]);
+        }
+
+        switch($report_sub_type){
+            case 'orphaned':
+            case 'link_density':
+            case 'link_relation':
+            case 'anchor_length':
+                $_GET[$report_sub_type] = 1;
+                $_REQUEST[$report_sub_type] = 1;
+                break;
+            default:
+                $report_sub_type = 'links';
+                break;
+        }
+
+        return $report_sub_type;
+    }
+
+    public static function normalize_report_refresh_items($items = array()){
+        $normalized = array();
+
+        if(empty($items) || !is_array($items)){
+            return array();
+        }
+
+        foreach($items as $item){
+            if(empty($item) || !is_array($item) || empty($item['id'])){
+                continue;
+            }
+
+            $id = (int) $item['id'];
+            $type = (isset($item['type']) && $item['type'] === 'term') ? 'term': 'post';
+
+            if($id < 1){
+                continue;
+            }
+
+            $key = Wpil_Table_Report::get_report_item_key($id, $type);
+            $normalized[$key] = array(
+                'id'   => $id,
+                'type' => $type,
+                'key'  => $key,
+            );
+        }
+
+        return array_values($normalized);
+    }
+
+    public static function get_report_item_data($post = null, $return_url = ''){
+        if(empty($post)){
+            return false;
+        }
+
+        if(is_numeric($post) && !is_object($post)){
+            $post = new Wpil_Model_Post((int) $post);
+        }
+
+        if(empty($post) || !is_object($post) || !method_exists($post, 'check_if_post_exists') || !$post->check_if_post_exists()){
+            return false;
+        }
+
+        if(empty($return_url)){
+            $return_url = !empty($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : admin_url('admin.php?page=link_whisper&type=links');
+        }
+
+        if ($post->type == 'term') {
+            $inbound = admin_url("admin.php?term_id={$post->id}&page=link_whisper&type=inbound_suggestions_page&ret_url=" . base64_encode($return_url));
+        } else {
+            $inbound = admin_url("admin.php?post_id={$post->id}&page=link_whisper&type=inbound_suggestions_page&ret_url=" . base64_encode($return_url));
+        }
+
+        $post_date = 'not set';
+        if($post->type === 'post'){
+            $post_data = get_post($post->id);
+            if(!empty($post_data) && !empty($post_data->post_date)){
+                $post_date = date(str_replace('F', 'M', get_option('date_format', 'F d, Y')), strtotime($post_data->post_date));
+            }
+        }
+
+        $item = array(
+            'post' => $post,
+            'links_inbound_page_url' => $inbound,
+            'date' => $post_date
+        );
+
+        foreach (self::$meta_keys as $meta_key) {
+            $item[$meta_key] = $post->getLinksData($meta_key, true);
+        }
+
+        return $item;
+    }
+
+    public static function ajax_refresh_link_report_rows(){
+        Wpil_Base::verify_nonce('wpil-refresh-link-report-rows');
+
+        if(!isset($_POST['items']) || empty($_POST['items']) || !is_array($_POST['items'])){
+            wp_send_json(array('error' => array(
+                'title' => __('Data Missing', 'wpil'),
+                'text'  => __('We couldn\'t find any report rows to refresh. Please reload the page and try again.', 'wpil'),
+            )));
+        }
+
+        $report_sub_type = isset($_POST['report_sub_type']) ? sanitize_text_field($_POST['report_sub_type']) : 'links';
+        $report_sub_type = self::set_report_refresh_context($report_sub_type);
+        $return_url = !empty($_POST['current_url']) ? esc_url_raw($_POST['current_url']) : '';
+        $items = self::normalize_report_refresh_items($_POST['items']);
+        $table = new Wpil_Table_Report(false);
+        $refreshed_items = array();
+
+        foreach($items as $item){
+            $post = new Wpil_Model_Post($item['id'], $item['type']);
+            if(empty($post) || !$post->check_if_post_exists()){
+                $refreshed_items[$item['key']] = array(
+                    'id'    => $item['id'],
+                    'type'  => $item['type'],
+                    'key'   => $item['key'],
+                    'cells' => array(),
+                    'state' => array(
+                        'remove_row' => true,
+                    ),
+                );
+                continue;
+            }
+
+            $item_data = self::get_report_item_data($post, $return_url);
+            $refreshed_items[$item['key']] = array(
+                'id'    => $item['id'],
+                'type'  => $item['type'],
+                'key'   => $item['key'],
+                'cells' => $table->get_refresh_cells($item_data),
+                'state' => Wpil_Table_Report::get_live_refresh_state($post, $report_sub_type),
+            );
+        }
+
+        wp_send_json(array('success' => array('items' => $refreshed_items)));
     }
 
     public static function ajax_get_ai_credit_history_panel(){
@@ -881,7 +1026,7 @@ class Wpil_Report
         }
 
         // get all the links from the link table that point at this post and are on the current site.
-        $results = $wpdb->get_results($wpdb->prepare("SELECT `post_id`, `post_type`, `host`, `anchor`, `link_whisper_created`, `is_autolink`, `tracking_id`, `module_link`, `link_context`, `ai_relation_score`, `url_slug_word_count`, `anchor_slug_positional_match` FROM {$links_table} WHERE (`clean_url` = '%s' OR `clean_url` = '%s' {$ugly_permalinks} {$redirected}) OR (`target_id` = '%d' AND `target_type` = '%s')", $search_parameters));
+        $results = $wpdb->get_results($wpdb->prepare("SELECT `post_id`, `post_type`, `host`, `anchor`, `raw_anchor`, `link_whisper_created`, `is_autolink`, `tracking_id`, `module_link`, `link_context`, `ai_relation_score`, `url_slug_word_count`, `anchor_slug_positional_match` FROM {$links_table} WHERE (`clean_url` = '%s' OR `clean_url` = '%s' {$ugly_permalinks} {$redirected}) OR (`target_id` = '%d' AND `target_type` = '%s')", $search_parameters));
 
         $post_objs = array();
         foreach($results as $data){
@@ -901,6 +1046,7 @@ class Wpil_Report
                 'internal' => true,
                 'post' => $post_objs[$cache_id],
                 'anchor' => !empty($data->anchor) ? $data->anchor : '',
+                'raw_anchor' => (isset($data->raw_anchor) && !empty($data->raw_anchor)) ? $data->raw_anchor : '',
                 'link_whisper_created' => (isset($data->link_whisper_created) && !empty($data->link_whisper_created)) ? 1: 0,
                 'is_autolink' => (isset($data->is_autolink) && !empty($data->is_autolink)) ? 1: 0,
                 'tracking_id' => (isset($data->tracking_id) && !empty($data->tracking_id)) ? $data->tracking_id: 0,
@@ -1134,6 +1280,7 @@ class Wpil_Report
             $link_obj = new Wpil_Model_Link([
                     'url' => $link->raw_url,
                     'anchor' => $link->anchor,
+                    'raw_anchor' => (isset($link->raw_anchor) && !empty($link->raw_anchor)) ? $link->raw_anchor : '',
                     'host' => $link->host,
                     'internal' => Wpil_Link::isInternal($link->raw_url),
                     'post' => $p,
@@ -1374,6 +1521,7 @@ class Wpil_Report
                 $new_link = new Wpil_Model_Link([
                     'url' => $link->raw_url,
                     'anchor' => $link->anchor,
+                    'raw_anchor' => (isset($link->raw_anchor) && !empty($link->raw_anchor)) ? $link->raw_anchor : '',
                     'host' => $link->host,
                     'internal' => (bool) $link->internal,
                     'post' => $link_post,
@@ -1791,9 +1939,11 @@ class Wpil_Report
             // 7 => In-content URL
             // 8 => iframe URL
 
+            $raw_anchor = '';
             if(!empty($matches[1][$key])){
                 $url = trim($matches[1][$key]);
                 $anchor = (!empty($matches[2][$key])) ? trim(strip_tags($matches[2][$key])): false;
+                $raw_anchor = (!empty($matches[2][$key])) ? $matches[2][$key]: false;
 
                 if(empty($anchor) && strpos($matches[0][$key], 'title=') !== false){
                     preg_match('/<a\s+(?:[^>]*?\s+)?title=(["\'])(.*?)\1/i', $matches[0][$key], $title);
@@ -1812,6 +1962,7 @@ class Wpil_Report
             }elseif(!empty($matches[3][$key]) && !empty($matches[4][$key])){
                 $url = trim($matches[3][$key]);
                 $anchor = trim(strip_tags($matches[4][$key]));
+                $raw_anchor = $matches[4][$key];
 
                 if(empty($anchor) || self::isJumpLink($url, $post_link)){
                     continue;
@@ -1876,6 +2027,7 @@ class Wpil_Report
             $data[] = new Wpil_Model_Link([
                 'url' => $url,
                 'anchor' => $anchor,
+                'raw_anchor' => wp_kses($raw_anchor, 'post'),
                 'host' => $host,
                 'internal' => Wpil_Link::isInternal($url),
                 'post' => $p,
@@ -2788,7 +2940,7 @@ class Wpil_Report
                         }
                         if (!empty($link->post)) {
                             $rep .= '<li>
-                                        <input type="checkbox" class="wpil_link_select" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="'.base64_encode($link->anchor).'" data-url="'.base64_encode($link->url).'">
+                                        <input type="checkbox" class="wpil_link_select" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="'.base64_encode($link->raw_anchor).'" data-url="'.base64_encode($link->url).'">
                                         <div>
                                             <div style="margin: 3px 0;"><b>Origin Post Title:</b> ' . esc_html($link->post->getTitle()) . '</div>
                                             <div style="margin: 3px 0;"><b>Anchor Text:</b> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $link->post->getLinks()->view)) . '" target="_blank">' . esc_html($link->anchor) . ' <span class="dashicons dashicons-external" style="position: relative;top: 3px;"></span></a></div>
@@ -2830,7 +2982,7 @@ class Wpil_Report
                             }
                         }
                         $rep .= '<li>
-                                    <input type="checkbox" class="wpil_link_select" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->anchor) . '" data-url="' . base64_encode($link->url) . '">
+                                    <input type="checkbox" class="wpil_link_select" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->raw_anchor) . '" data-url="' . base64_encode($link->url) . '">
                                     <div>
                                         <div style="margin: 3px 0;"><b>Link:</b> <a href="' . esc_url($link->url) . '" target="_blank" style="text-decoration: underline">' . esc_html($link->url) . '</a></div>
                                         <div style="margin: 3px 0;"><b>Anchor Text:</b> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $post->getLinks()->view)) . '" target="_blank">' . esc_html($link->anchor) . ' <span class="dashicons dashicons-external" style="position: relative;top: 3px;"></span></a></div>
@@ -2934,7 +3086,7 @@ class Wpil_Report
                             $related = (!empty($link->get_ai_relation_percent(true)) && $link->get_ai_relation_percent(true) < 50) ? 'ai-not-related': '';
                             $edit_link = '';
                             $rep .= '<tr class="wpil-activity-panel-edit inactive">
-                                        <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="'.base64_encode($link->anchor).'" data-url="'.base64_encode($link->url).'" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
+                                        <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="'.base64_encode($link->raw_anchor).'" data-url="'.base64_encode($link->url).'" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
                                         <td class="wpil-activity-panel-post wpil-activity-panel-limited-text-cell"><div style="margin: 3px 0;"> ' . esc_html($link->post->getTitle()) . '</div></td>
                                         <td class="wpil-activity-panel-limited-text-cell">
                                             <div style="margin: 3px 0; display:flex;">
@@ -2943,7 +3095,7 @@ class Wpil_Report
                                                     <div class="wpil-anchor-display-text">' . esc_html($link->anchor) . '</div> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $link->post->getLinks()->view)) . '" class="wpil-report-edit-display wpil-activity-panel-anchor-display" target="_blank"><span class="dashicons dashicons-external" title="'.esc_attr__('View On Page','wpil').'" style="position: relative;top: 3px;"></span></a>
                                                 </div>';
                             if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
-                            $rep .=        '<input class="wpil-activity-panel-anchor-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->anchor) . '">';
+                            $rep .=        '<input class="wpil-activity-panel-anchor-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->raw_anchor) . '">';
                             }
                             $rep .=         '</div>
                                         </td>
@@ -3037,7 +3189,7 @@ class Wpil_Report
                         }
 
                         $rep .= '<tr class="wpil-activity-panel-edit sentences inactive" '.$phrase_key_id.'>
-                                    <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
+                                    <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->raw_anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
                                     <td class="wpil-activity-panel-post wpil-activity-panel-limited-text-cell"><div style="margin: 3px 0;"> ' . ((!empty($target_post)) ? esc_html($target_post->getTitle()): 'Unknown Post') . '</div></td>
                                     <td class="'. (false !== $phrase_key ? '': 'wpil-activity-panel-limited-text-cell') .'">';
                             if(false !== $phrase_key && isset($phrases[$phrase_key])){
@@ -3156,7 +3308,7 @@ class Wpil_Report
                         }
 
                         $rep .= '<tr class="wpil-activity-panel-edit sentences inactive" '.$phrase_key_id.'>
-                                    <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
+                                    <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->raw_anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
                                     <td class="'. (false !== $phrase_key ? '': 'wpil-activity-panel-limited-text-cell') .'">';
                             if(false !== $phrase_key && isset($phrases[$phrase_key])){
                                     $phrase = $phrases[$phrase_key];
@@ -3183,7 +3335,7 @@ class Wpil_Report
                                             '.$edit_link.'
                                             <div class="wpil-report-edit-display wpil-activity-panel-anchor-display"><div class="wpil-anchor-display-text">' . esc_html($link->anchor) . '</div> <a href="' . esc_url(add_query_arg(['wpil_admin_frontend' => '1', 'wpil_admin_frontend_data' => $link->create_scroll_link_data()], $post->getLinks()->view)) . '" target="_blank"><span class="dashicons dashicons-external" title="'.esc_attr__('View On Page','wpil').'" style="position: relative;top: 3px;"></span></a></div>';
                                 if('related-post-link' !== Wpil_Toolbox::get_link_context($link->link_context)){
-                                    $rep .= '<input class="wpil-activity-panel-anchor-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->anchor) . '">';
+                                    $rep .= '<input class="wpil-activity-panel-anchor-edit wpil-report-edit-input" type="text" value="' . esc_attr($link->raw_anchor) . '">';
                                 }
                             }
                         $rep .=         '</div>
@@ -3202,7 +3354,6 @@ class Wpil_Report
                             }
                             $rep .=         '</div>
                                         </td>';
-                            $rep .= '<td><div class="'.$related.'" style="margin: 3px 0;"><div class="content-relatedness-score">' . ((empty($ai_not_enabled)) ? esc_html($link->get_ai_relation_percent()): $ai_not_enabled) . '</div></div></td>';
                         }
                         $rep .= ($get_all_links) ? '<td><div style="margin: 3px 0;">' . $link->location . '</div></td>' : '';
                         $rep .= '<td class="wpil-status-icon-cell">' . self::get_dropdown_icons(array(), $link, 'outbound-external', true) . '</td>';
@@ -3633,6 +3784,7 @@ class Wpil_Report
                                     raw_url text,
                                     host text,
                                     anchor text,
+                                    raw_anchor text DEFAULT NULL,
                                     anchor_word_count int(10) NOT NULL DEFAULT 0,
                                     url_slug_word_count int(10) UNSIGNED NOT NULL DEFAULT 0,
                                     anchor_slug_positional_match double UNSIGNED NOT NULL DEFAULT 0,
@@ -3880,7 +4032,7 @@ class Wpil_Report
             return false;
         }
 
-        $stored_links   = $wpdb->get_results($wpdb->prepare("SELECT `raw_url`, `anchor` FROM {$links_table} WHERE `post_id` = %d AND `post_type` = %s", $post->id, $post->type));
+        $stored_links   = $wpdb->get_results($wpdb->prepare("SELECT `raw_url`, `anchor`, `raw_anchor` FROM {$links_table} WHERE `post_id` = %d AND `post_type` = %s", $post->id, $post->type));
         $post_links     = self::getContentLinks($post, true);
 
         // if there are links in the content and in storage, create URL-anchor strings so we can compare them
@@ -3888,11 +4040,13 @@ class Wpil_Report
         $content = '';
 
         foreach($stored_links as $link){
-            $stored .= ($link->raw_url . $link->anchor);
+            $anchor = (!empty($link->raw_anchor)) ? $link->raw_anchor: $link->anchor;
+            $stored .= ($link->raw_url . $anchor);
         }
 
         foreach($post_links as $link){
-            $content .= ($link->url . $link->anchor);
+            $anchor = (!empty($link->raw_anchor)) ? $link->raw_anchor: $link->anchor;
+            $content .= ($link->url . $anchor); // Yes on update switching from "anchor" to "raw_anchor" is going to trigger updates. If it keeps looping tho, revert back to just comparing anchor texts
         }
 
         if(md5($stored) !== md5($content)){
@@ -3938,7 +4092,7 @@ class Wpil_Report
             if(empty($link) || empty($link->internal)){
                 continue;
             }
-            $existing[self::getCleanUrl($link->url) . '_' . $link->anchor] = true;
+            $existing[self::getCleanUrl($link->url) . '_' . $link->anchor] = true; // TODO: update to raw_anchor if we need more precision
         }
 
         // now get all the ones that are stored in the links table
@@ -4018,8 +4172,35 @@ class Wpil_Report
         $speed_optimize = Wpil_Settings::optimize_link_scan_for_speed();
 
         $count = 0;
-        $insert_query = "INSERT INTO {$links_table} (post_id, target_id, target_type, clean_url, raw_url, host, anchor, anchor_word_count, url_slug_word_count, anchor_slug_positional_match, internal, has_links, post_type, location, broken_link_scanned, link_whisper_created, is_autolink, tracking_id, module_link, link_context, ai_relation_score) VALUES ";
+        // I can't take it anymore! Enough with the long stringse!
+        $cols = [   'post_id' => '%d',
+                    'target_id' => '%d',
+                    'target_type' => '%s',
+                    'clean_url' => '%s',
+                    'raw_url' => '%s',
+                    'host' => '%s',
+                    'anchor' => '%s',
+                    'raw_anchor' => '%s',
+                    'anchor_word_count' => '%d',
+                    'url_slug_word_count' => '%d',
+                    'anchor_slug_positional_match' => '%f',
+                    'internal' => '%d',
+                    'has_links' => '%d',
+                    'post_type' => '%s',
+                    'location' => '%s',
+                    'broken_link_scanned' => '%d',
+                    'link_whisper_created' => '%d',
+                    'is_autolink' => '%d',
+                    'tracking_id' => '%d',
+                    'module_link' => '%d',
+                    'link_context' => '%d',
+                    'ai_relation_score' => '%f'
+                ];
+
+        $col_string = "`" . implode("`,`", array_keys($cols)) . "`";
+        $insert_query = "INSERT INTO {$links_table} ({$col_string}) VALUES ";
         $links_data = array();
+        $place_holder_string = "'" . implode("','", array_values($cols)) . "'";
         $place_holders = array();
 
         if(empty($posts)){
@@ -4054,6 +4235,7 @@ class Wpil_Report
                     $link->url,
                     $link->host,
                     $link->anchor,
+                    $link->raw_anchor,
                     Wpil_Word::getWordCount($link->anchor),
                     $slug_match_data['url_slug_word_count'],
                     $slug_match_data['anchor_slug_positional_match'],
@@ -4070,7 +4252,7 @@ class Wpil_Report
                     $ai_relation_score
                 );
 
-                $place_holders [] = "('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%f', '%d', '%d', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%f')";
+                $place_holders [] = "({$place_holder_string})";
             }
 
             // if there are no links, update the link table with null values to remove it from processing
@@ -4085,6 +4267,7 @@ class Wpil_Report
                         'raw_url' => null,
                         'host' => null,
                         'anchor' => null,
+                        'raw_anchor' => null,
                         'anchor_word_count' => 0,
                         'url_slug_word_count' => 0,
                         'anchor_slug_positional_match' => 0,
@@ -4154,7 +4337,9 @@ class Wpil_Report
      * @return array $all_post_ids (an array of all post ids from the post table. Categories aren't included. We're focusing on post ids since they make up the bulk of the ids)
      **/
     public static function get_all_post_ids($age_limit = null){
-        if (empty(self::$all_post_ids)){
+        $cache_key = (!empty($age_limit)) ? $age_limit: 'default';
+
+        if (!isset(self::$all_post_ids[$cache_key])){
             global $wpdb;
 
             $post_types = Wpil_Settings::getPostTypes();
@@ -4188,10 +4373,10 @@ class Wpil_Report
             }
 
             $statuses_query = Wpil_Query::postStatuses();
-            self::$all_post_ids = $wpdb->get_col("SELECT ID FROM {$wpdb->posts} WHERE 1=1 {$statuses_query} {$post_type_replace_string} {$completely_ignore} {$max_age}");
+            self::$all_post_ids[$cache_key] = $wpdb->get_col("SELECT ID FROM {$wpdb->posts} WHERE 1=1 {$statuses_query} {$post_type_replace_string} {$completely_ignore} {$max_age}");
         }
 
-        return self::$all_post_ids;
+        return self::$all_post_ids[$cache_key];
     }
 
     /**

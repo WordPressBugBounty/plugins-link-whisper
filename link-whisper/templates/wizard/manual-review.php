@@ -64,6 +64,14 @@
   border-bottom:2px solid #E9D5FF;
   padding-bottom:1px;
 }
+.wpil-review-title-link{
+  color:#111827 !important;
+  text-decoration:none;
+}
+.wpil-review-title-link:hover{
+  color:#4f46e5 !important;
+  text-decoration:underline;
+}
 
 .wpil-review-field-list{
   display:flex;
@@ -75,6 +83,48 @@
   display:flex;
   align-items:center;
   gap:8px;
+}
+.wpil-review-limit-wrap{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size:12px;
+  font-weight:600;
+  color:#475569;
+}
+.wpil-review-limit-wrap label{
+  white-space:nowrap;
+}
+.wpil-review-limit-input{
+  width:64px;
+  border:1px solid #dbe3ee;
+  border-radius:9px;
+  padding:7px 10px;
+  font-size:12px;
+  color:#0f172a;
+  background:#fff;
+}
+.wpil-review-limit-input:focus{
+  border-color:#7F5AF0;
+  box-shadow:0 0 0 3px rgba(127,90,240,.12);
+  outline:none;
+}
+#wpil-review-modal .wpil-review-sort-toggle,
+#wpil-review-modal .wpil-review-field-toggle,
+#wpil-review-modal .wpil-review-filter-toggle,
+#wpil-review-modal .wpil-review-filter-clear,
+#wpil-review-modal .wpil-review-filter-apply,
+#wpil-review-modal .wpil-review-sort-option,
+#wpil-review-modal .wpil-review-field,
+#wpil-review-modal .wpil-review-limit-wrap,
+#wpil-review-modal .wpil-review-limit-wrap label,
+#wpil-review-modal .wpil-review-limit-input,
+#wpil-review-modal .wpil-review-filter-input,
+#wpil-review-modal .wpil-review-filter-select{
+  text-transform:none !important;
+  letter-spacing:normal !important;
+  font-size:12px !important;
+  line-height:1.2;
 }
 .wpil-review-sort-menu{
   position:relative;
@@ -221,7 +271,118 @@
   gap:4px;
   align-items:center;
 }
-
+.wpil-review-filter-menu{
+  position:relative;
+}
+#wpil-review-filter-select{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  gap:4px;
+}
+.wpil-review-filter-toggle{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:6px 12px;
+  border:1px solid #e5e7eb;
+  border-radius:10px;
+  background:#fff;
+  font-size:12px;
+  font-weight:600;
+  color:#475569;
+  cursor:pointer;
+  user-select:none;
+  transition:all .15s ease;
+}
+.wpil-review-filter-toggle.is-open,
+.wpil-review-filter-toggle.is-active{
+  border-color:#7F5AF0;
+  color:#4c1d95;
+  box-shadow:0 6px 14px rgba(127,90,240,.12);
+}
+.wpil-review-filter-menu-panel{
+  position:absolute;
+  top:calc(100% + 6px);
+  right:0;
+  z-index:7;
+  width:320px;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:12px;
+  box-shadow:0 16px 30px rgba(15,23,42,.12);
+  padding:12px;
+  display:none;
+}
+.wpil-review-filter-menu-panel.is-open{
+  display:block;
+}
+.wpil-review-filter-form{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.wpil-review-filter-row{
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+}
+.wpil-review-filter-row label{
+  font-size:11px;
+  font-weight:700;
+  color:#475569;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+}
+.wpil-review-filter-inline{
+  display:grid;
+  grid-template-columns:1fr 72px 92px;
+  gap:8px;
+}
+.wpil-review-filter-input,
+.wpil-review-filter-select{
+  width:100%;
+  border:1px solid #dbe3ee;
+  border-radius:9px;
+  padding:7px 10px;
+  font-size:12px;
+  color:#0f172a;
+  background:#fff;
+}
+.wpil-review-filter-input:focus,
+.wpil-review-filter-select:focus{
+  border-color:#7F5AF0;
+  box-shadow:0 0 0 3px rgba(127,90,240,.12);
+  outline:none;
+}
+.wpil-review-filter-note{
+  font-size:11px;
+  color:#64748b;
+  line-height:1.4;
+}
+.wpil-review-filter-actions{
+  display:flex;
+  justify-content:flex-end;
+  gap:8px;
+}
+.wpil-review-filter-clear,
+.wpil-review-filter-apply{
+  border-radius:9px;
+  padding:7px 12px;
+  font-size:12px;
+  font-weight:600;
+  cursor:pointer;
+}
+.wpil-review-filter-clear{
+  border:1px solid #dbe3ee;
+  background:#fff;
+  color:#475569;
+}
+.wpil-review-filter-apply{
+  border:1px solid #7F5AF0;
+  background:#7F5AF0;
+  color:#fff;
+}
 /* lock scroll while modal open */
 body.wpil-review-open{ overflow:hidden; }
 
@@ -229,7 +390,9 @@ body.wpil-review-open{ overflow:hidden; }
 <script>
     jQuery(function($){
         var POLL_MS = 6000;
-        var MAX_VISIBLE_ITEMS = 5;
+        var DEFAULT_VISIBLE_ITEM_LIMIT = 5;
+        var MIN_VISIBLE_ITEM_LIMIT = 3;
+        var MAX_VISIBLE_ITEM_LIMIT = 30;
 
         var ajaxUrl = (window.wpilReview && wpilReview.ajax_url) ? wpilReview.ajax_url : (window.ajaxurl || '');
         var nonce   = (window.wpilReview && wpilReview.nonce) ? wpilReview.nonce : '';
@@ -274,6 +437,7 @@ body.wpil-review-open{ overflow:hidden; }
         var $reviewButtonSpinner = $reviewButton.find('[data-role="review-button-spinner"]');
         var finishedLooking = null;
         var remainingCount = null;
+        var reviewReadyCountTotal = null;
         var hasEverLoaded = false;
 
         var itemsById = {};
@@ -282,6 +446,8 @@ body.wpil-review-open{ overflow:hidden; }
         var pendingDecisionIds = {};
         var pollTimer = null;
         var isPolling = false;
+        var suggestionRequestVersion = 0;
+        var pendingSuggestionRefresh = false;
         var suggestionRefreshTimer = null;
         var reviewCountTimer = null;
         var reviewCountPollingPaused = false;
@@ -301,6 +467,9 @@ body.wpil-review-open{ overflow:hidden; }
         var sortStorageKey = 'wpilReviewSort';
         var currentSortKey = 'ai';
         var currentSortDir = 'desc';
+        var activeSourceFilters = getDefaultSourceFilters();
+        var draftSourceFilters = getDefaultSourceFilters();
+        var currentVisibleItemLimit = DEFAULT_VISIBLE_ITEM_LIMIT;
 
         var numericSortKeys = {
             ai: true,
@@ -348,14 +517,17 @@ body.wpil-review-open{ overflow:hidden; }
         }
 
         function openModal(){
-            remainingCount = null;
+            remainingCount = hasActiveSourceFilters() ? null : reviewReadyCountTotal;
             finishedLooking = false;
             hasEverLoaded = false;
             pendingDecisionIds = {};
+            syncRemainingUi();
             setEmptyState();
             loadSortState();
+            renderVisibleLimitControl();
             renderFieldSelector();
             renderSortSelector();
+            renderFilterControls();
 
             $('body').addClass('wpil-review-open');
             $modal.removeClass('hidden').attr('aria-hidden','false');
@@ -414,7 +586,6 @@ body.wpil-review-open{ overflow:hidden; }
             var total = getDisplayedRemainingCount();
             finishedLooking = (total <= 0);
             $remaining.text(total);
-            updateReviewCta(total);
         }
 
         function updateFooterMeta(){
@@ -501,12 +672,16 @@ body.wpil-review-open{ overflow:hidden; }
                 }
             }).done(function(resp){
                 if(resp && resp.success && resp.data && resp.data.remaining !== undefined){
-                    remainingCount = parseInt(resp.data.remaining, 10);
-                    if(isNaN(remainingCount) || remainingCount < 0){
-                        remainingCount = 0;
+                    reviewReadyCountTotal = parseInt(resp.data.remaining, 10);
+                    if(isNaN(reviewReadyCountTotal) || reviewReadyCountTotal < 0){
+                        reviewReadyCountTotal = 0;
                     }
-                    syncRemainingUi();
-                    setEmptyState();
+                    updateReviewCta(reviewReadyCountTotal);
+                    if($modal.hasClass('hidden') && !hasActiveSourceFilters()){
+                        remainingCount = reviewReadyCountTotal;
+                        syncRemainingUi();
+                        setEmptyState();
+                    }
                 }
             });
         }
@@ -559,6 +734,188 @@ body.wpil-review-open{ overflow:hidden; }
                 if($reviewButtonSpinner.length){
                     $reviewButtonSpinner.addClass('hidden');
                 }
+            }
+        }
+
+        function getDefaultSourceFilters(){
+            return {
+                source_date_after: '',
+                source_link_metric: '',
+                source_link_compare: '',
+                source_link_value: ''
+            };
+        }
+
+        function normalizeVisibleItemLimit(limit){
+            var value = parseInt(limit, 10);
+            if(isNaN(value)){
+                value = DEFAULT_VISIBLE_ITEM_LIMIT;
+            }
+
+            return Math.max(MIN_VISIBLE_ITEM_LIMIT, Math.min(MAX_VISIBLE_ITEM_LIMIT, value));
+        }
+
+        function getVisibleItemLimit(){
+            currentVisibleItemLimit = normalizeVisibleItemLimit(currentVisibleItemLimit);
+            return currentVisibleItemLimit;
+        }
+
+        function renderVisibleLimitControl(){
+            var $wrap = $('#wpil-review-limit-select');
+            if(!$wrap.length){
+                return;
+            }
+
+            var value = getVisibleItemLimit();
+            var html = ''
+                + '<div class="wpil-review-limit-wrap">'
+                +   '<label for="wpil-review-visible-limit">Results</label>'
+                +   '<input type="number" id="wpil-review-visible-limit" class="wpil-review-limit-input" min="' + MIN_VISIBLE_ITEM_LIMIT + '" max="' + MAX_VISIBLE_ITEM_LIMIT + '" step="1" value="' + value + '">'
+                + '</div>';
+
+            $wrap.html(html);
+        }
+
+        function cloneSourceFilters(filters){
+            return $.extend({}, getDefaultSourceFilters(), filters || {});
+        }
+
+        function normalizeSourceFilters(filters){
+            var normalized = cloneSourceFilters(filters);
+            normalized.source_date_after = String(normalized.source_date_after || '').trim();
+            normalized.source_link_metric = String(normalized.source_link_metric || '').trim();
+            normalized.source_link_compare = String(normalized.source_link_compare || '').trim();
+            normalized.source_link_value = String(normalized.source_link_value || '').trim();
+
+            if(!/^\d{4}-\d{2}-\d{2}$/.test(normalized.source_date_after)){
+                normalized.source_date_after = '';
+            }
+
+            if(normalized.source_link_metric !== 'inbound' && normalized.source_link_metric !== 'outbound_internal'){
+                normalized.source_link_metric = '';
+            }
+
+            if(normalized.source_link_compare !== 'gt' && normalized.source_link_compare !== 'eq' && normalized.source_link_compare !== 'lt'){
+                normalized.source_link_compare = '';
+            }
+
+            if(normalized.source_link_value !== ''){
+                if(!/^\d+$/.test(normalized.source_link_value)){
+                    normalized.source_link_value = '';
+                }else{
+                    normalized.source_link_value = String(parseInt(normalized.source_link_value, 10));
+                }
+            }
+
+            if(!isCompleteSourceLinkFilter(normalized)){
+                normalized.source_link_metric = '';
+                normalized.source_link_compare = '';
+                normalized.source_link_value = '';
+            }
+
+            return normalized;
+        }
+
+        function isCompleteSourceLinkFilter(filters){
+            var current = cloneSourceFilters(filters);
+            return !!(current.source_link_metric && current.source_link_compare && current.source_link_value !== '');
+        }
+
+        function hasActiveSourceFilters(filters){
+            var current = normalizeSourceFilters(filters || activeSourceFilters);
+            return !!(current.source_date_after || isCompleteSourceLinkFilter(current));
+        }
+
+        function getActiveSourceFilterCount(){
+            var count = 0;
+            if(activeSourceFilters.source_date_after){
+                count++;
+            }
+            if(isCompleteSourceLinkFilter(activeSourceFilters)){
+                count++;
+            }
+
+            return count;
+        }
+
+        function getActiveSourceFilterRequestData(){
+            var data = {};
+
+            if(activeSourceFilters.source_date_after){
+                data.source_date_after = activeSourceFilters.source_date_after;
+            }
+
+            if(isCompleteSourceLinkFilter(activeSourceFilters)){
+                data.source_link_metric = activeSourceFilters.source_link_metric;
+                data.source_link_compare = activeSourceFilters.source_link_compare;
+                data.source_link_value = activeSourceFilters.source_link_value;
+            }
+
+            return data;
+        }
+
+        function renderFilterControls(){
+            var $wrap = $('#wpil-review-filter-select');
+            if(!$wrap.length){
+                return;
+            }
+
+            draftSourceFilters = cloneSourceFilters(activeSourceFilters);
+            var activeCount = getActiveSourceFilterCount();
+            var buttonLabel = 'Source Post Filters';
+            if(activeCount > 0){
+                buttonLabel += ' (' + activeCount + ')';
+            }
+
+            var html = ''
+                + '<div class="wpil-review-filter-menu">'
+                +   '<button type="button" class="wpil-review-filter-toggle' + (activeCount > 0 ? ' is-active' : '') + '" data-review-filter-toggle="1">' + escapeHtml(buttonLabel) + '</button>'
+                +   '<div class="wpil-review-filter-menu-panel">'
+                +       '<div class="wpil-review-filter-form">'
+                +           '<div class="wpil-review-filter-row">'
+                +               '<label for="wpil-review-source-date-after">Source date after</label>'
+                +               '<input type="date" id="wpil-review-source-date-after" class="wpil-review-filter-input" data-review-filter-input="source_date_after" value="' + escapeAttr(draftSourceFilters.source_date_after) + '">'
+                +           '</div>'
+                +           '<div class="wpil-review-filter-row">'
+                +               '<label>Source internal link count</label>'
+                +               '<div class="wpil-review-filter-inline">'
+                +                   '<select class="wpil-review-filter-select" data-review-filter-input="source_link_metric">'
+                +                       '<option value="">Choose metric</option>'
+                +                       '<option value="inbound"' + (draftSourceFilters.source_link_metric === 'inbound' ? ' selected' : '') + '>Inbound internal</option>'
+                +                       '<option value="outbound_internal"' + (draftSourceFilters.source_link_metric === 'outbound_internal' ? ' selected' : '') + '>Outbound internal</option>'
+                +                   '</select>'
+                +                   '<select class="wpil-review-filter-select" data-review-filter-input="source_link_compare">'
+                +                       '<option value="">Compare</option>'
+                +                       '<option value="gt"' + (draftSourceFilters.source_link_compare === 'gt' ? ' selected' : '') + '>&gt;</option>'
+                +                       '<option value="eq"' + (draftSourceFilters.source_link_compare === 'eq' ? ' selected' : '') + '>=</option>'
+                +                       '<option value="lt"' + (draftSourceFilters.source_link_compare === 'lt' ? ' selected' : '') + '>&lt;</option>'
+                +                   '</select>'
+                +                   '<input type="number" min="0" step="1" class="wpil-review-filter-input" data-review-filter-input="source_link_value" value="' + escapeAttr(draftSourceFilters.source_link_value) + '" placeholder="Count">'
+                +               '</div>'
+                +           '</div>'
+                +           '<div class="wpil-review-filter-note">Date filters only match source posts. Source terms are excluded while a date filter is active.</div>'
+                +           '<div class="wpil-review-filter-actions">'
+                +               '<button type="button" class="wpil-review-filter-clear" data-review-filter-clear="1">Clear</button>'
+                +               '<button type="button" class="wpil-review-filter-apply" data-review-filter-apply="1">Apply</button>'
+                +           '</div>'
+                +       '</div>'
+                +   '</div>'
+                + '</div>';
+
+            $wrap.html(html);
+        }
+
+        function resetVisibleSuggestionsAndRefetch(){
+            suggestionRequestVersion++;
+            pendingSuggestionRefresh = true;
+            itemsById = {};
+            remainingCount = null;
+            hasEverLoaded = false;
+            renderAll();
+            setEmptyState();
+            if(!isPolling){
+                pendingSuggestionRefresh = false;
+                fetchSuggestions();
             }
         }
 
@@ -849,6 +1206,56 @@ body.wpil-review-open{ overflow:hidden; }
             refreshSuggestionsForSortChange();
         });
 
+        $(document).on('click', '[data-review-filter-toggle]', function(e){
+            e.preventDefault();
+            var $toggle = $(this);
+            var $panel = $toggle.closest('.wpil-review-filter-menu').find('.wpil-review-filter-menu-panel');
+            var isOpen = $panel.hasClass('is-open');
+
+            $('.wpil-review-sort-menu-panel').removeClass('is-open');
+            $('.wpil-review-sort-toggle').removeClass('is-open');
+            $('.wpil-review-field-menu-panel').removeClass('is-open');
+            $('.wpil-review-field-toggle').removeClass('is-open');
+            $('.wpil-review-filter-menu-panel').removeClass('is-open');
+            $('.wpil-review-filter-toggle').removeClass('is-open');
+
+            if(!isOpen){
+                $panel.addClass('is-open');
+                $toggle.addClass('is-open');
+            }
+        });
+
+        $(document).on('input change', '[data-review-filter-input]', function(){
+            var key = String($(this).data('review-filter-input') || '');
+            if(!key){
+                return;
+            }
+
+            draftSourceFilters[key] = $(this).val();
+        });
+
+        $(document).on('click', '[data-review-filter-apply]', function(e){
+            e.preventDefault();
+            activeSourceFilters = normalizeSourceFilters(draftSourceFilters);
+            draftSourceFilters = cloneSourceFilters(activeSourceFilters);
+            renderFilterControls();
+            resetVisibleSuggestionsAndRefetch();
+        });
+
+        $(document).on('click', '[data-review-filter-clear]', function(e){
+            e.preventDefault();
+            activeSourceFilters = getDefaultSourceFilters();
+            draftSourceFilters = getDefaultSourceFilters();
+            renderFilterControls();
+            resetVisibleSuggestionsAndRefetch();
+        });
+
+        $(document).on('change', '#wpil-review-visible-limit', function(){
+            currentVisibleItemLimit = normalizeVisibleItemLimit($(this).val());
+            $(this).val(currentVisibleItemLimit);
+            resetVisibleSuggestionsAndRefetch();
+        });
+
         $(document).on('click', function(e){
             if($(e.target).closest('.wpil-review-field-menu').length < 1){
                 $('.wpil-review-field-menu-panel').removeClass('is-open');
@@ -858,30 +1265,41 @@ body.wpil-review-open{ overflow:hidden; }
                 $('.wpil-review-sort-menu-panel').removeClass('is-open');
                 $('.wpil-review-sort-toggle').removeClass('is-open');
             }
+            if($(e.target).closest('.wpil-review-filter-menu').length < 1){
+                $('.wpil-review-filter-menu-panel').removeClass('is-open');
+                $('.wpil-review-filter-toggle').removeClass('is-open');
+            }
         });
 
         function cardHtml(item){
             var id = String(item.id);
             var isPending = !!pendingDecisionIds[id];
-            var postTitle = escapeHtml(item.post_title || '');
-            var sourceViewLink = String(item.source_view_link || '');
-            var postTitleHtml = postTitle;
+            var sourceData = item.source_data || {};
+            var targetData = item.target_data || {};
+            var postTitle = escapeHtml(sourceData.title || item.post_title || '');
+            var sourceViewLink = String(sourceData.view_link || item.source_view_link || '');
+            var postTitleHtml = postTitle || 'Source post';
             if(sourceViewLink){
-                postTitleHtml = '<a href="' + escapeAttr(sourceViewLink) + '" target="_blank" rel="noopener">' + postTitle + '</a>';
+                postTitleHtml = '<a class="wpil-review-title-link" href="' + escapeAttr(sourceViewLink) + '" target="_blank" rel="noopener">' + postTitleHtml + '</a>';
             }
             var sentence  = item.proposed_sentence_html ? sanitizeProposedHtml(item.proposed_sentence_html) : '';
 
-            // Optional fields (see PHP section below)
-            var targetTitle = escapeHtml(item.target_title || '');
+            var targetTitle = escapeHtml(targetData.title || item.target_title || '');
+            var targetViewLink = String(targetData.view_link || '');
+            var targetTitleHtml = targetTitle || 'Suggested page';
+            if(targetViewLink){
+                targetTitleHtml = '<a class="wpil-review-title-link" href="' + escapeAttr(targetViewLink) + '" target="_blank" rel="noopener">' + targetTitleHtml + '</a>';
+            }
             var targetHint  = escapeHtml(item.target_hint || '');
-            var aiRelationScore = item.ai_relation_score !== null && item.ai_relation_score !== undefined && item.ai_relation_score > 0 ? (Math.round(item.ai_relation_score * 100)) + '%' : 'Unknown';
-            var metaHtml = buildMetaHtml(item);
+            var sourceMetaHtml = buildMetaHtml(sourceData, item.ai_relation_score, false);
+            var targetMetaHtml = buildMetaHtml(targetData, item.ai_relation_score, true);
             return ''
             + '<div class="bg-white rounded-xl p-5 shadow-sm border border-gray-200 flex flex-col md:flex-row items-center gap-6 transition-all' + (isPending ? ' opacity-60 pointer-events-none' : '') + '" data-link-id="'+id+'">'
                 + '<div class="flex-1 min-w-0">'
-                + '<div class="flex items-center gap-2 mb-2">'
-                    + '<span class="text-[10px] uppercase font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">Source Post: '+postTitleHtml+'</span>'
-                + '</div>'
+                + '<div class="text-[10px] uppercase font-bold text-gray-400 mb-1">Linking From:</div>'
+                + '<div class="font-medium text-gray-900 mb-2 break-words">'+postTitleHtml+'</div>'
+                + (sourceMetaHtml ? sourceMetaHtml : '')
+                + '<p class="text-[10px] uppercase font-bold text-gray-400 mt-3 mb-1">Suggested Sentence</p>'
                 + '<p class="text-gray-700 leading-relaxed">'
                     + (sentence ? '“'+sentence+'”' : '<em class="text-gray-500 font-bold">No sentence available</em>')
                 + '</p>'
@@ -895,10 +1313,9 @@ body.wpil-review-open{ overflow:hidden; }
 
                 + '<div class="w-full md:w-1/4 min-w-0">'
                 + '<div class="text-[10px] uppercase font-bold text-gray-400 mb-1">Linking to:</div>'
-                + '<div class="font-medium text-gray-900 truncate">'+(targetTitle || 'Suggested page')+'</div>'
+                + '<div class="font-medium text-gray-900 break-words">'+targetTitleHtml+'</div>'
                 + (targetHint ? '<div class="text-xs text-green-600 mt-0.5">'+targetHint+'</div>' : '')
-                + (isFieldSelected('ai') && aiRelationScore !== null ? '<div class="text-xs text-purple-600 mt-1"><strong>AI Score:</strong> '+aiRelationScore+'</div>' : '')
-                + (metaHtml ? metaHtml : '')
+                + (targetMetaHtml ? targetMetaHtml : '')
                 + '</div>'
 
                 + '<div class="flex items-center gap-3 border-l border-gray-100 pl-6">'
@@ -917,14 +1334,19 @@ body.wpil-review-open{ overflow:hidden; }
             + '</div>';
         }
 
-        function buildMetaHtml(item){
-            var data = item.target_data || {};
+        function buildMetaHtml(data, aiRelationScoreRaw, includeAiScore){
+            data = data || {};
             var selected = getSelectedFields();
             if(!selected.length){
                 return '';
             }
 
             var lines = [];
+            var aiRelationScore = (aiRelationScoreRaw !== null && aiRelationScoreRaw !== undefined && aiRelationScoreRaw > 0) ? (Math.round(aiRelationScoreRaw * 100)) + '%' : 'Unknown';
+
+            if(includeAiScore && selected.indexOf('ai') !== -1){
+                lines.push('<div><b>AI Score:</b> ' + escapeHtml(aiRelationScore) + '</div>');
+            }
 
             if(selected.indexOf('type') !== -1 && data.type){
                 lines.push('<div><b>Type:</b> ' + escapeHtml(data.type) + '</div>');
@@ -1004,7 +1426,7 @@ body.wpil-review-open{ overflow:hidden; }
             });
 
             for(var i = 0; i < newItems.length; i++){
-                if(visibleCount >= MAX_VISIBLE_ITEMS){
+                if(visibleCount >= getVisibleItemLimit()){
                     break;
                 }
 
@@ -1141,10 +1563,7 @@ body.wpil-review-open{ overflow:hidden; }
         }
 
         function refreshSuggestionsForSortChange(){
-            itemsById = {};
-            renderAll();
-            setEmptyState();
-            fetchSuggestions();
+            resetVisibleSuggestionsAndRefetch();
         }
 
         function fetchSuggestions(){
@@ -1152,21 +1571,28 @@ body.wpil-review-open{ overflow:hidden; }
             if(!ajaxUrl) return;
 
             isPolling = true;
+            pendingSuggestionRefresh = false;
+            var requestVersion = suggestionRequestVersion;
             var nonce = $('#wpil-scanning-nonce').val();
 
             $.ajax({
             url: ajaxUrl,
             method: 'POST',
             dataType: 'json',
-            data: {
+            data: $.extend({
                 action: 'wpil_get_review_links',
                 nonce: nonce,
                 process_key: getReviewProcessKey(),
                 fix_type: getReviewFixType(),
                 sort_key: currentSortKey || 'ai',
-                sort_dir: currentSortDir || 'desc'
-            }
+                sort_dir: currentSortDir || 'desc',
+                visible_limit: getVisibleItemLimit()
+            }, getActiveSourceFilterRequestData())
             }).done(function(resp){
+                if(requestVersion !== suggestionRequestVersion){
+                    return;
+                }
+
                 if(resp && resp.success && resp.data && Array.isArray(resp.data.items)){
                     if(resp.data.remaining !== undefined){
                         remainingCount = parseInt(resp.data.remaining, 10);
@@ -1187,6 +1613,10 @@ body.wpil-review-open{ overflow:hidden; }
                 }
             }).always(function(){
                 isPolling = false;
+                if(pendingSuggestionRefresh){
+                    pendingSuggestionRefresh = false;
+                    fetchSuggestions();
+                }
             });
         }
 
@@ -1255,19 +1685,24 @@ body.wpil-review-open{ overflow:hidden; }
                 return;
             }
 
-            // show empty area
             $empty.removeClass('hidden');
 
-            // Decide which message
             if(isReviewProcessRunning()){
-                $emptyText.text(hasEverLoaded ? 'Looking for more links…' : 'Looking for links…');
+                if(hasActiveSourceFilters()){
+                    $emptyText.text(hasEverLoaded ? 'Looking for more matching links...' : 'Looking for matching links...');
+                }else{
+                    $emptyText.text(hasEverLoaded ? 'Looking for more links...' : 'Looking for links...');
+                }
                 $empty.find('svg').removeClass('hidden');
             } else if(hasKnownRemaining && normalizedRemaining <= 0){
-                $emptyText.text('No links left to review.');
-                $empty.find('svg').addClass('hidden'); // stop showing spinner
+                $emptyText.text(hasActiveSourceFilters() ? 'No links match your current filters.' : 'No links left to review.');
+                $empty.find('svg').addClass('hidden');
             } else {
-                // still working / waiting
-                $emptyText.text(hasEverLoaded ? 'Looking for more links…' : 'Looking for links…');
+                if(hasActiveSourceFilters()){
+                    $emptyText.text(hasEverLoaded ? 'Looking for more matching links...' : 'Looking for matching links...');
+                }else{
+                    $emptyText.text(hasEverLoaded ? 'Looking for more links...' : 'Looking for links...');
+                }
                 $empty.find('svg').removeClass('hidden');
             }
         }
@@ -1469,7 +1904,9 @@ body.wpil-review-open{ overflow:hidden; }
         <div>
             <div class="flex items-center gap-3">
                 <div id="wpil-review-sort-select" class="wpil-review-sort-list"></div>
+                <div id="wpil-review-filter-select" class="wpil-review-sort-list"></div>
                 <div id="wpil-review-data-select" class="wpil-review-field-list"></div>
+                <div id="wpil-review-limit-select" class="wpil-review-sort-list"></div>
                 <button type="button" class="wpil-review-modal__close" data-wpil-review-close="1" aria-label="Close">×</button>
             </div>
         </div>

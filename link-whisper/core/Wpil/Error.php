@@ -9,6 +9,7 @@ class Wpil_Error
     public static $saved_link_cache = array(); // save a limited cache of the keywords we scan so we don't have to look them up everytime
     public static $broken_link_cache = array();
     public static $broken_link_ignore = null;
+    public static $broken_link_snoozes = null;
 
     /**
      * Register services
@@ -19,6 +20,8 @@ class Wpil_Error
         add_action('wp_ajax_wpil_error_process', [$this, 'ajaxErrorProcess']);
 //        add_action('wp_ajax_edit_report_link', [$this, 'ajaxEditReportLink']);
         add_action('wp_ajax_wpil_delete_error_links', [$this, 'ajaxDeleteLinks']);
+        add_action('wp_ajax_wpil_ignore_error_links', [$this, 'ajaxIgnoreLinks']);
+        add_action('wp_ajax_wpil_snooze_error_links', [$this, 'ajaxSnoozeLinks']);
         add_action('wp_ajax_wpil_get_edit_error_links', [$this, 'ajaxGetEditLinks']);
         add_action('wp_ajax_wpil_apply_broken_link_recommendations', [$this, 'ajaxApplyBrokenLinkRecommendations']);
         add_action('wp_ajax_wpil_delete_error_high_confidence_links', [$this, 'ajaxDeleteHighConfidenceBrokenLinks']);
@@ -38,6 +41,7 @@ class Wpil_Error
         self::fillPosts();
         self::fillTerms();
         self::prepareIgnoreTable();
+        self::prepareSnoozeTable();
         self::prepareTable();
         update_option('wpil_error_reset_run', 1);
         update_option('wpil_error_check_links_cron', 0);
@@ -101,7 +105,7 @@ class Wpil_Error
                 $valid_protocol = (strpos($link, 'http://') === 0 || strpos($link, 'https://') === 0 || strpos($link, '//') === 0);
 
                 // check to see if the link is being ignored
-                if(self::check_if_ignored($link)){
+                if(self::check_if_ignored($link) || self::is_link_snoozed($link)){
                     continue;
                 }
 
@@ -110,18 +114,18 @@ class Wpil_Error
                     // add the current link to the processing batch
                     $link_batch[] = $link;
                     // and add the link's sentence to an index
-                    $sentences[$link] = array('sentence' => $link_data['sentence'], 'anchor' => $link_data['anchor']);
+                    $sentences[$link] = array('sentence' => $link_data['sentence'], 'anchor' => $link_data['anchor'], 'raw_anchor' => $link_data['raw_anchor']);
                 }elseif(strpos($link, '\"') === 0 && strrpos($link, '\"') === (strlen($link) - 2)){
                     // if the link is misformatted with slashes, save it to the database as malformatted
-                    self::saveLink($link, $post, 925, $link_data['sentence'], $link_data['anchor']);
+                    self::saveLink($link, $post, 925, $link_data['sentence'], $link_data['anchor'], $link_data['raw_anchor']);
                 }elseif($valid_protocol && $stored_code = self::link_scan_status($link, $post, $link_data['sentence'])){
                     // if the broken link has been scanned into the system, but not for this post, save it to the database
                     if(!empty($stored_code) && ($stored_code < 200 || $stored_code > 299) ){
-                        self::saveLink($link, $post, $stored_code, $link_data['sentence'], $link_data['anchor']);
+                        self::saveLink($link, $post, $stored_code, $link_data['sentence'], $link_data['anchor'], $link_data['raw_anchor']);
                     }
                 }elseif($link === '{{wpil-empty-url}}' && !self::link_scan_status($link, $post, $link_data['sentence'], true)){
                     // if there's no url in the link at all, save the link as an empty one
-                    self::saveLink($link, $post, 800, $link_data['sentence'], $link_data['anchor']);
+                    self::saveLink($link, $post, 800, $link_data['sentence'], $link_data['anchor'], $link_data['raw_anchor']);
                 }
 
                 // if the batch size has been reached or we're on the last link
@@ -137,7 +141,7 @@ class Wpil_Error
                             // remove the protocol if the url isn't in the sentences
                             $protocol_url = (!isset($sentences[$url])) ? str_replace(array('https:', 'http:'), '', $url): $url; // getResponseCodes adds the site's protocol if there isn't one on the link
 
-                            self::saveLink($protocol_url, $post, $code, $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor']);
+                            self::saveLink($protocol_url, $post, $code, $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor'], $sentences[$protocol_url]['raw_anchor']);
                         }else{
                             // if the code falls outside the 2xx-3xx range, slate it for another call
                             $second_pass[] = $url;
@@ -163,15 +167,15 @@ class Wpil_Error
 
                             // if the code is something other than a curl error, save it directly
                             if($code > 99){
-                                self::saveLink($protocol_url, $post, $code, $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor']);
+                                self::saveLink($protocol_url, $post, $code, $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor'], $sentences[$protocol_url]['raw_anchor']);
                             }else{
                                 // if the error code is for a curl error, see if the HEAD call had a HTTP response
                                 if(isset($codes[$url]) && $codes[$url] > 99){
                                     // if it did, save that instead
-                                    self::saveLink($protocol_url, $post, $codes[$url], $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor']);
+                                    self::saveLink($protocol_url, $post, $codes[$url], $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor'], $sentences[$protocol_url]['raw_anchor']);
                                 }else{
                                     // otherwise, save the result of the GET call
-                                    self::saveLink($protocol_url, $post, $code, $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor']);
+                                    self::saveLink($protocol_url, $post, $code, $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor'], $sentences[$protocol_url]['raw_anchor']);
                                 }
                             }
                         }
@@ -266,7 +270,7 @@ class Wpil_Error
             $valid_protocol = (strpos($link, 'http://') === 0 || strpos($link, 'https://') === 0 || strpos($link, '//') === 0);
 
             // check to see if the link is being ignored
-            if(self::check_if_ignored($link)){
+            if(self::check_if_ignored($link) || self::is_link_snoozed($link)){
                 continue;
             }
 
@@ -278,15 +282,15 @@ class Wpil_Error
                 $sentences[$link] = array('sentence' => $link_data['sentence'], 'anchor' => $link_data['anchor']);
             }elseif(strpos($link, '\"') === 0 && strrpos($link, '\"') === (strlen($link) - 2)){
                 // if the link is misformatted with slashes, save it to the database as malformatted
-                self::saveLink($link, $post, 925, $link_data['sentence'], $link_data['anchor']);
+                self::saveLink($link, $post, 925, $link_data['sentence'], $link_data['anchor'], $link_data['raw_anchor']);
             }elseif($valid_protocol && $stored_code = self::link_scan_status($link, $post, $link_data['sentence'])){
                 // if the broken link has been scanned into the system, but not for this post, save it to the database
                 if(!empty($stored_code) && ($stored_code < 200 || $stored_code > 299) ){
-                    self::saveLink($link, $post, $stored_code, $link_data['sentence'], $link_data['anchor']);
+                    self::saveLink($link, $post, $stored_code, $link_data['sentence'], $link_data['anchor'], $link_data['raw_anchor']);
                 }
             }elseif($link === '{{wpil-empty-url}}' && !self::link_scan_status($link, $post, $link_data['sentence'], true)){
                 // if there's no url in the link at all, save the link as an empty one
-                self::saveLink($link, $post, 800, $link_data['sentence'], $link_data['anchor']);
+                self::saveLink($link, $post, 800, $link_data['sentence'], $link_data['anchor'], $link_data['raw_anchor']);
             }
 
             // if the batch size has been reached or we're on the last link
@@ -302,7 +306,7 @@ class Wpil_Error
                         // remove the protocol if the url isn't in the sentences
                         $protocol_url = (!isset($sentences[$url])) ? str_replace(array('https:', 'http:'), '', $url): $url; // getResponseCodes adds the site's protocol if there isn't one on the link
 
-                        self::saveLink($protocol_url, $post, $code, $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor']);
+                        self::saveLink($protocol_url, $post, $code, $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor'], $sentences[$protocol_url]['raw_anchor']);
                     }else{
                         // if the code falls outside the 2xx-3xx range, slate it for another call
                         $second_pass[] = $url;
@@ -328,15 +332,15 @@ class Wpil_Error
 
                         // if the code is something other than a curl error, save it directly
                         if($code > 99){
-                            self::saveLink($protocol_url, $post, $code, $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor']);
+                            self::saveLink($protocol_url, $post, $code, $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor'], $sentences[$protocol_url]['raw_anchor']);
                         }else{
                             // if the error code is for a curl error, see if the HEAD call had a HTTP response
                             if(isset($codes[$url]) && $codes[$url] > 99){
                                 // if it did, save that instead
-                                self::saveLink($protocol_url, $post, $codes[$url], $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor']);
+                                self::saveLink($protocol_url, $post, $codes[$url], $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor'], $sentences[$protocol_url]['raw_anchor']);
                             }else{
                                 // otherwise, save the result of the GET call
-                                self::saveLink($protocol_url, $post, $code, $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor']);
+                                self::saveLink($protocol_url, $post, $code, $sentences[$protocol_url]['sentence'], $sentences[$protocol_url]['anchor'], $sentences[$protocol_url]['raw_anchor']);
                             }
                         }
                     }
@@ -632,6 +636,7 @@ class Wpil_Error
                                         ignore_link tinyint(1) DEFAULT 0,
                                         sentence varchar(255) DEFAULT 0,
                                         anchor text NOT NULL,
+                                        raw_anchor text DEFAULT NULL,
                                         suggested_url_replacement text DEFAULT NULL,
                                         recommended_action varchar(32) DEFAULT NULL,
                                         PRIMARY KEY  (id),
@@ -710,6 +715,243 @@ class Wpil_Error
     }
 
     /**
+     * Creates a table for persisting temporarily snoozed broken links.
+     *
+     * @param bool $clear_expired
+     * @return void
+     */
+    public static function prepareSnoozeTable($clear_expired = true){
+        global $wpdb;
+
+        $snooze_links = $wpdb->prefix . 'wpil_snoozed_links';
+        $snooze_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$snooze_links}'");
+        if(empty($snooze_tbl_exists)){
+            $wpil_snooze_link_table_query = "CREATE TABLE IF NOT EXISTS {$snooze_links} (
+                                                id int(10) unsigned NOT NULL AUTO_INCREMENT,
+                                                url text,
+                                                normalized_url varchar(191) NOT NULL DEFAULT '',
+                                                snoozed_until DATETIME NOT NULL,
+                                                created DATETIME NOT NULL,
+                                                updated DATETIME NOT NULL,
+                                                PRIMARY KEY  (id),
+                                                UNIQUE KEY normalized_url (normalized_url),
+                                                KEY snoozed_until (snoozed_until)
+                                            ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;";
+
+            require_once (ABSPATH . 'wp-admin/includes/upgrade.php');
+            dbDelta($wpil_snooze_link_table_query);
+        }
+
+        Wpil_Base::fixCollation($snooze_links);
+
+        if($clear_expired){
+            self::clearExpiredSnoozes();
+        }
+    }
+
+    /**
+     * Normalizes a URL for consistent snooze comparisons.
+     *
+     * @param string $url
+     * @return string
+     */
+    public static function normalize_snoozed_url($url){
+        if(empty($url) || !is_string($url)){
+            return '';
+        }
+
+        $url = html_entity_decode(trim($url), ENT_QUOTES);
+        $url = str_replace(array('https://www.', 'http://www.', '//www.'), array('https://', 'http://', '//'), $url);
+
+        return rtrim($url, '/');
+    }
+
+    /**
+     * Removes expired snooze rows and clears the in-memory cache.
+     *
+     * @return void
+     */
+    public static function clearExpiredSnoozes(){
+        global $wpdb;
+
+        $wpdb->query($wpdb->prepare(
+            "DELETE FROM {$wpdb->prefix}wpil_snoozed_links WHERE `snoozed_until` <= %s",
+            current_time('mysql', 1)
+        ));
+
+        self::$broken_link_snoozes = null;
+    }
+
+    /**
+     * Gets the current active snooze map keyed by normalized URL.
+     *
+     * @return array
+     */
+    public static function getActiveSnoozedLinks(){
+        global $wpdb;
+
+        if(self::$broken_link_snoozes !== null){
+            return self::$broken_link_snoozes;
+        }
+
+        self::prepareSnoozeTable(false);
+        self::$broken_link_snoozes = array();
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT `normalized_url`, `snoozed_until` FROM {$wpdb->prefix}wpil_snoozed_links WHERE `snoozed_until` > %s",
+            current_time('mysql', 1)
+        ));
+
+        if(!empty($rows)){
+            foreach($rows as $row){
+                if(empty($row->normalized_url)){
+                    continue;
+                }
+
+                self::$broken_link_snoozes[$row->normalized_url] = $row->snoozed_until;
+            }
+        }
+
+        return self::$broken_link_snoozes;
+    }
+
+    /**
+     * Gets the snooze expiration time for a URL if one exists.
+     *
+     * @param string $url
+     * @return string|null
+     */
+    public static function get_snooze_until($url){
+        $normalized_url = self::normalize_snoozed_url($url);
+        if(empty($normalized_url)){
+            return null;
+        }
+
+        $active_snoozes = self::getActiveSnoozedLinks();
+
+        return isset($active_snoozes[$normalized_url]) ? $active_snoozes[$normalized_url] : null;
+    }
+
+    /**
+     * Checks if a URL is currently snoozed.
+     *
+     * @param string $url
+     * @return bool
+     */
+    public static function is_link_snoozed($url){
+        return !empty(self::get_snooze_until($url));
+    }
+
+    /**
+     * Stores or extends snoozes for the supplied URLs.
+     *
+     * @param array $urls
+     * @param int $days
+     * @return void
+     */
+    public static function snooze_urls($urls = array(), $days = 30){
+        global $wpdb;
+
+        if(empty($urls)){
+            return;
+        }
+
+        self::prepareSnoozeTable(false);
+        $snooze_links = $wpdb->prefix . 'wpil_snoozed_links';
+        $rows_to_snooze = array();
+
+        foreach($urls as $url){
+            $normalized_url = self::normalize_snoozed_url($url);
+            if(empty($normalized_url)){
+                continue;
+            }
+
+            $rows_to_snooze[$normalized_url] = array(
+                'url' => $url,
+                'normalized_url' => $normalized_url,
+            );
+        }
+
+        if(empty($rows_to_snooze)){
+            return;
+        }
+
+        $now = current_time('mysql', 1);
+        $days = max(1, absint($days));
+        $snoozed_until = gmdate('Y-m-d H:i:s', current_time('timestamp', true) + (DAY_IN_SECONDS * $days));
+
+        $normalized_urls = array_keys($rows_to_snooze);
+        $placeholders = implode(', ', array_fill(0, count($normalized_urls), '%s'));
+        $existing_rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT `id`, `normalized_url` FROM {$snooze_links} WHERE `normalized_url` IN ({$placeholders})",
+                $normalized_urls
+            )
+        );
+        $existing_lookup = array();
+
+        if(!empty($existing_rows)){
+            foreach($existing_rows as $existing_row){
+                $existing_lookup[$existing_row->normalized_url] = (int) $existing_row->id;
+            }
+        }
+
+        foreach($rows_to_snooze as $row){
+            if(isset($existing_lookup[$row['normalized_url']])){
+                $wpdb->update(
+                    $snooze_links,
+                    array(
+                        'url' => $row['url'],
+                        'snoozed_until' => $snoozed_until,
+                        'updated' => $now,
+                    ),
+                    array('id' => $existing_lookup[$row['normalized_url']]),
+                    array('%s', '%s', '%s'),
+                    array('%d')
+                );
+            }else{
+                $wpdb->insert(
+                    $snooze_links,
+                    array(
+                        'url' => $row['url'],
+                        'normalized_url' => $row['normalized_url'],
+                        'snoozed_until' => $snoozed_until,
+                        'created' => $now,
+                        'updated' => $now,
+                    ),
+                    array('%s', '%s', '%s', '%s', '%s')
+                );
+            }
+        }
+
+        self::$broken_link_snoozes = null;
+    }
+
+    /**
+     * Builds a SQL clause to exclude active snoozed URLs from a query.
+     *
+     * @param string $field
+     * @return string
+     */
+    public static function get_snoozed_link_where_clause($field = 'url'){
+        global $wpdb;
+
+        $allowed_fields = array('url', 'raw_url');
+        if(!in_array($field, $allowed_fields, true)){
+            $field = 'url';
+        }
+
+        $active_snoozes = array_keys(self::getActiveSnoozedLinks());
+        if(empty($active_snoozes)){
+            return '';
+        }
+
+        $normalized_field = "TRIM(TRAILING '/' FROM REPLACE(REPLACE(REPLACE(REPLACE(`{$field}`, '&amp;', '&'), 'https://www.', 'https://'), 'http://www.', 'http://'), '//www.', '//'))";
+        $placeholders = implode(', ', array_fill(0, count($active_snoozes), '%s'));
+
+        return $wpdb->prepare(" AND {$normalized_field} NOT IN ({$placeholders})", $active_snoozes);
+    }
+
+    /**
      * Save broken link to DB
      *
      * @param $url
@@ -718,7 +960,7 @@ class Wpil_Error
      * @param $sentence
      * 
      */
-    public static function saveLink($url, $post, $code, $sentence, $anchor = '')
+    public static function saveLink($url, $post, $code, $sentence, $anchor = '', $raw_anchor = '')
     {
         global $wpdb;
 
@@ -731,7 +973,8 @@ class Wpil_Error
             'code' => $code,
             'created' => current_time('mysql', 1),
             'sentence' => $sentence,
-            'anchor' => $anchor
+            'anchor' => $anchor,
+            'raw_anchor' => $raw_anchor
         ]);
 
         if (!$wpdb->insert_id) {
@@ -743,7 +986,8 @@ class Wpil_Error
                 'code' => $code,
                 'created' => current_time('mysql', 1),
                 'sentence' => '',
-                'anchor' => $anchor
+                'anchor' => $anchor,
+                'raw_anchor' => $raw_anchor
             ]);
         }
 
@@ -766,6 +1010,7 @@ class Wpil_Error
     public static function getData($per_page, $page, $orderby = '', $order = '', $post_id = 0, $search = '')
     {
         global $wpdb;
+        self::prepareSnoozeTable();
 
         $options = get_user_meta(get_current_user_id(), 'report_options', true);
 
@@ -852,6 +1097,8 @@ class Wpil_Error
             }
         }
 
+        $where .= self::get_snoozed_link_where_clause('url');
+
         $limit = " LIMIT " . (($page - 1) * $per_page) . ',' . $per_page;
 
         if ($orderby == 'post') {
@@ -909,7 +1156,12 @@ class Wpil_Error
                 $result[$key]->post_type = $p->getRealType();
             }
 
-            $anchor = (!empty($link->anchor)) ? base64_encode($link->anchor): '';
+            if(isset($link->raw_anchor) && !empty($link->raw_anchor)){
+                $anchor = base64_encode(wp_kses($link->raw_anchor, 'post'));
+            }else{
+                $anchor = (!empty($link->anchor)) ? base64_encode($link->anchor): '';
+            }
+
             $esc_url = ($link->url === '{{wpil-empty-url}}') ? '{{wpil-empty-url}}': esc_url($link->url);
 
             $result[$key]->post_title = esc_html($p->getTitle());
@@ -1078,7 +1330,7 @@ class Wpil_Error
         }
 
         $url = ($_POST['url'] === '{{wpil-empty-url}}') ? '{{wpil-empty-url}}' : htmlentities(esc_url_raw($_POST['url']));
-        $anchor = (isset($_POST['anchor']) && !empty($_POST['anchor'])) ? sanitize_text_field(base64_decode($_POST['anchor'])) : '';
+        $anchor = (isset($_POST['anchor']) && !empty($_POST['anchor'])) ? wp_kses(base64_decode($_POST['anchor']), 'post') : '';
 
         if(!empty($url)){
             // make sure the url is in the DB
@@ -1110,7 +1362,7 @@ class Wpil_Error
         }
 
         $url = ($_POST['url'] === '{{wpil-empty-url}}') ? '{{wpil-empty-url}}' : htmlentities(esc_url_raw($_POST['url']));
-        $anchor = (isset($_POST['anchor']) && !empty($_POST['anchor'])) ? sanitize_text_field(base64_decode($_POST['anchor'])) : '';
+        $anchor = (isset($_POST['anchor']) && !empty($_POST['anchor'])) ? wp_kses(base64_decode($_POST['anchor']), 'post') : '';
 
         // if the supplied url is actually a url, not a empty link token, and not being ignored
         if(!empty($url) && $url !== '{{wpil-empty-url}}' && !self::check_if_ignored($url)){
@@ -1396,7 +1648,7 @@ class Wpil_Error
 
             // remove any that are being ignored
             foreach($links_to_check as $key => $link){
-                if(self::check_if_ignored($link)){
+                if(self::check_if_ignored($link) || self::is_link_snoozed($link)){
                     unset($links_to_check[$key]);
                 }
             }
@@ -1445,12 +1697,12 @@ class Wpil_Error
                 // compare the results of the GET request against the HEAD request to see which one we'll be storing
                 if($codes_1[$url] > 99 && $code_2 < 100){     // if the HEAD method got an http code, while the GET method got a curl error
                     $url_sentence = self::getUrlSentence($url, $data->anchor, $post->getContent());
-                    self::saveLink($url, $post, $code_1[$url], $url_sentence);
+                    self::saveLink($url, $post, $code_1[$url], $url_sentence, $data->raw_anchor);
                     $saved_broken_links = true;
 
                 }elseif($code_2 > 0){// if the last two were false, go with the GET method results since they tend to be more correct
                     $url_sentence = self::getUrlSentence($url, $data->anchor,  $post->getContent());
-                    self::saveLink($url, $post, $code_2, $url_sentence);
+                    self::saveLink($url, $post, $code_2, $url_sentence, $data->anchor, $data->raw_anchor);
                     $saved_broken_links = true;
                 }
 
@@ -1480,9 +1732,11 @@ class Wpil_Error
             return false;
         }
 
+        self::prepareSnoozeTable();
         $option = (int) get_option('wpil_error_scan_toggle', 0);
+        $snooze_where = self::get_snoozed_link_where_clause('raw_url');
 
-        $links = $wpdb->get_results("SELECT `link_id`, `post_id`, `post_type`, `clean_url`, `raw_url`, `anchor` FROM {$links_table} WHERE `broken_link_scanned` = {$option} AND `location` = 'content' LIMIT 10");
+        $links = $wpdb->get_results("SELECT `link_id`, `post_id`, `post_type`, `clean_url`, `raw_url`, `anchor`, `raw_anchor` FROM {$links_table} WHERE `broken_link_scanned` = {$option} AND `location` = 'content' {$snooze_where} LIMIT 10");
 
         // if we didn't find any broken links, flip the scan flag so we can re-check previously scanned links
         if(empty($links) && !empty($wpdb->get_var("SELECT count(*) FROM {$wpdb->prefix}wpil_broken_links"))){
@@ -1574,11 +1828,14 @@ class Wpil_Error
             return;
         }
 
+        self::prepareSnoozeTable();
+        $snooze_where = self::get_snoozed_link_where_clause('url');
+
         // get the link that's gone the longest without being checked and has been checked less than 10 times
         if(1.0 < WPIL_STATUS_SITE_DB_VERSION){
-            $links = $wpdb->get_results("SELECT * FROM {$broken_links} WHERE `check_count` < 10 && `ignore_link` = 0 ORDER BY `last_checked` ASC LIMIT 10");
+            $links = $wpdb->get_results("SELECT * FROM {$broken_links} WHERE `check_count` < 10 && `ignore_link` = 0 {$snooze_where} ORDER BY `last_checked` ASC LIMIT 10");
         }else{
-            $links = $wpdb->get_results("SELECT * FROM {$broken_links} WHERE `check_count` < 10 ORDER BY `last_checked` ASC LIMIT 10");
+            $links = $wpdb->get_results("SELECT * FROM {$broken_links} WHERE `check_count` < 10 {$snooze_where} ORDER BY `last_checked` ASC LIMIT 10");
         }
         if(!empty($links)){
             // check if the user is ignoring the links
@@ -1754,6 +2011,56 @@ class Wpil_Error
         wp_send_json(array('success' => true));
     }
 
+    /**
+     * Marks the selected broken links as ignored so they don't keep showing up in the report.
+     **/
+    public static function ajaxIgnoreLinks() {
+        Wpil_Base::verify_nonce('broken-links-ignore-selected');
+        global $wpdb;
+
+        if (empty($_POST['links'])) {
+            wp_send_json(array('error' => array('title' => __('Error', 'wpil'), 'text' => __('No links selected.', 'wpil'))));
+        }
+
+        $links = array_filter(array_map('intval', !empty($_POST['links']) ? $_POST['links'] : []));
+        if(empty($links)){
+            wp_send_json(array('error' => array('title' => __('Error', 'wpil'), 'text' => __('No links selected.', 'wpil'))));
+        }
+
+        // get these links out of the way so the user can keep moving through the report
+        $wpdb->query("UPDATE {$wpdb->prefix}wpil_broken_links SET `code` = 768, `ignore_link` = 1 WHERE `id` IN (" . implode(',', $links) . ")");
+
+        wp_send_json(array('success' => true));
+    }
+
+    /**
+     * Snoozes the selected broken links for 30 days so scanners skip them temporarily.
+     *
+     * @return void
+     */
+    public static function ajaxSnoozeLinks() {
+        Wpil_Base::verify_nonce('broken-links-snooze-selected');
+        global $wpdb;
+
+        if (empty($_POST['links'])) {
+            wp_send_json(array('error' => array('title' => __('Error', 'wpil'), 'text' => __('No links selected.', 'wpil'))));
+        }
+
+        $links = array_filter(array_map('intval', !empty($_POST['links']) ? $_POST['links'] : []));
+        if(empty($links)){
+            wp_send_json(array('error' => array('title' => __('Error', 'wpil'), 'text' => __('No links selected.', 'wpil'))));
+        }
+
+        $selected_links = $wpdb->get_col("SELECT DISTINCT `url` FROM {$wpdb->prefix}wpil_broken_links WHERE `id` IN (" . implode(',', $links) . ")");
+        if(empty($selected_links)){
+            wp_send_json(array('error' => array('title' => __('Error', 'wpil'), 'text' => __('No matching links found.', 'wpil'))));
+        }
+
+        self::snooze_urls($selected_links, 30);
+
+        wp_send_json(array('success' => true));
+    }
+
     public static function ajaxGetEditLinks(){
         Wpil_Base::verify_nonce('broken-links-edit-selected');
 
@@ -1783,7 +2090,11 @@ class Wpil_Error
 
                 $id = $link->post_type . '_' . $link->post_id;
                 $post = (isset($post_cache[$id])) ? $post_cache[$id]: new Wpil_Model_Post($link->post_id, $link->post_type);
-                $anchor = (!empty($link->anchor)) ? base64_encode($link->anchor): '';
+                if(isset($link->raw_anchor) && !empty($link->raw_anchor)){
+                    $anchor = base64_encode(wp_kses($link->raw_anchor, 'post'));
+                }else{
+                    $anchor = (!empty($link->anchor)) ? base64_encode($link->anchor): '';
+                }
                 $esc_url = ($link->url === '{{wpil-empty-url}}') ? '{{wpil-empty-url}}': esc_url($link->url);
                 $scroll_link = base64_encode(json_encode(array('scrollLink' => array('monitorId' => null, 'url' => $link->url, 'anchor' => $link->anchor))));
 
@@ -1881,12 +2192,13 @@ class Wpil_Error
             $replacement = !empty($link->suggested_url_replacement) ? $link->suggested_url_replacement : '';
 
             if($action === 'delete'){
+                $anchor = (isset($link->raw_anchor) && !empty($link->raw_anchor)) ? wp_kses($link->raw_anchor, 'post'): $link->anchor;
                 Wpil_Link::delete([
                     'link_id' => $link->id,
                     'post_id' => $link->post_id,
                     'post_type' => $link->post_type,
                     'url' => $link->url,
-                    'anchor' => base64_encode($link->anchor),
+                    'anchor' => base64_encode($anchor)
                 ], true);
                 $applied++;
                 continue;

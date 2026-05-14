@@ -1077,6 +1077,7 @@ class Wpil_Post
                 $data[] = [
                     'sentence' => trim(strip_tags($sentence)),
                     'anchor' => trim(strip_tags($anchor)),
+                    'raw_anchor' => trim(wp_kses($anchor, 'post')),
                     'url' => $url
                 ];
             }elseif(!empty($matches[7][$i])){
@@ -1085,6 +1086,7 @@ class Wpil_Post
                 $data[] = [
                     'sentence' => esc_attr__('Link is embedded, no sentence text detected', 'wpil'),
                     'anchor' => 'N/A',
+                    'raw_anchor' => '',
                     'url' => $url
                 ];
             }
@@ -1120,6 +1122,7 @@ class Wpil_Post
                     $data[] = [
                         'sentence' => trim(strip_tags($sentence)),
                         'anchor' => '',
+                        'raw_anchor' => '',
                         'url' => $url
                     ];
                 }
@@ -1142,7 +1145,8 @@ class Wpil_Post
                     $data[] = [
                         'sentence' => trim(strip_tags($sentence)),
                         'url' => '{{wpil-empty-url}}',
-                        'anchor' => $anchor
+                        'anchor' => wp_kses($anchor, 'post'),
+                        'raw_anchor' => wp_kses($anchor, 'post'),
                     ];
                 }
             }

@@ -57,7 +57,7 @@ if(!$ai_service_connected){
     <input type="hidden" id="wpil-ai-linking-complete" value="0">
     <div>
         <div id="wpil-wizard-error-banner"
-            class="<?php echo $ai_error_active ? '' : 'hidden '; ?>mb-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-sm text-center"
+            class="<?php echo ($ai_error_active && !$ai_credit_error_active) ? '' : 'hidden '; ?>mb-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800 shadow-sm text-center"
             data-error-code="<?php echo esc_attr($ai_error_code); ?>">
             <div class="flex items-start justify-between gap-4">
                 <div class="flex-1">
@@ -244,7 +244,7 @@ if(!$ai_service_connected){
         </style>
     </div>
     <div class="min-h-screen flex items-center justify-center p-6 antialiased font-sans">
-        <div class="bg-white w-full max-w-5xl rounded-2xl shadow-xl overflow-hidden">
+        <div class="bg-white w-full max-w-7xl rounded-2xl shadow-xl overflow-hidden">
             <div class="bg-gray-50 border-b border-gray-100 px-8 py-5 flex flex-col md:flex-row justify-between items-center text-sm font-medium text-gray-500">
                 <div class="flex items-center space-x-2 text-green-500">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-6 h-6">

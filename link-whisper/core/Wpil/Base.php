@@ -732,6 +732,7 @@ class Wpil_Base
         $current_screen = get_current_screen();
 
         $added_standard = false;
+        $added_secondary = false;
 
         if(isset($_GET['page']) && $_GET['page'] == 'link_whisper' || (!empty($current_screen) && $current_screen->base === 'edit')){
             self::add_standard_admin_scripts();
@@ -2366,6 +2367,10 @@ class Wpil_Base
                 }
             }
 
+            update_option('wpil_site_db_version', '1.52');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.53 || $force_update){
             $relation_map_exists = $wpdb->query("SHOW TABLES LIKE '{$relation_map_tbl}'");
             if(!empty($relation_map_exists)) {
                 $col = $wpdb->query("SHOW COLUMNS FROM {$relation_map_tbl} LIKE 'post_id'");
@@ -2429,11 +2434,33 @@ class Wpil_Base
                     $wpdb->query("ALTER TABLE {$relation_map_tbl} ADD INDEX process_key_scope_queue (`process_key`, `work_scope`, `item_processed`, `ai_processed`, `is_pillar`, `id`)");
                 }
 
-                if((float)WPIL_STATUS_SITE_DB_VERSION < 1.52){
+                if((float)WPIL_STATUS_SITE_DB_VERSION < 1.53){
                     $wpdb->query("TRUNCATE TABLE {$relation_map_tbl}");
                 }
             }
-            update_option('wpil_site_db_version', '1.52');
+            update_option('wpil_site_db_version', '1.53');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.54 || $force_update){
+            $link_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$report_links_tbl}'");
+            if(!empty($link_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$report_links_tbl} LIKE 'raw_anchor'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$report_links_tbl} ADD COLUMN `raw_anchor` TEXT NULL DEFAULT NULL AFTER `anchor`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            $error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$broken_link_tbl}'");
+            if(!empty($error_tbl_exists)){
+                $col = $wpdb->query("SHOW COLUMNS FROM {$broken_link_tbl} LIKE 'raw_anchor'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$broken_link_tbl} ADD `raw_anchor` TEXT NULL DEFAULT NULL AFTER `anchor`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.54');
         }
 
         // todo create a database index for click tracking's user_ip column if people find that it takes too long to load the user_ip view
@@ -2872,6 +2899,7 @@ class Wpil_Base
         Wpil_Report::prepare_link_tracking_table();
         Wpil_Telemetry::prepare_table();
         Wpil_LinkMapping::prepare_table();
+        Wpil_Error::prepareSnoozeTable();
 
         // search console table not included because it's explicitly activated by the user
         // linked site data table also not included because it's explicitly activated by the user
@@ -2906,6 +2934,7 @@ class Wpil_Base
             "{$prefix}wpil_ai_token_use_data",
             "{$prefix}wpil_ai_embedding_data",
             "{$prefix}wpil_ai_embedding_calculation_data",
+            "{$prefix}wpil_ai_embedding_calculation_data_v2",
             "{$prefix}wpil_ai_embedding_phrase_data",
             "{$prefix}wpil_ai_embedding_phrase_calculation_data",
             "{$prefix}wpil_ai_suggested_anchors",
@@ -3321,8 +3350,9 @@ class Wpil_Base
 
         global $wpdb;
         $table = $wpdb->prefix . 'wpil_tracked_link_ids';
+        $links_table = $wpdb->prefix . 'wpil_report_links';
         $start_time = get_option('wpil_wizard_start_time', time());
-        $link_count = $wpdb->get_col("SELECT COUNT(*) FROM {$table} WHERE `creation_time` > {$start_time}");
+        $link_count = $wpdb->get_var("SELECT COUNT(*) FROM {$table} t INNER JOIN {$links_table} l ON l.`tracking_id` = t.`link_id` WHERE t.`creation_time` > {$start_time} AND t.`link_id` > 0 AND l.`tracking_id` > 0");
         wp_send_json(array('data' => array('link_inserts' => $link_count, 'finished' => (!empty(get_transient('wpil_wizard_has_completed')) || empty(get_transient('wpil_doing_ajax_autolinks'))))));
     }
 

@@ -330,7 +330,7 @@ class Wpil_LinkMapping
         );
 
         if($use_table){ // TODO: if we ever incorporate page_context, use the link table...
-            $links = $wpdb->get_results($wpdb->prepare("SELECT `raw_url`, `anchor` FROM {$table} WHERE `post_id` = %d AND `post_type` = %s", $post->id, $post->type), ARRAY_A);
+            $links = $wpdb->get_results($wpdb->prepare("SELECT `raw_url`, `anchor`, `raw_anchor` FROM {$table} WHERE `post_id` = %d AND `post_type` = %s", $post->id, $post->type), ARRAY_A);
         }else{
             // first analyse the post for links
             $links = Wpil_Report::getContentLinks($post, false, '', true);
@@ -340,7 +340,7 @@ class Wpil_LinkMapping
             foreach($links as $link){
                 if(!empty($link->url) && !empty($link->anchor)){
                     $object['data'][] = [
-                        'anchor' => base64_encode($link->anchor), 
+                        'anchor' => !empty($link->raw_anchor) ? base64_encode($link->raw_anchor): base64_encode($link->anchor), 
                         'url' => base64_encode($link->url),
                         'tracking_id' => $link->tracking_id,
                         'context' => base64_encode($link->page_context) // to be safe...
@@ -572,7 +572,8 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
         
         // if we're processing inbound type links
         if($likely_inbound){
-            $max_relations = isset($data['pillar_content']) ? max($inbound_link_limit, 6) * 2: max($inbound_link_limit, 6);
+            $base_relations = isset($data['pillar_content']) ? max($inbound_link_limit, 6) * 2: max($inbound_link_limit, 6);
+            $max_relations = max($base_relations, 24);
         }else{
             $max_relations = max($outbound_link_limit, 8);
         }
@@ -622,7 +623,14 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
             $bits = self::parse_pid($pid);
             $id   = $bits['id'];
 
-            if(empty($id) || isset($seen[$pid]) || !self::is_allowed_term_pid($pid, $process_key) || !self::is_allowed_relationship_pid($pid) || !self::is_allowed_related_pid_for_fix_options($post, $pid, $data, $process_key)){
+            if(
+                empty($id) ||
+                isset($seen[$pid]) ||
+                !self::is_allowed_term_pid($pid, $process_key) ||
+                !self::is_allowed_relationship_pid($pid) ||
+                !self::is_allowed_related_pid_for_fix_options($post, $pid, $data, $process_key) ||
+                ($likely_inbound && !self::is_pid_within_ai_processing_age($pid))
+            ){
                 continue;
             }
 
@@ -654,7 +662,12 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
                 }
 
                 $candidate_pid = 'post_' . (int) $id;
-                if(isset($seen[$candidate_pid]) || isset($current_link_lookup[(int) $id]) || !self::is_allowed_relationship_pid($candidate_pid)){
+                if(
+                    isset($seen[$candidate_pid]) ||
+                    isset($current_link_lookup[(int) $id]) ||
+                    !self::is_allowed_relationship_pid($candidate_pid) ||
+                    ($likely_inbound && !self::is_pid_within_ai_processing_age($candidate_pid))
+                ){
                     continue;
                 }
 
@@ -1065,7 +1078,7 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
         return self::$post_category_cache[$post_id];
     }
 
-    private static function parse_pid($pid = ''){
+    public static function parse_pid($pid = ''){
         $out = array(
             'type' => 'post',
             'id' => 0
@@ -1136,14 +1149,141 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
 
     public static function get_dashboard_fix_process_key($fix_type = ''){
         $map = array(
-            'orphaned_posts' => md5('orphan-post-search'),
-            'link_coverage' => md5('link-coverage-search'),
-            'link_quality' => md5('link-quality-search'),
-            'broken_links' => md5('broken-link-search'),
+            'orphaned_posts'  => md5('orphan-post-search'),
+            'link_coverage'   => md5('link-coverage-search'),
+            'link_quality'    => md5('link-quality-search'),
+            'broken_links'    => md5('broken-link-search'),
+            'custom_link_map' => md5('custom-link-map'),
         );
 
         return isset($map[$fix_type]) ? $map[$fix_type] : '';
     }
+
+    /**
+     * Pre-populates the map_data for a relation-map item and marks it as
+     * item_processed = 1, skipping the relationship-building phase.
+     * Used by Wpil_CsvLinkMap for posts with fully-specified CSV constraints.
+     */
+    public static function pre_populate_relation_map_item($process_key, $pid, $map_data, $work_scope = self::RELATION_SCOPE_DEFAULT){
+        return self::update_relation_map_item_row($process_key, $pid, $map_data, true, 0, $work_scope, '');
+    }
+
+    public static function update_relation_map_item_data_preserve_state($process_key, $pid, $map_data, $work_scope = self::RELATION_SCOPE_DEFAULT){
+        $parts = self::parse_pid($pid);
+        if(empty($process_key) || empty($parts['id'])){
+            return false;
+        }
+
+        $row = self::get_relation_map_item($process_key, $parts['id'], $parts['type'], false, true, $work_scope);
+        if(empty($row)){
+            return false;
+        }
+
+        $resolved_scope = ($work_scope !== self::RELATION_SCOPE_DEFAULT && $work_scope !== '')
+            ? self::normalize_relation_work_scope($work_scope)
+            : (isset($row->work_scope) ? self::normalize_relation_work_scope($row->work_scope) : self::RELATION_SCOPE_DEFAULT);
+
+        return self::update_relation_map_item_row(
+            $process_key,
+            $parts['type'] . '_' . $parts['id'],
+            is_array($map_data) ? $map_data : array(),
+            !empty($row->item_processed),
+            !empty($row->ai_processed),
+            $resolved_scope,
+            isset($row->last_index) ? (string) $row->last_index : ''
+        );
+    }
+
+    /**
+     * Stores CSV pin hints (specified partners) in map_data without marking
+     * item_processed = 1, so the auto relationship-building phase still runs.
+     * After auto-discovery the hints are merged in by CsvLinkMap::merge_specified_relations.
+     */
+    public static function store_csv_pin_hints($process_key, $pid, $hint_data, $work_scope = self::RELATION_SCOPE_DEFAULT){
+        $parts = self::parse_pid($pid);
+        if(empty($parts['id'])){
+            return false;
+        }
+
+        $table = self::get_relation_map_table();
+        global $wpdb;
+
+        // Merge hints into existing map_data without touching item_processed
+        $row = self::get_relation_map_item($process_key, $parts['id'], $parts['type'], true, true, $work_scope);
+        $existing = is_array($row) ? $row : array();
+        $merged = array_merge($existing, $hint_data);
+
+        $work_scope = self::normalize_relation_work_scope($work_scope);
+        $wpdb->update(
+            $table,
+            array(
+                'map_data' => Wpil_Toolbox::json_compress($merged),
+            ),
+            array(
+                'process_key' => $process_key,
+                'work_scope'  => $work_scope,
+                'post_id'     => (int) $parts['id'],
+                'post_type'   => (string) $parts['type'],
+            ),
+            array('%s'),
+            array('%s', '%s', '%d', '%s')
+        );
+
+        return true;
+    }
+
+    /**
+     * Normalises a single pid string to 'type_id' format.
+     * Public wrapper used by Wpil_CsvLinkMap.
+     */
+    public static function normalize_pid($pid){
+        $parts = self::parse_pid($pid);
+        if(empty($parts['id'])){
+            return '';
+        }
+        return $parts['type'] . '_' . $parts['id'];
+    }
+
+    /**
+     * Checks whether a pid is still inside the user's AI age limit.
+     * Terms are always allowed because the age restriction only applies to posts.
+     */
+    public static function is_pid_within_ai_processing_age($pid = ''){
+        $parts = self::parse_pid($pid);
+        if(empty($parts['id'])){
+            return false;
+        }
+
+        if($parts['type'] !== 'post'){
+            return true;
+        }
+
+        $age_limit = (int) Wpil_Settings::get_ai_max_processing_age();
+        if($age_limit < 1){
+            return true;
+        }
+
+        $post = get_post($parts['id']);
+        if(empty($post) || is_a($post, 'WP_Error')){
+            return false;
+        }
+
+        $date_string = !empty($post->post_date_gmt) && $post->post_date_gmt !== '0000-00-00 00:00:00'
+            ? ($post->post_date_gmt . ' UTC')
+            : (!empty($post->post_date) && $post->post_date !== '0000-00-00 00:00:00' ? $post->post_date : '');
+
+        if(empty($date_string)){
+            return false;
+        }
+
+        $post_time = strtotime($date_string);
+        if(empty($post_time)){
+            return false;
+        }
+
+        return ($post_time > (time() - ($age_limit * YEAR_IN_SECONDS)));
+    }
+
 
     public static function normalize_relation_work_scope($work_scope = ''){
         $work_scope = is_string($work_scope) ? sanitize_key($work_scope) : '';
@@ -1405,6 +1545,11 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
 
         $table = self::get_relation_map_table();
         $compressed = '';
+        if(!empty($item_processed) && isset($map['related_posts']) && empty($map['related_posts'])){
+            $map = array();
+            $ai_processed = 1;
+        }
+
         if(!empty($map)){
             $compressed = Wpil_Toolbox::json_compress($map);
         }
@@ -1434,6 +1579,14 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
         }
 
         return true;
+    }
+
+    private static function relation_map_item_has_related_posts($map = array()){
+        return (isset($map['related_posts']) && !empty($map['related_posts']));
+    }
+
+    private static function complete_empty_relation_map_item($process_key = '', $pid = '', $work_scope = self::RELATION_SCOPE_DEFAULT){
+        return self::update_relation_map_item_row($process_key, $pid, array(), true, 1, $work_scope, '');
     }
 
     public static function update_relation_map_runtime_state($process_key = '', $pid = '', $runtime_updates = array(), $work_scope = ''){
@@ -1570,11 +1723,19 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
             return self::save_relation_map_item($process_key, $pid, is_array($sibling_row->map_data) ? $sibling_row->map_data : array(), true, $work_scope);
         }
 
-        $likely_inbound = ($is_pillar || md5('orphan-post-search') === $process_key);
+        $likely_inbound = ($work_scope === self::RELATION_SCOPE_INBOUND || $is_pillar || md5('orphan-post-search') === $process_key);
         $post = new Wpil_Model_Post($parts['id'], $parts['type']);
         if( (!$likely_inbound && // if these are not exclusively inbound internal fodc
             self::has_reached_ai_outbound_processing_limit($post)) || 
             ($likely_inbound && Wpil_Link::at_max_inbound_links($post)) // or the post is already at the max link limite
+        ){
+            return self::save_relation_map_item($process_key, $pid, array(), true, $work_scope);
+        }
+
+        if(
+            $process_key === self::get_dashboard_fix_process_key('custom_link_map') &&
+            $work_scope === self::RELATION_SCOPE_OUTBOUND &&
+            !self::is_pid_within_ai_processing_age($pid)
         ){
             return self::save_relation_map_item($process_key, $pid, array(), true, $work_scope);
         }
@@ -1657,16 +1818,29 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
                 $sql .= $legacy_scope['sql'];
                 $params = array_merge($params, $legacy_scope['params']);
             }
-            $sql .= " ORDER BY is_pillar DESC, id ASC LIMIT 1";
+            $sql .= " ORDER BY is_pillar DESC, id ASC LIMIT 25";
         }elseif($scope === '' || $scope === null){
-            $sql .= " ORDER BY is_pillar DESC, id ASC LIMIT 1";
+            $sql .= " ORDER BY is_pillar DESC, id ASC LIMIT 25";
         }else{
-            $sql .= " AND work_scope = %s ORDER BY is_pillar DESC, id ASC LIMIT 1";
+            $sql .= " AND work_scope = %s ORDER BY is_pillar DESC, id ASC LIMIT 25";
             $params[] = self::normalize_relation_work_scope($scope);
         }
-        $row = $wpdb->get_row($wpdb->prepare($sql, $params));
+        $rows = $wpdb->get_results($wpdb->prepare($sql, $params));
+        if(empty($rows)){
+            return array();
+        }
 
-        return !empty($row) ? $row : array();
+        foreach($rows as $row){
+            $normalized = self::normalize_relation_map_row($row, false);
+            if(!empty($normalized->map_data) && !self::relation_map_item_has_related_posts($normalized->map_data)){
+                self::complete_empty_relation_map_item($process_key, $normalized->pid, $normalized->work_scope);
+                continue;
+            }
+
+            return $row;
+        }
+
+        return array();
     }
 
     public static function get_relation_map_item($process_key = '', $post_id = 0, $post_type = 'post', $return_map = false, $include_uncompleted = false, $work_scope = ''){
@@ -1700,7 +1874,13 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
             return $return_map ? array() : array();
         }
 
-        return self::normalize_relation_map_row($row, $return_map);
+        $normalized = self::normalize_relation_map_row($row, false);
+        if(!empty($normalized->map_data) && !self::relation_map_item_has_related_posts($normalized->map_data)){
+            self::complete_empty_relation_map_item($process_key, $normalized->pid, $normalized->work_scope);
+            return $return_map ? array() : array();
+        }
+
+        return $return_map ? $normalized->map_data : $normalized;
     }
 
     public static function get_relation_map_items($process_key = '', $return_map = false, $include_uncompleted = false, $items_limit = 0, $scope_pids = array(), $exclude_pids = array()){
@@ -1717,10 +1897,14 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
             $sql .= " AND item_processed = 1 AND map_data IS NOT NULL AND map_data != ''";
         }
 
-        $scope = self::build_relation_pid_where_clause($scope_pids);
-        if(!empty($scope['sql'])){
-            $sql .= $scope['sql'];
-            $params = array_merge($params, $scope['params']);
+        if(self::is_relation_work_scope_arg($scope_pids)){
+            self::append_relation_scope_filter($sql, $params, $scope_pids);
+        } else {
+            $scope = self::build_relation_pid_where_clause($scope_pids);
+            if(!empty($scope['sql'])){
+                $sql .= $scope['sql'];
+                $params = array_merge($params, $scope['params']);
+            }
         }
 
         $exclude = self::build_relation_pid_where_clause($exclude_pids, 'post_id', 'post_type', true);
@@ -1744,6 +1928,11 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
             foreach($rows as $row){
                 $normalized = self::normalize_relation_map_row($row, false);
                 if(empty($normalized->pid) || empty($normalized->map_data)){
+                    continue;
+                }
+
+                if(!self::relation_map_item_has_related_posts($normalized->map_data)){
+                    self::complete_empty_relation_map_item($process_key, $normalized->pid, $normalized->work_scope);
                     continue;
                 }
 
@@ -2070,6 +2259,10 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
         $sql .= " ORDER BY is_pillar DESC, id ASC LIMIT 1";
         $row = $wpdb->get_row($wpdb->prepare($sql, $params));
         $normalized = !empty($row) ? self::normalize_relation_map_row($row, false) : array();
+        if(!empty($normalized) && !empty($normalized->map_data) && !self::relation_map_item_has_related_posts($normalized->map_data)){
+            self::complete_empty_relation_map_item($process_key, $normalized->pid, $normalized->work_scope);
+            return array();
+        }
 
         return $normalized;
     }
@@ -2131,7 +2324,13 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
 
         $normalized_rows = array();
         foreach($rows as $row){
-            $normalized_rows[] = self::normalize_relation_map_row($row, false);
+            $normalized = self::normalize_relation_map_row($row, false);
+            if(!empty($normalized->map_data) && !self::relation_map_item_has_related_posts($normalized->map_data)){
+                self::complete_empty_relation_map_item($process_key, $normalized->pid, $normalized->work_scope);
+                continue;
+            }
+
+            $normalized_rows[] = $normalized;
         }
 
         return $normalized_rows;

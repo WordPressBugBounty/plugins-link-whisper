@@ -866,6 +866,8 @@ console.log('.wizard-' + pageId);
     }
 
     function checkInstallationComplete(){
+        finishWizardWithoutAiIfReady();
+
         var allGreen = true;
         for(var i in processingStatus){
             if(!processingStatus[i]){
@@ -881,6 +883,35 @@ console.log('.wizard-' + pageId);
                 window.location.href = dashboardURL;
             }, 350);
             // redirect to Dashboard
+        }
+    }
+
+    function finishWizardWithoutAiIfReady(){
+        if(!processingStatus.runLinkScan || !processingStatus.runKeywordScan){
+            return;
+        }
+
+        if(processingStatus.runAIScan && processingStatus.runAILinking){
+            return;
+        }
+
+        if(!aiScannPaused && !aiScanStopped && runningDownload){
+            return;
+        }
+
+        processingStatus['runAIScan'] = true;
+        processingStatus['runAILinking'] = true;
+        aiScanStopped = true;
+        aiScannPaused = false;
+        runningDownload = false;
+        resetAiLinkingQueueResetState();
+        setWizardReviewProcessState(false, false);
+        setManualReviewVisible(false);
+        setStepState('ai_scan', 'inactive', { desc: 'AI scanning skipped. Regular setup is complete.', label: 'Skipped' });
+        if(isAiLinkingEnabled()){
+            setStepState('ai_linking', 'inactive', { desc: 'AI linking skipped. Regular setup is complete.', label: 'Skipped' });
+        }else{
+            setStepState('ai_linking', 'disabled', { desc: 'Linking disabled. Regular setup is complete.' });
         }
     }
 
@@ -985,12 +1016,17 @@ console.log('.wizard-' + pageId);
     var aiFatalError = false;
     var aiScanStopped = false;
     var lastOutOfCreditsPromptKey = '';
+    var showWizardInsufficientCreditsNotice = false;
 
     function isWizardAiServiceConnected(){
         return $('#wpil-wizard-ai-service-connected').val() === '1';
     }
 
     function showWizardErrorBanner(error){
+        if(isCreditRelatedError(error) && !showWizardInsufficientCreditsNotice){
+            return;
+        }
+
         var $banner = $('#wpil-wizard-error-banner');
         if(!$banner.length){
             return;
@@ -1110,7 +1146,9 @@ console.log('.wizard-' + pageId);
     function handleAiFatalError(error){
         if(isCreditRelatedError(error)){
             aiFatalError = false;
-            showWizardErrorBanner(error);
+            if(showWizardInsufficientCreditsNotice){
+                showWizardErrorBanner(error);
+            }
             setCreditsUiDisabled(false);
             processingStatus['runAILinking'] = isAiLinkingEnabled() ? processingStatus['runAILinking'] : true;
             pauseAIScan();
@@ -1153,6 +1191,11 @@ console.log('.wizard-' + pageId);
 
             if(available < needed){
                 var promptKey = needed + ':' + available;
+                if(!showWizardInsufficientCreditsNotice){
+                    pauseAIScan();
+                    return;
+                }
+
                 if($('#wpil-out-of-credits-modal').is(':visible') || $('#lw-credit-checkout-modal').is(':visible') || (aiScannPaused && lastOutOfCreditsPromptKey === promptKey)){
                     pauseAIScan();
                     return;
@@ -1184,6 +1227,8 @@ console.log('.wizard-' + pageId);
         if(!processingStatus.runAILinking){
             setStepState('ai_linking', 'paused', { desc: 'Linking Paused. Need More AI Credits.' });
         }
+        finishWizardWithoutAiIfReady();
+        checkInstallationComplete();
     }
 
     function resumeAIScan(){
@@ -1299,6 +1344,8 @@ console.log('.wizard-' + pageId);
                     
                 }else{
                     runningDownload = false;
+                    finishWizardWithoutAiIfReady();
+                    checkInstallationComplete();
 //                    var wrapper = document.createElement('div');
 //                    $(wrapper).append('<strong>' + textStatus + '</strong><br>' + errorThrown);
 //                    $(wrapper).append(jqXHR.responseText);

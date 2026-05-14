@@ -53,6 +53,7 @@ class Wpil_Settings
         'wpil_suggestion_relatedness_threshold',
         'wpil_ai_auto_insert_relatedness_threshold',
         'wpil_sitemap_embedding_relatedness_threshold',
+        'wpil_enable_ai_embedding_calculation_v2',
         'wpil_new_tab_domains',
         'wpil_same_tab_domains',
         'wpil_links_to_ignore',
@@ -3402,6 +3403,30 @@ function triggerConfettiExplosion() {
                 }
             }
 
+            // if the user supplied money page urls, convert them to the ids the wizard uses
+            if(array_key_exists('wpil_pillar_content_urls', $_POST)){
+                $raw_urls = sanitize_textarea_field(wp_unslash($_POST['wpil_pillar_content_urls']));
+                $urls = array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $raw_urls)));
+                $post_ids = array();
+                $term_ids = array();
+
+                foreach($urls as $url){
+                    $post = Wpil_Post::getPostByLink($url);
+                    if(empty($post)){
+                        continue;
+                    }
+
+                    if($post->type === 'term'){
+                        $term_ids[] = (int) $post->id;
+                    }else{
+                        $post_ids[] = (int) $post->id;
+                    }
+                }
+
+                update_option('wpil_pillar_content_post_ids', array_values(array_unique($post_ids)), false);
+                update_option('wpil_pillar_content_term_ids', array_values(array_unique($term_ids)), false);
+            }
+
             //save other settings
             $opt_keys = self::$keys;
             foreach($opt_keys as $opt_key) {
@@ -3477,6 +3502,13 @@ function triggerConfettiExplosion() {
                 delete_transient('wpil_ai_credit_balance');
                 delete_transient('wpil_user_ai_subscription');
                 delete_option('wpil_oai_insufficient_quota_error');
+                // clear the model settings
+                delete_transient('wpil_ai_listed_models');
+                delete_transient('wpil_ai_listed_models_v2');
+                // clear the live status processing
+                delete_transient('wpil_doing_ai_data_download');
+                // clear the delay on the batch processing
+                delete_transient('wpil_oai_batch_process_delay');
             }
 
             // if the user wants to clear out the saved visitor data, go do it
@@ -4111,14 +4143,25 @@ function triggerConfettiExplosion() {
      **/
     public static function get_selected_ai_provider(){
         $selected = get_option('wpil_select_ai_provider', '');
+        $has_openai_key = !empty(get_option('wpil_open_ai_api_key', ''));
+        $has_linkwhisper_ai = self::get_linkwhisper_ai_active();
 
-        if(empty($selected)){
-            if(self::get_linkwhisper_ai_active()){
-                $selected = 'linkwhisper';
-            }elseif(!empty(self::getOpenAIKey())){
-                $selected = 'openai';
-            }
+        if('linkwhisper' === $selected && $has_linkwhisper_ai){
+            return $selected;
         }
+
+        if('openai' === $selected && $has_openai_key){
+            return $selected;
+        }
+
+        if($has_linkwhisper_ai){
+            $selected = 'linkwhisper';
+        }elseif($has_openai_key){
+            $selected = 'openai';
+        }else{
+            $selected = '';
+        }
+
         return $selected;
     }
 
@@ -4306,13 +4349,57 @@ function triggerConfettiExplosion() {
         );
 
         $available_models = Wpil_AI::get_available_models();
+        $assess_sentence_model = 'gpt-4o-mini';
+        if(!empty($available_models) && !isset($available_models[$assess_sentence_model])){
+            $assess_sentence_model = key($available_models);
+        }
 
         $standard = array(
             'create-post-embeddings' => 'text-embedding-3-large',
-            'assess-sentence-anchors' => (isset($available_models['gpt-4o-mini']) ? 'gpt-4o-mini': 'gpt-3.5-turbo')
+            'assess-sentence-anchors' => $assess_sentence_model
         );
 
         $data = get_option('wpil_chat_gpt_api', $defaults);
+        $data = (is_array($data)) ? $data: $defaults;
+        $supported_models = Wpil_AI::get_available_models();
+        $changed = false;
+        $get_fallback = function($models) use ($available_models, $supported_models){
+            foreach($models as $model){
+                if(isset($available_models[$model]) || (empty($available_models) && isset($supported_models[$model]))){
+                    return $model;
+                }
+            }
+
+            return 'gpt-4o-mini';
+        };
+
+        foreach(array_keys($defaults) as $process){
+            if(!isset($data[$process])){
+                continue;
+            }
+
+            $model = strtolower(trim((string) $data[$process]));
+            $replacement = '';
+
+            if(false !== strpos($model, 'gpt-3.5')){
+                $replacement = $get_fallback(array('gpt-4o-mini'));
+            }elseif($model === 'chatgpt-4o-latest' || $model === 'gpt-4o-2024-05-13'){
+                $replacement = $get_fallback(array('gpt-4o', 'gpt-4o-mini'));
+            }elseif($model === 'gpt-4-turbo' || false !== strpos($model, 'gpt-4-turbo') || $model === 'gpt-4' || $model === 'gpt-4-32k' || 0 === strpos($model, 'gpt-4-')){
+                $replacement = $get_fallback(array('gpt-4.1', 'gpt-4o', 'gpt-4o-mini'));
+            }elseif(0 === strpos($model, 'gpt-5') && !isset($supported_models[$model])){
+                $replacement = $get_fallback(array('gpt-5.4-mini', 'gpt-5-mini', 'gpt-4o-mini'));
+            }
+
+            if(!empty($replacement) && $replacement !== $data[$process]){
+                $data[$process] = $replacement;
+                $changed = true;
+            }
+        }
+
+        if($changed){
+            update_option('wpil_chat_gpt_api', $data);
+        }
 
         $data = array_merge($data, $standard);
 
@@ -4435,6 +4522,10 @@ function triggerConfettiExplosion() {
      **/
     public static function get_ai_embedding_dimensions(){
         $dimensions = get_option('wpil_ai_embedding_dimension_count', 3072);
+    }
+
+    public static function use_ai_embedding_calculation_v2(){
+        return !empty(get_option('wpil_enable_ai_embedding_calculation_v2', 0));
     }
 
     /**
@@ -4660,7 +4751,12 @@ function triggerConfettiExplosion() {
             case 'standard':
                 $credentials = self::get_credentials();
 
-                $state_args = array('rest' => get_rest_url(null, '/' . Wpil_Rest::REST_SLUG . '/' . Wpil_Rest::GSC_ROUTE . $return_wizard));
+                $gsc_rest_url = Wpil_Rest::get_authenticated_rest_url(Wpil_Rest::GSC_ROUTE);
+                if(!empty($return_wizard)){
+                    $gsc_rest_url = add_query_arg('return_wizard', 1, $gsc_rest_url);
+                }
+
+                $state_args = array('rest' => $gsc_rest_url);
 
                 if(is_ssl() && current_user_can('activate_plugins')){
                     $user = wp_get_current_user();
@@ -5994,7 +6090,12 @@ function triggerConfettiExplosion() {
     }
 
     public static function get_ai_max_processing_age(){
-        return get_option('wpil_ai_max_processing_age', 0);
+        $age = get_option('wpil_ai_max_processing_age', 0);
+        if(empty($age)){
+            $age = get_option('wpil_max_linking_age', 0);
+        }
+
+        return $age;
     }
 
     public static function has_run_wizard(){

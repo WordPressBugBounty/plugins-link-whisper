@@ -188,6 +188,144 @@
     font-weight: 800;
   }
 
+  #wpil-fix-modal .wpil-fix-preview-card {
+    background: var(--gray-50, #f8fafc);
+    border: 1px solid var(--gray-200, #e5e7eb);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--gray-500, #94a3b8);
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #e0f2fe;
+    color: #0369a1;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-badge.is-ready {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-refresh {
+    min-height: 26px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #fff;
+    color: #334155;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 9px;
+    cursor: pointer;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-refresh:hover:not(:disabled) {
+    border-color: #94a3b8;
+    background: #f8fafc;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-refresh:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-stat {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 12px;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-stat strong {
+    display: block;
+    font-size: 20px;
+    color: #0f172a;
+    margin-bottom: 4px;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-stat span {
+    display: block;
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.35;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-progress {
+    display: none;
+    margin-top: 12px;
+    padding: 12px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-progress.is-visible {
+    display: block;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-progress-label {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: #1d4ed8;
+    font-weight: 700;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-progress-bar {
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(37, 99, 235, 0.15);
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-progress-fill {
+    width: 0%;
+    height: 100%;
+    background: linear-gradient(90deg, #2563eb 0%, #60a5fa 100%);
+    transition: width 0.2s ease-out;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-copy {
+    font-size: 13px;
+    color: #1e3a8a;
+    line-height: 1.45;
+  }
+
   #wpil-fix-modal .wpil-fix-special-options {
     background: var(--gray-50, #f8fafc);
     border: 1px solid var(--gray-200, #e5e7eb);
@@ -308,6 +446,36 @@
     border-radius: 8px !important;
     min-height: 38px !important;
     padding: 2px 4px !important;
+  }
+
+  #wpil-fix-modal .wpil-fix-special-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  #wpil-fix-modal .wpil-fix-special-update {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    background: #2563eb;
+    color: #fff;
+    border: 1px solid #2563eb;
+    padding: 7px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  #wpil-fix-modal .wpil-fix-special-update:disabled {
+    background: #e5e7eb;
+    border-color: #d1d5db;
+    color: #94a3b8;
+    cursor: not-allowed;
   }
 
   #wpil-fix-modal .wpil-fix-actions {
@@ -501,6 +669,10 @@
       text-align: left;
     }
 
+    #wpil-fix-modal .wpil-fix-preview-grid {
+      grid-template-columns: 1fr;
+    }
+
     #wpil-fix-modal .wpil-fix-actions {
       flex-direction: column-reverse;
       align-items: stretch;
@@ -557,7 +729,7 @@
         </div>
 
         <div class="wpil-fix-credit-required">
-          <div class="wpil-fix-credit-sub">Required</div>
+          <div class="wpil-fix-credit-sub">Estimated Credits Needed</div>
           <div class="wpil-fix-credit-number" data-wpil-fix-estimate>0</div>
         </div>
       </div>
@@ -572,6 +744,40 @@
 
       <div id="wpil-fix-warning" class="wpil-fix-warning hidden">
         You need <strong><span data-wpil-fix-shortfall>0</span></strong> more credits to run this fix.
+      </div>
+    </div>
+
+    <div class="wpil-fix-preview-card">
+      <div class="wpil-fix-preview-title-row">
+        <div class="wpil-fix-preview-title">Estimated Number of Links Created</div>
+        <div class="wpil-fix-preview-actions">
+          <button class="wpil-fix-preview-refresh" type="button" data-wpil-fix-refresh-map>Refresh Map</button>
+          <span class="wpil-fix-preview-badge" data-wpil-fix-preview-status>Generating</span>
+        </div>
+      </div>
+      <div class="wpil-fix-preview-grid">
+        <div class="wpil-fix-preview-stat">
+          <strong data-wpil-fix-preview-stat="source_posts_exact">...</strong>
+          <span>Source posts with linking opportunities.</span>
+        </div>
+        <div class="wpil-fix-preview-stat">
+          <strong data-wpil-fix-preview-stat="target_posts_exact">...</strong>
+          <span>Potential target posts detected.</span>
+        </div>
+        <div class="wpil-fix-preview-stat">
+          <strong data-wpil-fix-preview-stat="potential_links_range">...</strong>
+          <span>Estimated links this fix will create.</span>
+        </div>
+      </div>
+      <div class="wpil-fix-preview-progress" data-wpil-fix-preview-progress>
+        <div class="wpil-fix-preview-progress-label">
+          <span>Generating sitemap</span>
+          <span data-wpil-fix-preview-progress-percent>0%</span>
+        </div>
+        <div class="wpil-fix-preview-progress-bar">
+          <div class="wpil-fix-preview-progress-fill" data-wpil-fix-preview-progress-fill></div>
+        </div>
+        <div class="wpil-fix-preview-copy" data-wpil-fix-preview-copy>Link Whisper is building the sitemap used for this estimate.</div>
       </div>
     </div>
 
@@ -600,6 +806,9 @@
       <div class="wpil-fix-special-row" style="margin-top: 10px;">
         <label class="wpil-fix-special-label" for="wpil-fix-opt-same-category">Only Link Between Posts With Same Categories</label>
         <input type="checkbox" id="wpil-fix-opt-same-category" class="wpil-fix-special-toggle" data-wpil-fix-option="same_category">
+      </div>
+      <div class="wpil-fix-special-actions">
+        <button class="wpil-fix-special-update" type="button" data-wpil-fix-update-plan disabled>Update Plan</button>
       </div>
     </div>
 

@@ -70,7 +70,7 @@
         </style>
     </div>
     <div class="min-h-screen flex items-center justify-center p-6 antialiased font-sans">
-        <div class="bg-white w-full max-w-5xl rounded-2xl shadow-xl overflow-hidden">
+        <div class="bg-white w-full max-w-7xl rounded-2xl shadow-xl overflow-hidden">
             <div class="bg-gray-50 border-b border-gray-100 px-8 py-5 flex flex-col md:flex-row justify-between items-center text-sm font-medium text-gray-500">
                 <div class="flex items-center space-x-2 lw-text-gradient">
                     <div class="w-6 h-6 rounded-full border-2 border-[#7F5AF0] flex items-center justify-center text-xs text-[#7F5AF0]">1</div>
@@ -110,6 +110,9 @@
                         </p>
                         <p class="mt-4 text-lg text-gray-600 leading-relaxed">
                             <?php esc_html_e('New users receive 250 free AI credits at signup!', 'wpil'); ?>
+                        </p>
+                        <p class="mt-4 text-lg text-gray-600 leading-relaxed">
+                            <?php esc_html_e('AI is optional, and Link Whisper will function without it.', 'wpil'); ?>
                         </p>
                         <div class="mt-8 space-y-4">
                             <div class="wpil-wizard-ai-card">
@@ -207,7 +210,7 @@
                     </div>
                     <div class="mt-5 text-center" style="grid-column: 1 / span 2;">
                         <span>AI usage and accounts are governed by our <a href="<?php echo esc_url(WPIL_STORE_URL . '/terms-of-service/');?>" style="color: #2e6afe;">terms</a> and <a href="<?php echo esc_url(WPIL_STORE_URL . '/privacy-policy/');?>" style="color: #2e6afe;">privacy policy</a></span><br>
-                        <span>AI is not required to use Link Whisper.</span>
+                        <span><strong>AI is not required to use Link Whisper.</strong></span>
                     </div>
                 </div>
             </div>

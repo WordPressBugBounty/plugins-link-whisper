@@ -78,7 +78,7 @@ class Wpil_Editor_Divi
             return self::$divi_active;
         }
 
-        self::$divi_active = (defined('ET_SHORTCODES_VERSION')) ? true: false;
+        self::$divi_active = (defined('ET_SHORTCODES_VERSION') || (defined('ET_CORE_VERSION') && version_compare(ET_CORE_VERSION, '5.0', '>='))) ? true: false;
 
         return self::$divi_active;
     }

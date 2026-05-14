@@ -3,7 +3,7 @@ Contributors: sreenathlw, mattbissett, linkwhspr
 Tags: links, SEO, internal linking, link building, orphan content
 Requires at least: 4.6
 Tested up to: 6.9.4
-Stable Tag: 0.9.3
+Stable Tag: 0.9.4
 Requires PHP: 5.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -177,6 +177,10 @@ Yes it will. In fact, if you’re using plugins like Yoast SEO, Rank Math, or Al
 
 We are confident that you’ll be happy with Link Whisper Premium. However, if you decide that Link Whisper is not for you, we will refund your purchase up to 30 days after your purchase.
 
+= Where do I report security bugs found in this plugin? =
+
+Please report security bugs found in the source code of the Link Whisper Free plugin through the [Patchstack Vulnerability Disclosure Program](https://patchstack.com/database/vdp/8915c884-e2f1-4a80-b57a-359e16bed375). The Patchstack team will assist you with verification, CVE assignment, and notify the developers of this plugin.
+
 == Screenshots ==
 
 1. Making internal links is easy with Link Whisper's intelligent post linking suggestions.
@@ -196,6 +200,20 @@ We are confident that you’ll be happy with Link Whisper Premium. However, if y
 15. [Premium] The URL Changer allows you to update old links to point to new URLs.
 
 == Changelog ==
+= 0.9.4 =
+* [NEW FEATURE] Creating a “Basic AI Scan” option for the Dashboard! (Now you can run the AI scanning from the Dashboard without needing to run the One Click Setup)
+* [NEW FEATURE] Creating an alternate Relation Analysis system for large sites that aren’t able to complete the standard relation calculations.
+* [NEW SETTING] Creating setting to quickly insert Money Page URLs.
+* [IMPROVEMENT] Adjusting the AI credit counter’s refresh rate so credit purchases register on the site much more quickly.
+* [IMPROVEMENT] Updating the list of available AI models with the latest supported versions.
+* [IMPROVEMENT] Making the inserted link counts in the Dashboard more accurate.
+* [IMPROVEMENT] Improving compatibility with Elementor.
+* [SECURITY] Updating the REST routes to use new, more secure validation methods.
+* [BUGFIX] Fixing template issue that would keep the Broken Link Scanner from running.
+* [BUGFIX] Fixing issue that would keep Divi posts from being detected.
+* [BUGFIX] Fixing minor PHP error notice.
+* [BUGFIX] Fixing bug that could cause the Calculated Relations count to be lower than it actually is.
+
 = 0.9.3 =
 * [NEW FEATURE] Creating a new Dashboard interface with improved link health stats, recommended actions, and clearer processing feedback.
 * [NEW FEATURE] Creating a new setup wizard with AI connection, Google Search Console connection, money page selection, AI credit handling, scanning progress.

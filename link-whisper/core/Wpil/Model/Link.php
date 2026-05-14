@@ -13,6 +13,7 @@ class Wpil_Model_Link
     public $internal = false;
     public $post = false;
     public $anchor = '';
+    public $raw_anchor = '';
     public $added_by_plugin = false;
     public $location = 'content';
     public $link_whisper_created = 0;
@@ -30,10 +31,16 @@ class Wpil_Model_Link
 
     public function __construct($params = [])
     {
+        $kses_items = array('raw_anchor', 'anchor'); // anchors _should_ already be sanitized, but leave nothing to chance!
+
         //fill model properties from initial array
         foreach ($params as $key => $value) {
             if (isset($this->{$key})) {
-                $this->{$key} = $value;
+                if(in_array($key, $kses_items)){
+                    $this->{$key} = wp_kses($value, 'post');
+                }else{
+                    $this->{$key} = $value;
+                }
             }
         }
 
@@ -52,6 +59,11 @@ class Wpil_Model_Link
                 $this->anchor_slug_positional_match = $slug_match_data['anchor_slug_positional_match'];
             }
         }
+
+        // make sure we have a raw url available
+        if(empty($this->raw_anchor) && !empty($this->anchor)){
+            $this->raw_anchor = $this->anchor;
+        }
     }
 
     function create_scroll_link_data(){
@@ -59,7 +71,7 @@ class Wpil_Model_Link
             'scrollLink' => array(
                 'monitorId' => $this->tracking_id,
                 'url' => $this->url,
-                'anchor' => $this->anchor
+                'anchor' => $this->raw_anchor
             )
         );
 

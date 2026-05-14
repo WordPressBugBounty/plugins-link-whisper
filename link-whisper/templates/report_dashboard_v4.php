@@ -71,6 +71,7 @@
         'coverage'     => admin_url('admin.php?page=link_whisper&type=links&link_density=1'),
         'one_click'    => admin_url('admin.php?page=link_whisper_wizard'),
         'autolinking'  => admin_url('admin.php?page=link_whisper&type=autolinks'),
+        'custom_linking_map' => admin_url('admin.php?page=link_whisper_csv_link_map'),
         'settings'     => admin_url('admin.php?page=link_whisper_settings'),
     ];
 
@@ -104,6 +105,34 @@
         'admin_urls'              => $admin_urls,
     ];
     $recommended_actions = Wpil_Dashboard::wpil_dash_generate_recommended_actions($action_metrics);
+    $dashboard_ai_fix_openai_connection = (class_exists('Wpil_Settings') && method_exists('Wpil_Settings', 'get_selected_ai_provider') && 'openai' === Wpil_Settings::get_selected_ai_provider());
+    $dashboard_basic_scan = (class_exists('Wpil_AI') && method_exists('Wpil_AI', 'get_dashboard_basic_scan_status')) ? Wpil_AI::get_dashboard_basic_scan_status() : array(
+        'ai_configured' => false,
+        'basic_scan_complete' => false,
+        'basic_scan_running' => false,
+        'basic_scan_threshold' => 90,
+        'current_process' => '',
+        'relation_percent' => 0,
+        'relation_processed' => 0,
+        'relation_embedding_percent' => 0,
+        'relation_embedding_processed' => 0,
+        'relation_calculation_percent' => 0,
+        'relation_calculation_processed' => 0,
+        'relation_total' => 0,
+        'relation_complete' => false,
+        'keyword_enabled' => false,
+        'keyword_percent' => 0,
+        'keyword_processed' => 0,
+        'keyword_detecting_percent' => 0,
+        'keyword_detecting_processed' => 0,
+        'keyword_assigning_percent' => 0,
+        'keyword_assigning_processed' => 0,
+        'keyword_total' => 0,
+        'keyword_complete' => true,
+        'estimated_credit_cost' => 0,
+    );
+    $dashboard_basic_scan_gate_active = empty($dashboard_basic_scan['basic_scan_complete']);
+    $dashboard_basic_scan_nonce = wp_create_nonce(wp_get_current_user()->ID . 'wpil_download_ai_data');
     $running_fix_jobs = [];
     $running_fix_types = [];
     $registry = get_option('wpil_ai_fix_registry', []);
@@ -127,6 +156,23 @@
                 'processKey' => isset($entry['process_key']) ? (string) $entry['process_key'] : '',
             ];
             $running_fix_types[$type] = true;
+        }
+    }
+    if(
+        Wpil_CsvLinkMap::has_active_plan() &&
+        !isset($running_fix_jobs['custom_link_map:0'])
+    ){
+        $resumable_custom_job = Wpil_Maintenance::get_dashboard_resumable_ai_fix_job('custom_link_map', '0');
+        if(!empty($resumable_custom_job)){
+            $running_fix_jobs['custom_link_map:0'] = [
+                'type' => 'custom_link_map',
+                'itemId' => '0',
+                'progress' => isset($resumable_custom_job['progress']) ? (int) $resumable_custom_job['progress'] : 0,
+                'message' => isset($resumable_custom_job['message']) ? (string) $resumable_custom_job['message'] : '',
+                'estimate' => isset($resumable_custom_job['estimate']) ? (int) $resumable_custom_job['estimate'] : 0,
+                'processKey' => isset($resumable_custom_job['process_key']) ? (string) $resumable_custom_job['process_key'] : '',
+            ];
+            $running_fix_types['custom_link_map'] = true;
         }
     }
     $quick_wins = [];
@@ -171,15 +217,49 @@
                     'impact' => !empty($item['severity']) && 'high' === strtolower((string)$item['severity']) ? 'Impact: High' : 'Impact: Medium',
                     'time' => !empty($item['time_estimate']) ? (string)$item['time_estimate'] : 'Est. time: 2-5 mins',
                     'button' => 'Review',
-                    'fix_enabled' => !empty($fix['enabled']) && !empty($fix['type']),
+                    'fix_available' => (!$dashboard_basic_scan_gate_active && !empty($fix['enabled']) && !empty($fix['type'])),
+                    'fix_enabled' => (!$dashboard_ai_fix_openai_connection && !$dashboard_basic_scan_gate_active && !empty($fix['enabled']) && !empty($fix['type'])),
+                    'fix_disabled_reason' => ($dashboard_ai_fix_openai_connection && !$dashboard_basic_scan_gate_active && !empty($fix['enabled']) && !empty($fix['type'])) ? 'Requires Link Whisper AI Connection' : '',
                     'fix_type' => $fix_type,
                     'fix_estimate' => $fix_estimate,
                     'fix_description' => $fix_description,
                     'explanation' => $task_explanation,
                     'is_running' => isset($running_fix_jobs[$fix_type . ':' . (!empty($item['id']) ? (string) $item['id'] : '')]),
+                    'action_mode' => 'fix',
                 ];
             }
         }
+    }
+
+    if($dashboard_basic_scan_gate_active){
+        $scan_title = (!empty($dashboard_basic_scan['ai_configured'])) ? 'Perform Basic AI Scanning': 'Connect AI to Scan';
+        $scan_explanation = (!empty($dashboard_basic_scan['ai_configured']))
+            ? 'Scan and index your site\'s posts with AI so that Link Whisper can provide you with better suggestions. Does not automatically create links, and requires AI Credits to run.'
+            : 'Connect your AI account first so Link Whisper can run the Basic AI Scan so Link Whisper can offer you better suggestions.';
+        $scan_button = (!empty($dashboard_basic_scan['ai_configured']) && !empty($dashboard_basic_scan['basic_scan_running'])) ? 'Review Progress': ((!empty($dashboard_basic_scan['ai_configured'])) ? 'Settings': 'Set Up AI');
+        $scan_primary_label = (!empty($dashboard_basic_scan['ai_configured']) && !empty($dashboard_basic_scan['basic_scan_running'])) ? 'Review Progress': ((!empty($dashboard_basic_scan['ai_configured'])) ? 'Review Scan' : 'Set Up AI');
+        $scan_primary_url = (!empty($dashboard_basic_scan['ai_configured'])) ? '#': admin_url('admin.php?page=link_whisper_ai_subscription');
+
+        array_unshift($task_cards, array(
+            'id' => 'basic_ai_scanning',
+            'title' => $scan_title,
+            'url' => ((!empty($dashboard_basic_scan['ai_configured'])) ? $urls['settings'] . '&tab=ai-settings': admin_url('admin.php?page=link_whisper_ai_subscription')),
+            'impact' => 'Impact: High',
+            'time' => (!empty($dashboard_basic_scan['basic_scan_running'])) ? 'Est. time: In progress': 'Est. time: 3-10 mins',
+            'button' => $scan_button,
+            'fix_enabled' => false,
+            'fix_type' => '',
+            'fix_estimate' => !empty($dashboard_basic_scan['estimated_credit_cost']) ? (int) $dashboard_basic_scan['estimated_credit_cost'] : 0,
+            'fix_description' => '',
+            'explanation' => $scan_explanation,
+            'is_running' => !empty($dashboard_basic_scan['basic_scan_running']),
+            'action_mode' => 'basic_scan',
+            'primary_action_label' => $scan_primary_label,
+            'primary_action_url' => $scan_primary_url,
+            'primary_action_setup' => empty($dashboard_basic_scan['ai_configured']),
+        ));
+
+        $task_cards = array_slice($task_cards, 0, 3);
     }
 
     $notification_data = ['items' => [], 'unread_count' => 0, 'notification_count' => 0];
@@ -212,7 +292,54 @@
     }
     $activity_items = array_slice($activity_items, 0, 3);
 */
-    $has_quick_wins = !empty($task_cards);
+    // Custom CSV Linking Map card – shown whenever a plan has been uploaded
+    $custom_linking_entry_card = [
+        'title' => __('Custom AI Linking', 'wpil'),
+        'description' => __('Upload a CSV plan, review the parsed relationships, and run the custom AI linker without leaving the dashboard.', 'wpil'),
+        'impact' => __('Impact: High', 'wpil'),
+        'time' => __('Est. time: 3-5 mins', 'wpil'),
+        'estimate' => 0,
+        'is_running' => isset($running_fix_jobs['custom_link_map:0']),
+    ];
+    $csv_plan_card = null;
+    if(Wpil_CsvLinkMap::has_active_plan()){
+        $csv_pk      = Wpil_CsvLinkMap::get_process_key();
+        $csv_summary = Wpil_CsvLinkMap::get_plan_summary();
+        $csv_estimate = !empty($csv_summary['credit_estimate']) ? (int) $csv_summary['credit_estimate'] : Wpil_CsvLinkMap::estimate_credit_cost();
+        $csv_job_key = 'custom_link_map:0';
+        $csv_running = isset($running_fix_jobs[$csv_job_key]);
+        $csv_progress = $csv_running ? $running_fix_jobs[$csv_job_key]['progress'] : 0;
+        $csv_plan_url = !empty($csv_summary['manage_url']) ? $csv_summary['manage_url'] : $urls['custom_linking_map'];
+        $csv_plan_card = [
+            'summary'     => $csv_summary,
+            'is_running'  => $csv_running,
+            'progress'    => $csv_progress,
+            'estimate'    => $csv_estimate,
+            'process_key' => $csv_pk,
+            'plan_url'    => $csv_plan_url,
+        ];
+
+        $custom_linking_entry_card['estimate'] = $csv_estimate;
+    }
+    $custom_linking_initial_status = !empty($csv_plan_card)
+        ? $csv_plan_card['summary']
+        : [
+            'has_plan' => false,
+            'total_rows' => 0,
+            'inbound_targets' => 0,
+            'inbound_specified' => 0,
+            'inbound_auto' => 0,
+            'outbound_sources' => 0,
+            'outbound_specified' => 0,
+            'outbound_auto' => 0,
+            'process_key' => Wpil_CsvLinkMap::get_process_key(),
+            'credit_estimate' => 0,
+            'manage_url' => $urls['custom_linking_map'],
+            'template_filename' => Wpil_CsvLinkMap::get_example_template_filename(),
+            'parse_errors' => [],
+        ];
+    $show_custom_linking_entry_task_card = !empty($csv_plan_card);
+    $has_quick_wins = !empty($task_cards) || $show_custom_linking_entry_task_card || !empty($csv_plan_card);
     $has_recent_activity = !empty($activity_items);
     $show_tasks_activity_section = ($has_quick_wins || $has_recent_activity);
     $tasks_activity_layout_class = (!$has_quick_wins || !$has_recent_activity) ? 'single-column': '';
@@ -1314,6 +1441,17 @@
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 
+.greeting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.greeting-copy {
+  min-width: 0;
+}
+
 .greeting-title {
   font-size: 16px;
   font-weight: 600;
@@ -1324,6 +1462,36 @@
 .greeting-subtitle {
   font-size: 13px;
   color: var(--gray-600);
+}
+
+.greeting-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 0;
+  background: linear-gradient(90deg, #7f5af0 0%, #2c6bff 100%);
+  color: #fff !important;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: 0 10px 24px rgba(44, 107, 255, 0.18);
+  transition: opacity 0.15s ease, transform 0.08s ease, box-shadow 0.15s ease;
+}
+
+.greeting-action:hover,
+.greeting-action:focus-visible {
+  color: #fff !important;
+  opacity: 0.96;
+  box-shadow: 0 14px 28px rgba(44, 107, 255, 0.24);
+}
+
+.greeting-action:active {
+  transform: translateY(1px);
 }
 
 /* Task Cards */
@@ -1434,6 +1602,34 @@
   background: var(--white);
   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
   transform: translateY(-1px);
+}
+
+.task-card-basic-scan {
+  background: #f8fafc;
+  border-color: #bfdbfe;
+  box-shadow: 0 8px 22px rgba(37,99,235,0.08);
+}
+
+.task-card-basic-scan .task-icon {
+  width: 42px;
+  height: 42px;
+  background: linear-gradient(135deg, #7f5af0, var(--blue-600));
+  box-shadow: 0 8px 18px rgba(37,99,235,0.22);
+}
+
+.task-card-basic-scan .task-title {
+  font-weight: 700;
+}
+
+.task-credit-estimate {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .task-icon {
@@ -1558,11 +1754,34 @@
   color: var(--white) !important;
 }
 
+.task-action-disabled,
+.task-action-disabled:hover {
+  background: var(--gray-200) !important;
+  color: var(--gray-500) !important;
+  border-color: var(--gray-300) !important;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .task-actions {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.task-actions-disabled {
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.task-action-requirement {
+  color: #b45353;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .task-action-secondary {
@@ -1582,10 +1801,47 @@
   border: 1px solid var(--gray-300) !important;
 }
 
+.task-action-manual {
+  background: var(--gray-50) !important;
+  color: var(--gray-700) !important;
+  border: 1px solid var(--gray-300) !important;
+}
+
 .task-action-cancel:hover {
   background: var(--gray-200) !important;
   color: var(--gray-800) !important;
   border-color: var(--gray-400) !important;
+}
+
+.task-action-manual:hover {
+  background: var(--gray-100) !important;
+  color: var(--gray-900) !important;
+  border-color: var(--gray-400) !important;
+}
+
+.task-progress {
+  position: relative;
+  height: 6px;
+  background: var(--gray-200);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 6px 0 4px;
+}
+
+.task-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue-600), var(--blue-500));
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.task-progress-label {
+  position: absolute;
+  right: 0;
+  top: -16px;
+  font-size: 11px;
+  color: var(--gray-600);
+  font-weight: 500;
 }
 
 .task-action-cancel.is-hidden {
@@ -1923,6 +2179,65 @@
   gap: 6px;
 }
 
+#wpil-v3-fix-progress-modal .wpil-v3-plan-summary {
+  display: none;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  background: var(--gray-50);
+}
+
+#wpil-v3-fix-progress-modal .wpil-v3-plan-summary.is-visible {
+  display: block;
+}
+
+#wpil-v3-fix-progress-modal .wpil-v3-plan-summary-title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gray-500);
+}
+
+#wpil-v3-fix-progress-modal .wpil-v3-plan-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#wpil-v3-fix-progress-modal .wpil-v3-plan-summary-stat {
+  padding: 10px 12px;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  background: var(--white);
+}
+
+#wpil-v3-fix-progress-modal .wpil-v3-plan-summary-stat-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gray-500);
+}
+
+#wpil-v3-fix-progress-modal .wpil-v3-plan-summary-stat-value {
+  display: block;
+  font-size: 18px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: var(--gray-900);
+}
+
+#wpil-v3-fix-progress-modal .wpil-v3-plan-summary-copy {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--gray-600);
+}
+
 #wpil-v3-fix-progress-modal .wpil-v3-insertion-mode {
   margin-top: 10px;
   padding: 10px 12px;
@@ -1951,6 +2266,288 @@
 
 #wpil-v3-fix-progress-modal .wpil-v3-insertion-mode input[type="radio"] {
   margin: 0;
+}
+
+#wpil-dashboard-basic-scan-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+#wpil-dashboard-basic-scan-modal.is-open {
+  display: flex;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(17,24,39,0.55);
+  backdrop-filter: blur(2px);
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-panel {
+  position: relative;
+  z-index: 1;
+  width: min(700px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: var(--white);
+  border-radius: 16px;
+  padding: 22px 26px;
+  box-shadow: 0 16px 50px rgba(15,23,42,0.25);
+  animation: wpil-fix-modal-pop 160ms ease-out;
+}
+
+#wpil-dashboard-basic-scan-modal h4 {
+  margin: 0 42px 6px 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--gray-900);
+}
+
+#wpil-dashboard-basic-scan-modal p {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--gray-600);
+  line-height: 1.45;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gray-500);
+  margin-bottom: 6px;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid var(--gray-200) !important;
+  background: var(--white) !important;
+  color: var(--gray-500) !important;
+  cursor: pointer;
+  font-size: 22px;
+  line-height: 1;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-summary {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-summary ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--gray-700);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-notice {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-notice.is-hidden {
+  display: none;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-notice.is-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-notice.is-success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-overall {
+  margin-top: 16px;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-overall-title {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--gray-900);
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-bar {
+  height: 8px;
+  background: var(--gray-100);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-bar > span {
+  display: block;
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue-600), var(--blue-500));
+  transition: width 0.2s ease;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-meta {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--gray-700);
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-meta .is-hidden {
+  display: none;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-processes {
+  margin-top: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-process {
+  padding: 12px;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  background: var(--gray-50);
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-process.is-hidden {
+  display: none;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-process-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-process-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-900);
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-process-status {
+  font-size: 12px;
+  color: var(--gray-500);
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-stats {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-stat {
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-stat-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gray-500);
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-stat-value {
+  display: block;
+  margin-top: 4px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--gray-900);
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-foot {
+  margin-top: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-foot small {
+  font-size: 11px;
+  color: var(--gray-500);
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-primary {
+  border: 0 !important;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #7f5af0 0%, #2c6bff 100%) !important;
+  color: var(--white) !important;
+  font-weight: 800;
+  padding: 8px 16px !important;
+  cursor: pointer;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-cancel {
+  color: #b42318 !important;
+  border-color: #fecdca !important;
+  background: #fff5f4 !important;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-cancel:hover {
+  background: #fee4e2 !important;
+  border-color: #fda29b !important;
+}
+
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-primary.is-hidden,
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-refresh.is-hidden,
+#wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-cancel.is-hidden {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  #wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-stats {
+    grid-template-columns: 1fr;
+  }
+
+  #wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-foot,
+  #wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-process-head,
+  #wpil-dashboard-basic-scan-modal .wpil-dashboard-basic-scan-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 /* Dashboard fallback styles for review modal utility classes (Tailwind-independent). */
@@ -1992,8 +2589,8 @@
 #wpil-review-modal .font-medium { font-weight: 500; }
 #wpil-review-modal .font-bold { font-weight: 700; }
 #wpil-review-modal .uppercase { text-transform: uppercase; }
-#wpil-review-modal .leading-relaxed { line-height: 1.625; }
-#wpil-review-modal .text-\[10px\] { font-size: 10px; }
+#wpil-review-modal .leading-relaxed { line-height: 1.625; font-size: 13px !important; margin-top: 5px !important; margin-bottom: 5px !important;}
+#wpil-review-modal .text-\[10px\] { font-size: 10px !important; }
 #wpil-review-modal .text-xs { font-size: 12px; }
 #wpil-review-modal .text-sm { font-size: 13px; }
 #wpil-review-modal .text-gray-300 { color: #d1d5db; }
@@ -3335,6 +3932,19 @@
   .tasks-activity-grid {
     grid-template-columns: 1fr;
   }
+
+  #wpil-v3-fix-progress-modal .wpil-v3-plan-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .greeting-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .greeting-action {
+    width: 100%;
+  }
   
   .actions-features-combined {
     grid-template-columns: 1fr;
@@ -3494,8 +4104,20 @@
 
   <!-- Greeting -->
   <div class="greeting-card">
-    <h2 class="greeting-title">&#128075; Good <span id="wpil-dashboard-greeting-part"><?php echo esc_html($day_part); ?></span><?php echo !empty($first_name) ? ', ' . esc_html($first_name) : ''; ?>!</h2>
-    <p class="greeting-subtitle"><?php echo esc_html($greeting_subtitle); ?></p>
+    <div class="greeting-row">
+      <div class="greeting-copy">
+        <h2 class="greeting-title">&#128075; Good <span id="wpil-dashboard-greeting-part"><?php echo esc_html($day_part); ?></span><?php echo !empty($first_name) ? ', ' . esc_html($first_name) : ''; ?>!</h2>
+        <p class="greeting-subtitle"><?php echo esc_html($greeting_subtitle); ?></p>
+      </div>
+      <a class="greeting-action" style="display: none;" href="#"
+        role="button"
+        data-wpil-custom-linking-open="1"
+        data-wpil-fix-type="custom_link_map"
+        data-wpil-fix-item-id="0"
+        data-wpil-fix-estimate="<?php echo esc_attr((string) $custom_linking_entry_card['estimate']); ?>"
+        data-wpil-fix-description="<?php esc_attr_e('Upload a CSV plan and run a custom AI linking pass from the dashboard.', 'wpil'); ?>"
+      ><?php esc_html_e('Custom AI Linking', 'wpil'); ?></a>
+    </div>
   </div>
 
   <!-- Priority Tasks + Recent Activity - Two Column Layout -->
@@ -3504,8 +4126,8 @@
     <?php if($has_quick_wins): ?>
     <div class="tasks-container-compact">
       <?php foreach($task_cards as $task): ?>
-      <div class="task-card">
-        <div class="task-icon"><span class="dashicons dashicons-admin-links"></span></div>
+      <div class="task-card <?php echo (!empty($task['action_mode']) && $task['action_mode'] === 'basic_scan') ? 'task-card-basic-scan': ''; ?>">
+        <div class="task-icon"><span class="dashicons <?php echo (!empty($task['action_mode']) && $task['action_mode'] === 'basic_scan') ? 'dashicons-chart-area' : 'dashicons-admin-links'; ?>"></span></div>
         <div class="task-content">
           <div class="task-title"><?php echo esc_html($task['title']); ?></div>
           <?php if(!empty($task['explanation'])): ?>
@@ -3514,11 +4136,30 @@
           <div class="task-meta">
             <span class="impact-badge impact-high"><?php echo esc_html($task['impact']); ?></span>
             <a class="task-action-inline" href="<?php echo esc_url($task['url']); ?>"><?php echo esc_html($task['button']); ?></a>
+            <?php if(!empty($task['action_mode']) && $task['action_mode'] === 'basic_scan' && !empty($task['fix_estimate'])): ?>
+            <span class="task-credit-estimate"><?php echo esc_html(number_format((int) $task['fix_estimate'])); ?> AI credits</span>
+            <?php endif; ?>
             <span class="time-estimate"><?php echo esc_html($task['time']); ?></span>
           </div>
         </div>
-        <div class="task-actions">
-          <?php if($show_ai_fix_controls && !empty($task['fix_enabled'])): ?>
+        <div class="task-actions <?php echo !empty($task['fix_disabled_reason']) ? 'task-actions-disabled' : ''; ?>">
+          <?php if(!empty($task['action_mode']) && $task['action_mode'] === 'basic_scan'): ?>
+          <a class="task-action" href="<?php echo esc_url($task['primary_action_url']); ?>"
+            role="button"
+            <?php if(empty($task['primary_action_setup'])): ?>
+            data-wpil-basic-scan="<?php echo !empty($task['is_running']) ? 'review': 'start'; ?>"
+            data-nonce="<?php echo esc_attr($dashboard_basic_scan_nonce); ?>"
+            <?php endif; ?>
+          ><?php echo esc_html($task['primary_action_label']); ?></a>
+          <?php if(empty($task['primary_action_setup'])): ?>
+          <a
+            class="task-action task-action-cancel <?php echo empty($task['is_running']) ? 'is-hidden' : ''; ?>"
+            href="#"
+            role="button"
+            data-wpil-dashboard-basic-scan-cancel="1"
+          >Cancel</a>
+          <?php endif; ?>
+          <?php elseif($show_ai_fix_controls && !empty($task['fix_enabled'])): ?>
           <a class="task-action" href="#"
             role="button"
             data-wpil-fix="1"
@@ -3527,6 +4168,7 @@
             data-wpil-fix-estimate="<?php echo esc_attr((string)$task['fix_estimate']); ?>"
             data-wpil-fix-description="<?php echo esc_attr($task['fix_description']); ?>"
           ><?php echo !empty($task['is_running']) ? 'Review Progress' : 'Fix with AI'; ?></a>
+          <a class="task-action task-action-manual" href="<?php echo esc_url($task['url']); ?>"><?php esc_html_e('Fix Manually', 'wpil'); ?></a>
           <a
             class="task-action task-action-cancel <?php echo empty($task['is_running']) ? 'is-hidden' : ''; ?>"
             href="#"
@@ -3534,10 +4176,103 @@
             data-wpil-fix-cancel-inline="<?php echo esc_attr($task['fix_type']); ?>"
             data-wpil-fix-cancel-item-id="<?php echo esc_attr($task['id']); ?>"
           >Cancel</a>
+          <?php elseif(!empty($task['fix_available']) && !empty($task['fix_disabled_reason'])): ?>
+          <span class="task-action task-action-disabled" role="button" aria-disabled="true"><?php esc_html_e('Fix with AI', 'wpil'); ?></span>
+          <span class="task-action-requirement"><?php echo esc_html($task['fix_disabled_reason']); ?></span>
           <?php endif; ?>
         </div>
       </div>
       <?php endforeach; ?>
+
+      <?php if($show_custom_linking_entry_task_card): ?>
+      <div class="task-card task-card-custom-linking-entry">
+        <div class="task-icon"><span class="dashicons dashicons-randomize"></span></div>
+        <div class="task-content">
+          <div class="task-title"><?php echo esc_html($custom_linking_entry_card['title']); ?></div>
+          <div class="task-description"><?php echo esc_html($custom_linking_entry_card['description']); ?></div>
+          <div class="task-meta">
+            <span class="impact-badge impact-high"><?php echo esc_html($custom_linking_entry_card['impact']); ?></span>
+            <a class="task-action-inline" href="<?php echo esc_url($urls['custom_linking_map']); ?>"><?php esc_html_e('Full Page', 'wpil'); ?></a>
+            <span class="time-estimate"><?php echo esc_html($custom_linking_entry_card['time']); ?></span>
+          </div>
+        </div>
+        <div class="task-actions">
+          <a class="task-action" href="#"
+            role="button"
+            data-wpil-custom-linking-open="1"
+            data-wpil-fix-type="custom_link_map"
+            data-wpil-fix-item-id="0"
+            data-wpil-fix-estimate="<?php echo esc_attr((string) $custom_linking_entry_card['estimate']); ?>"
+            data-wpil-fix-description="<?php esc_attr_e('Upload a CSV plan and run a custom AI linking pass from the dashboard.', 'wpil'); ?>"
+          ><?php echo !empty($custom_linking_entry_card['is_running']) ? esc_html__('Review Progress', 'wpil') : esc_html__('Custom AI Linking', 'wpil'); ?></a>
+          <a
+            class="task-action task-action-cancel <?php echo empty($custom_linking_entry_card['is_running']) ? 'is-hidden' : ''; ?>"
+            href="#"
+            role="button"
+            data-wpil-fix-cancel-inline="custom_link_map"
+            data-wpil-fix-cancel-item-id="0"
+          ><?php esc_html_e('Cancel', 'wpil'); ?></a>
+        </div>
+      </div>
+      <?php endif; ?>
+
+      <?php if(!empty($csv_plan_card)): ?>
+      <?php $csv = $csv_plan_card; $csv_s = $csv['summary']; ?>
+      <div class="task-card task-card-csv-plan" data-wpil-custom-plan-card="1">
+        <div class="task-icon"><span class="dashicons dashicons-media-spreadsheet"></span></div>
+        <div class="task-content">
+          <div class="task-title"><?php esc_html_e('Custom CSV Linking Plan', 'wpil'); ?></div>
+          <div class="task-description">
+            <?php
+            $csv_desc_parts = [];
+            if(!empty($csv_s['inbound_targets'])){
+                $csv_desc_parts[] = sprintf(
+                    _n('%d inbound target', '%d inbound targets', $csv_s['inbound_targets'], 'wpil'),
+                    $csv_s['inbound_targets']
+                );
+            }
+            if(!empty($csv_s['outbound_sources'])){
+                $csv_desc_parts[] = sprintf(
+                    _n('%d outbound source', '%d outbound sources', $csv_s['outbound_sources'], 'wpil'),
+                    $csv_s['outbound_sources']
+                );
+            }
+            echo esc_html(implode(' · ', $csv_desc_parts) ?: __('Plan ready to run', 'wpil'));
+            ?>
+            <?php if(!empty($csv_s['total_rows'])): ?>
+            &mdash; <?php echo esc_html(sprintf(_n('%d relationship mapped', '%d relationships mapped', $csv_s['total_rows'], 'wpil'), $csv_s['total_rows'])); ?>
+            <?php endif; ?>
+          </div>
+          <?php if($csv['is_running'] && $csv['progress'] > 0): ?>
+          <div class="task-progress">
+            <div class="task-progress-bar" style="width:<?php echo esc_attr((int)$csv['progress']); ?>%"></div>
+            <span class="task-progress-label"><?php echo esc_html((int)$csv['progress']); ?>%</span>
+          </div>
+          <?php endif; ?>
+          <div class="task-meta">
+            <span class="impact-badge impact-high"><?php esc_html_e('Custom Plan', 'wpil'); ?></span>
+            <a class="task-action-inline" style="display:none" href="<?php echo esc_url($csv['plan_url']); ?>"><?php esc_html_e('Manage Plan', 'wpil'); ?></a>
+          </div>
+        </div>
+        <div class="task-actions">
+          <a class="task-action" href="#"
+            role="button"
+            data-wpil-custom-linking-open="1"
+            data-wpil-fix-type="custom_link_map"
+            data-wpil-fix-item-id="0"
+            data-wpil-fix-estimate="<?php echo esc_attr((string) $csv['estimate']); ?>"
+            data-wpil-fix-description="<?php esc_attr_e('Build links from your custom CSV plan using AI suggestions.', 'wpil'); ?>"
+          ><?php echo $csv['is_running'] ? esc_html__('Review Progress', 'wpil') : esc_html__('Open Custom AI Linking', 'wpil'); ?></a>
+          <a
+            class="task-action task-action-cancel <?php echo empty($csv['is_running']) ? 'is-hidden' : ''; ?>"
+            href="#"
+            role="button"
+            data-wpil-fix-cancel-inline="custom_link_map"
+            data-wpil-fix-cancel-item-id="0"
+          ><?php esc_html_e('Cancel', 'wpil'); ?></a>
+        </div>
+      </div>
+      <?php endif; ?>
     </div>
     <?php endif; ?>
 
@@ -3698,7 +4433,7 @@
       <div class="metric-label">Link Quality Score</div>
       <div class="metric-value" data-wpil-metric-value="link_quality" style="color: <?php echo esc_attr($status_link_quality[2]); ?>;"><span data-wpil-metric-number="link_quality"><?php echo esc_html(number_format_i18n($link_quality_score, 1)); ?></span><span data-wpil-metric-suffix="link_quality" style="font-size: 18px; color: var(--gray-400);">/10</span></div>
       <span class="metric-status <?php echo esc_attr($status_link_quality[1]); ?>" data-wpil-metric-status="link_quality"><?php echo esc_html($status_link_quality[0]); ?></span>
-      <?php if($show_ai_fix_controls){ ?>
+      <?php if(!$dashboard_basic_scan_gate_active && $show_ai_fix_controls){ ?>
       <span class="wpil-fix-indicator <?php echo !empty($running_fix_types['link_quality']) ? 'is-active' : ''; ?>" data-wpil-fix-indicator="link_quality">
         <span class="wpil-fix-indicator-spinner" aria-hidden="true"></span>
         <span class="wpil-fix-indicator-popover">
@@ -3717,7 +4452,7 @@
       <div class="metric-label">Link Coverage</div>
       <div class="metric-value" data-wpil-metric-value="link_coverage" style="color: <?php echo esc_attr($status_coverage[2]); ?>;"><span data-wpil-metric-number="link_coverage"><?php echo esc_html(number_format_i18n($link_coverage_percent, 1)); ?></span><span data-wpil-metric-suffix="link_coverage">%</span></div>
       <span class="metric-status <?php echo esc_attr($status_coverage[1]); ?>" data-wpil-metric-status="link_coverage"><?php echo esc_html($status_coverage[0]); ?></span>
-      <?php if($show_ai_fix_controls){ ?>
+      <?php if(!$dashboard_basic_scan_gate_active && $show_ai_fix_controls){ ?>
       <span class="wpil-fix-indicator <?php echo !empty($running_fix_types['link_coverage']) ? 'is-active' : ''; ?>" data-wpil-fix-indicator="link_coverage">
         <span class="wpil-fix-indicator-spinner" aria-hidden="true"></span>
         <span class="wpil-fix-indicator-popover">
@@ -3736,7 +4471,7 @@
       <div class="metric-label">Orphaned Posts</div>
       <div class="metric-value" data-wpil-metric-value="orphaned_posts" style="color: <?php echo esc_attr($status_orphans[2]); ?>;"><span data-wpil-metric-number="orphaned_posts"><?php echo esc_html(number_format_i18n($orphanedCount)); ?></span><span data-wpil-metric-suffix="orphaned_posts"></span></div>
       <span class="metric-status <?php echo esc_attr($status_orphans[1]); ?>" data-wpil-metric-status="orphaned_posts"><?php echo esc_html($status_orphans[0]); ?></span>
-      <?php if($show_ai_fix_controls){ ?>
+      <?php if(!$dashboard_basic_scan_gate_active && $show_ai_fix_controls){ ?>
       <span class="wpil-fix-indicator <?php echo !empty($running_fix_types['orphaned_posts']) ? 'is-active' : ''; ?>" data-wpil-fix-indicator="orphaned_posts">
         <span class="wpil-fix-indicator-spinner" aria-hidden="true"></span>
         <span class="wpil-fix-indicator-popover">
@@ -3755,7 +4490,7 @@
       <div class="metric-label">Broken Links</div>
       <div class="metric-value" style="color: <?php echo esc_attr($status_broken[2]); ?>;"><?php echo esc_html(number_format_i18n($brokenLinksCount)); ?></div>
       <span class="metric-status <?php echo esc_attr($status_broken[1]); ?>"><?php echo esc_html($status_broken[0]); ?></span>
-      <?php if($show_ai_fix_controls){ ?>
+      <?php if(!$dashboard_basic_scan_gate_active && $show_ai_fix_controls){ ?>
       <span class="wpil-fix-indicator <?php echo !empty($running_fix_types['broken_links']) ? 'is-active' : ''; ?>" data-wpil-fix-indicator="broken_links">
         <span class="wpil-fix-indicator-spinner" aria-hidden="true"></span>
         <span class="wpil-fix-indicator-popover">
@@ -4044,9 +4779,8 @@ document.addEventListener('click', function(event) {
 });
 </script>
 
-<?php if($show_ai_fix_controls){ ?>
+<?php include_once 'custom-ai-linking-modal.php'; ?>
 <?php include_once 'fix-modal.php'; ?>
-<?php } ?>
 <?php include_once 'wizard/credits-modal.php'; ?>
 <?php if($show_ai_fix_controls){ ?>
 <div id="wpil-v3-fix-progress-modal" aria-hidden="true">
@@ -4054,6 +4788,24 @@ document.addEventListener('click', function(event) {
   <div class="wpil-v3-progress-panel" role="dialog" aria-modal="true" aria-label="AI Fix Progress">
     <h4 id="wpil-v3-progress-title">AI Fix In Progress</h4>
     <p id="wpil-v3-progress-description">Link Whisper is running your AI fix now.</p>
+    <div class="wpil-v3-plan-summary" data-wpil-custom-progress-summary>
+      <p class="wpil-v3-plan-summary-title"><?php esc_html_e('Current Plan', 'wpil'); ?></p>
+      <div class="wpil-v3-plan-summary-grid">
+        <div class="wpil-v3-plan-summary-stat">
+          <span class="wpil-v3-plan-summary-stat-label"><?php esc_html_e('Source Posts', 'wpil'); ?></span>
+          <span class="wpil-v3-plan-summary-stat-value" data-wpil-custom-progress-stat="source_posts_exact">0</span>
+        </div>
+        <div class="wpil-v3-plan-summary-stat">
+          <span class="wpil-v3-plan-summary-stat-label"><?php esc_html_e('Link Targets', 'wpil'); ?></span>
+          <span class="wpil-v3-plan-summary-stat-value" data-wpil-custom-progress-stat="target_posts_exact">0</span>
+        </div>
+        <div class="wpil-v3-plan-summary-stat">
+          <span class="wpil-v3-plan-summary-stat-label"><?php esc_html_e('Potential Links', 'wpil'); ?></span>
+          <span class="wpil-v3-plan-summary-stat-value" data-wpil-custom-progress-stat="potential_links_range">0</span>
+        </div>
+      </div>
+      <div class="wpil-v3-plan-summary-copy" data-wpil-custom-progress-copy><?php esc_html_e('Stats come from the completed custom preview map.', 'wpil'); ?></div>
+    </div>
     <div class="wpil-v3-progress-bar"><span id="wpil-v3-progress-bar-fill"></span></div>
     <div class="wpil-v3-progress-meta">
       <span id="wpil-v3-progress-text">Starting...</span>
@@ -4097,25 +4849,104 @@ document.addEventListener('click', function(event) {
 </div>
 <?php include_once 'wizard/manual-review.php'; ?>
 <?php } ?>
+<?php if($dashboard_basic_scan_gate_active){ ?>
+<div id="wpil-dashboard-basic-scan-modal" aria-hidden="true">
+  <div class="wpil-dashboard-basic-scan-backdrop" data-wpil-dashboard-basic-scan-close="1"></div>
+  <div class="wpil-dashboard-basic-scan-panel" role="dialog" aria-modal="true" aria-label="Basic AI Scan Progress">
+    <button class="wpil-dashboard-basic-scan-close" type="button" aria-label="Close" data-wpil-dashboard-basic-scan-close="1">&times;</button>
+    <div class="wpil-dashboard-basic-scan-kicker">Basic AI Scan</div>
+    <h4 id="wpil-dashboard-basic-scan-title">Perform Basic AI Scanning</h4>
+    <p id="wpil-dashboard-basic-scan-description">Link Whisper will review your site content so it can better understand what your posts are about and which pages naturally relate to each other.</p>
+    <div class="wpil-dashboard-basic-scan-summary">
+      <ul>
+        <li>This helps Link Whisper make smarter, more relevant link suggestions across your site.</li>
+        <li>The scan only helps Link Whisper improve future suggestions. It does not insert links or make changes to your posts.</li>
+        <li>You only need to run it again after adding or updating a good amount of content.</li>
+        <li>You can close this window after starting. The scan will keep running in the background.</li>
+      </ul>
+    </div>
+    <div id="wpil-dashboard-basic-scan-notice" class="wpil-dashboard-basic-scan-notice is-hidden"></div>
+    <div class="wpil-dashboard-basic-scan-overall">
+      <div class="wpil-dashboard-basic-scan-overall-title">Overall Scanning Progress</div>
+      <div class="wpil-dashboard-basic-scan-bar"><span id="wpil-dashboard-basic-scan-overall-fill"></span></div>
+      <div class="wpil-dashboard-basic-scan-meta">
+        <span id="wpil-dashboard-basic-scan-process-text" class="is-hidden">Preparing basic AI scan...</span>
+        <span id="wpil-dashboard-basic-scan-overall-percent">0%</span>
+      </div>
+    </div>
+    <div class="wpil-dashboard-basic-scan-processes">
+      <div class="wpil-dashboard-basic-scan-process" data-wpil-dashboard-basic-scan-process="relation">
+        <div class="wpil-dashboard-basic-scan-process-head">
+          <div class="wpil-dashboard-basic-scan-process-title">AI Relation Analysis</div>
+          <div class="wpil-dashboard-basic-scan-process-status" id="wpil-dashboard-basic-scan-relation-status">Waiting to start</div>
+        </div>
+        <div class="wpil-dashboard-basic-scan-bar"><span id="wpil-dashboard-basic-scan-relation-fill"></span></div>
+        <div class="wpil-dashboard-basic-scan-meta">
+          <span id="wpil-dashboard-basic-scan-relation-text">0 processed</span>
+          <span id="wpil-dashboard-basic-scan-relation-percent">0%</span>
+        </div>
+      </div>
+      <div class="wpil-dashboard-basic-scan-process is-hidden" data-wpil-dashboard-basic-scan-process="keyword">
+        <div class="wpil-dashboard-basic-scan-process-head">
+          <div class="wpil-dashboard-basic-scan-process-title">AI Keyword Processing</div>
+          <div class="wpil-dashboard-basic-scan-process-status" id="wpil-dashboard-basic-scan-keyword-status">Waiting to start</div>
+        </div>
+        <div class="wpil-dashboard-basic-scan-bar"><span id="wpil-dashboard-basic-scan-keyword-fill"></span></div>
+        <div class="wpil-dashboard-basic-scan-meta">
+          <span id="wpil-dashboard-basic-scan-keyword-text">0 processed</span>
+          <span id="wpil-dashboard-basic-scan-keyword-percent">0%</span>
+        </div>
+      </div>
+    </div>
+    <div class="wpil-dashboard-basic-scan-stats">
+      <div class="wpil-dashboard-basic-scan-stat">
+        <span class="wpil-dashboard-basic-scan-stat-label">Estimated Credits</span>
+        <span class="wpil-dashboard-basic-scan-stat-value" id="wpil-dashboard-basic-scan-credits"><?php echo esc_html(number_format(!empty($dashboard_basic_scan['estimated_credit_cost']) ? (int) $dashboard_basic_scan['estimated_credit_cost'] : 0)); ?></span>
+      </div>
+    </div>
+    <div class="wpil-dashboard-basic-scan-foot">
+      <small>When the scan is done, Link Whisper AI will have better context for future suggestions.</small>
+      <div class="wpil-dashboard-basic-scan-actions">
+        <button class="button wpil-dashboard-basic-scan-refresh is-hidden" type="button" data-wpil-dashboard-basic-scan-refresh="1">Refresh Dashboard</button>
+        <button class="wpil-dashboard-basic-scan-primary" type="button" data-wpil-dashboard-basic-scan-begin="1">Begin Scan</button>
+        <button class="button wpil-dashboard-basic-scan-cancel is-hidden" type="button" data-wpil-dashboard-basic-scan-cancel="1">Cancel Scan</button>
+        <button class="button" type="button" data-wpil-dashboard-basic-scan-close="1">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+<?php } ?>
 <script>
   window.WPIL_AI_CREDITS = <?php echo (int) Wpil_AI::get_available_ai_credits(); ?>;
   window.WPIL_AI_FIX_NONCE = '<?php echo esc_js(wp_create_nonce('wpil_ai_fix_nonce')); ?>';
-  window.WPIL_RUNNING_FIX_JOBS = <?php echo wp_json_encode($show_ai_fix_controls ? $running_fix_jobs : (object) []); ?>;
-  window.WPIL_AI_FIX_SPECIAL_OPTIONS = <?php echo wp_json_encode($show_ai_fix_controls ? Wpil_Settings::get_ai_fix_special_options() : (object) []); ?>;
+  window.WPIL_CSV_LINK_MAP_NONCE = '<?php echo esc_js(wp_create_nonce('wpil_csv_link_map_nonce')); ?>';
+  window.WPIL_RUNNING_FIX_JOBS = <?php echo wp_json_encode($running_fix_jobs); ?>;
+  window.WPIL_AI_FIX_SPECIAL_OPTIONS = <?php echo wp_json_encode(Wpil_Settings::get_ai_fix_special_options()); ?>;
+  window.WPIL_DASHBOARD_BASIC_SCAN = <?php echo wp_json_encode($dashboard_basic_scan); ?>;
+  window.WPIL_DASHBOARD_BASIC_SCAN_GATE_ACTIVE = <?php echo !empty($dashboard_basic_scan_gate_active) ? 'true': 'false'; ?>;
+  window.WPIL_DASHBOARD_BASIC_SCAN_NONCE = '<?php echo esc_js($dashboard_basic_scan_nonce); ?>';
   window.WPIL_LINK_DELAY_WAITLIST_NONCE = '<?php echo esc_js($waitlist_signup_nonce); ?>';
   window.WPIL_DASHBOARD_EXPERIENCE_FEEDBACK_NONCE = '<?php echo esc_js($experience_feedback_nonce); ?>';
-  window.WPIL_DASHBOARD_PROCESS_KEYS = <?php echo $show_ai_fix_controls ? wp_json_encode(array(
-    'orphaned_posts' => md5('orphan-post-search'),
-    'link_coverage' => md5('link-coverage-search'),
-    'link_quality' => md5('link-quality-search'),
-    'broken_links' => md5('broken-link-search'),
-    'external_focus' => md5('external-focus-search')
-  )) : wp_json_encode((object) []); ?>;
+  window.WPIL_CUSTOM_LINKING_STATUS = <?php echo wp_json_encode($custom_linking_initial_status); ?>;
+  window.WPIL_CUSTOM_LINKING_TEMPLATE_ROWS = <?php echo wp_json_encode(Wpil_CsvLinkMap::get_example_template_rows()); ?>;
+  window.WPIL_CUSTOM_LINKING_TEMPLATE_FILENAME = <?php echo wp_json_encode(Wpil_CsvLinkMap::get_example_template_filename()); ?>;
+  window.WPIL_DASHBOARD_PROCESS_KEYS = {
+    orphaned_posts: '<?php echo esc_js(md5('orphan-post-search')); ?>',
+    link_coverage: '<?php echo esc_js(md5('link-coverage-search')); ?>',
+    link_quality: '<?php echo esc_js(md5('link-quality-search')); ?>',
+    broken_links: '<?php echo esc_js(md5('broken-link-search')); ?>',
+    external_focus: '<?php echo esc_js(md5('external-focus-search')); ?>',
+    custom_link_map: '<?php echo esc_js(md5('custom-link-map')); ?>'
+  };
 </script>
 <script>
 (function() {
   let lastFixContext = null;
   let currentProgressContext = null;
+  let pendingCompletedCustomPlanDismiss = false;
+  let isClearingCompletedCustomPlan = false;
+  let fixPreviewTimer = null;
+  let fixPreviewRequestId = 0;
   const fixButtonWaiters = {};
   const lastReviewCountPollByKey = {};
 
@@ -4128,6 +4959,451 @@ document.addEventListener('click', function(event) {
 
   function wpilFormatInt(n) {
     return wpilParseInt(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+
+  let dashboardBasicScanState = (window.WPIL_DASHBOARD_BASIC_SCAN && typeof window.WPIL_DASHBOARD_BASIC_SCAN === 'object')
+    ? window.WPIL_DASHBOARD_BASIC_SCAN
+    : {};
+  let dashboardBasicScanTimer = 0;
+  let dashboardBasicScanRetry = 0;
+  let dashboardBasicScanCompleteCount = 0;
+  let dashboardBasicScanRateLimitCount = 0;
+  let dashboardBasicScanLastStats = {};
+  let dashboardBasicScanPollScheduled = false;
+  let dashboardBasicScanCancelled = false;
+  let pendingFixAfterBasicScan = null;
+
+  function normalizeDashboardBasicScanState(state){
+    const normalized = state && typeof state === 'object' ? state : {};
+    return {
+      ai_configured: !!normalized.ai_configured,
+      basic_scan_complete: !!normalized.basic_scan_complete,
+      basic_scan_running: !!normalized.basic_scan_running,
+      basic_scan_threshold: Math.max(1, wpilParseInt(normalized.basic_scan_threshold || 90)),
+      current_process: normalized.current_process || 'Preparing basic AI scan...',
+      relation_percent: Math.max(0, Math.min(100, wpilParseInt(normalized.relation_percent))),
+      relation_processed: Math.max(0, wpilParseInt(normalized.relation_processed)),
+      relation_embedding_percent: Math.max(0, Math.min(100, wpilParseInt(normalized.relation_embedding_percent))),
+      relation_embedding_processed: Math.max(0, wpilParseInt(normalized.relation_embedding_processed)),
+      relation_calculation_percent: Math.max(0, Math.min(100, wpilParseInt(normalized.relation_calculation_percent))),
+      relation_calculation_processed: Math.max(0, wpilParseInt(normalized.relation_calculation_processed)),
+      relation_total: Math.max(0, wpilParseInt(normalized.relation_total)),
+      relation_complete: !!normalized.relation_complete,
+      keyword_enabled: !!normalized.keyword_enabled,
+      keyword_percent: Math.max(0, Math.min(100, wpilParseInt(normalized.keyword_percent))),
+      keyword_processed: Math.max(0, wpilParseInt(normalized.keyword_processed)),
+      keyword_detecting_percent: Math.max(0, Math.min(100, wpilParseInt(normalized.keyword_detecting_percent))),
+      keyword_detecting_processed: Math.max(0, wpilParseInt(normalized.keyword_detecting_processed)),
+      keyword_assigning_percent: Math.max(0, Math.min(100, wpilParseInt(normalized.keyword_assigning_percent))),
+      keyword_assigning_processed: Math.max(0, wpilParseInt(normalized.keyword_assigning_processed)),
+      keyword_total: Math.max(0, wpilParseInt(normalized.keyword_total)),
+      keyword_complete: !!normalized.keyword_complete,
+      estimated_cost: (normalized.estimated_cost !== undefined) ? normalized.estimated_cost : 0,
+      estimated_credit_cost: (normalized.estimated_credit_cost !== undefined) ? normalized.estimated_credit_cost : 0
+    };
+  }
+
+  function getDashboardBasicScanOverallPercent(state){
+    const scan = normalizeDashboardBasicScanState(state);
+    const threshold = Math.max(1, scan.basic_scan_threshold);
+    const relationPercent = Math.min(100, Math.round((scan.relation_percent / threshold) * 100));
+
+    if(!scan.keyword_enabled){
+      return relationPercent;
+    }
+
+    return Math.max(0, Math.min(100, Math.round((relationPercent + scan.keyword_percent) / 2)));
+  }
+
+  function openDashboardBasicScanModal(){
+    const modal = document.getElementById('wpil-dashboard-basic-scan-modal');
+    if(!modal){
+      return;
+    }
+
+    updateDashboardBasicScanModal(dashboardBasicScanState);
+    modal.classList.add('is-open');
+    modal.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeDashboardBasicScanModal(){
+    const modal = document.getElementById('wpil-dashboard-basic-scan-modal');
+    if(!modal){
+      return;
+    }
+
+    modal.classList.remove('is-open');
+    modal.setAttribute('aria-hidden', 'true');
+  }
+
+  function updateDashboardBasicScanModal(state){
+    const scan = normalizeDashboardBasicScanState(state);
+    const overallPercent = getDashboardBasicScanOverallPercent(scan);
+    const relationPhase = getDashboardBasicScanRelationPhase(scan);
+    const keywordPhase = getDashboardBasicScanKeywordPhase(scan);
+    const keywordWrap = document.querySelector('[data-wpil-dashboard-basic-scan-process="keyword"]');
+    const processTextEl = document.getElementById('wpil-dashboard-basic-scan-process-text');
+    const overallFillEl = document.getElementById('wpil-dashboard-basic-scan-overall-fill');
+    const overallPercentEl = document.getElementById('wpil-dashboard-basic-scan-overall-percent');
+    const relationFillEl = document.getElementById('wpil-dashboard-basic-scan-relation-fill');
+    const relationTextEl = document.getElementById('wpil-dashboard-basic-scan-relation-text');
+    const relationPercentEl = document.getElementById('wpil-dashboard-basic-scan-relation-percent');
+    const relationStatusEl = document.getElementById('wpil-dashboard-basic-scan-relation-status');
+    const keywordFillEl = document.getElementById('wpil-dashboard-basic-scan-keyword-fill');
+    const keywordTextEl = document.getElementById('wpil-dashboard-basic-scan-keyword-text');
+    const keywordPercentEl = document.getElementById('wpil-dashboard-basic-scan-keyword-percent');
+    const keywordStatusEl = document.getElementById('wpil-dashboard-basic-scan-keyword-status');
+    const creditEl = document.getElementById('wpil-dashboard-basic-scan-credits');
+    const beginBtn = document.querySelector('[data-wpil-dashboard-basic-scan-begin]');
+
+    if(processTextEl){
+      processTextEl.textContent = scan.current_process || relationPhase.status;
+      processTextEl.classList.toggle('is-hidden', !scan.basic_scan_running);
+    }
+    if(overallFillEl){ overallFillEl.style.width = overallPercent + '%'; }
+    if(overallPercentEl){ overallPercentEl.textContent = overallPercent + '%'; }
+    if(relationFillEl){ relationFillEl.style.width = scan.relation_percent + '%'; }
+    if(relationTextEl){ relationTextEl.textContent = relationPhase.text; }
+    if(relationPercentEl){ relationPercentEl.textContent = scan.relation_percent + '%'; }
+    if(relationStatusEl){
+      relationStatusEl.textContent = relationPhase.status;
+    }
+
+    if(keywordWrap){
+      keywordWrap.classList.toggle('is-hidden', !scan.keyword_enabled);
+    }
+    if(keywordFillEl){ keywordFillEl.style.width = scan.keyword_percent + '%'; }
+    if(keywordTextEl){ keywordTextEl.textContent = keywordPhase.text; }
+    if(keywordPercentEl){ keywordPercentEl.textContent = scan.keyword_percent + '%'; }
+    if(keywordStatusEl){
+      keywordStatusEl.textContent = keywordPhase.status;
+    }
+
+    if(creditEl){
+      creditEl.textContent = wpilFormatInt(scan.estimated_credit_cost || 0);
+    }
+    if(beginBtn){
+      beginBtn.classList.toggle('is-hidden', scan.basic_scan_running || scan.basic_scan_complete);
+    }
+    if(window.jQuery){
+      jQuery('[data-wpil-dashboard-basic-scan-cancel]').each(function(){
+        jQuery(this).toggleClass('is-hidden', !scan.basic_scan_running).prop('disabled', !scan.basic_scan_running);
+      });
+    }
+  }
+
+  function getDashboardBasicScanRelationPhase(state){
+    const scan = normalizeDashboardBasicScanState(state);
+    const total = wpilFormatInt(scan.relation_total);
+
+    if(scan.basic_scan_complete || scan.relation_complete){
+      return {
+        status: scan.basic_scan_complete ? 'Complete' : 'Threshold reached',
+        text: wpilFormatInt(scan.relation_calculation_processed) + ' of ' + total + ' relation scores calculated'
+      };
+    }
+
+    if(scan.relation_embedding_percent < 100){
+      return {
+        status: scan.basic_scan_running ? 'Generating embeddings...' : 'Needs scan',
+        text: wpilFormatInt(scan.relation_embedding_processed) + ' of ' + total + ' embeddings generated'
+      };
+    }
+
+    return {
+      status: scan.basic_scan_running ? 'Calculating relation scores...' : 'Ready to calculate',
+      text: wpilFormatInt(scan.relation_calculation_processed) + ' of ' + total + ' relation scores calculated'
+    };
+  }
+
+  function getDashboardBasicScanKeywordPhase(state){
+    const scan = normalizeDashboardBasicScanState(state);
+    const total = wpilFormatInt(scan.keyword_total);
+
+    if(!scan.keyword_enabled){
+      return {
+        status: 'Disabled',
+        text: 'Keyword processing is not enabled'
+      };
+    }
+
+    if(scan.keyword_complete){
+      return {
+        status: 'Ready',
+        text: wpilFormatInt(scan.keyword_assigning_processed) + ' of ' + total + ' keyword sets assigned'
+      };
+    }
+
+    if(scan.keyword_detecting_percent < 100){
+      return {
+        status: scan.basic_scan_running ? 'Detecting keywords...' : 'Needs scan',
+        text: wpilFormatInt(scan.keyword_detecting_processed) + ' of ' + total + ' keyword sets detected'
+      };
+    }
+
+    return {
+      status: scan.basic_scan_running ? 'Assigning keywords...' : 'Ready to assign',
+      text: wpilFormatInt(scan.keyword_assigning_processed) + ' of ' + total + ' keyword sets assigned'
+    };
+  }
+
+  function syncDashboardBasicScanButtons(){
+    document.querySelectorAll('[data-wpil-basic-scan]').forEach(function(btn){
+      const scan = normalizeDashboardBasicScanState(dashboardBasicScanState);
+      const mode = scan.basic_scan_running ? 'review' : 'start';
+      btn.setAttribute('data-wpil-basic-scan', mode);
+      btn.textContent = (mode === 'review') ? 'Review Progress' : 'Perform Basic AI Scanning';
+    });
+
+    if(window.jQuery){
+      const scan = normalizeDashboardBasicScanState(dashboardBasicScanState);
+      jQuery('[data-wpil-dashboard-basic-scan-cancel]').each(function(){
+        jQuery(this).toggleClass('is-hidden', !scan.basic_scan_running).prop('disabled', !scan.basic_scan_running);
+      });
+    }
+  }
+
+  function updateDashboardBasicScanState(scanState){
+    dashboardBasicScanState = normalizeDashboardBasicScanState(Object.assign({}, dashboardBasicScanState, scanState || {}));
+    window.WPIL_DASHBOARD_BASIC_SCAN = dashboardBasicScanState;
+    updateDashboardBasicScanModal(dashboardBasicScanState);
+    syncDashboardBasicScanButtons();
+  }
+
+  function maybeStartPendingFixAfterBasicScan(){
+    if(!pendingFixAfterBasicScan){
+      return;
+    }
+
+    const pendingCtx = pendingFixAfterBasicScan;
+    pendingFixAfterBasicScan = null;
+    startFixProcess(pendingCtx);
+  }
+
+  function showDashboardBasicScanMessage(title, text, type, reloadAfter){
+    const notice = document.getElementById('wpil-dashboard-basic-scan-notice');
+    const refresh = document.querySelector('[data-wpil-dashboard-basic-scan-refresh]');
+    if(!notice){
+      return;
+    }
+
+    notice.classList.remove('is-hidden', 'is-error', 'is-success');
+    if(type === 'error'){
+      notice.classList.add('is-error');
+    }else if(type === 'success'){
+      notice.classList.add('is-success');
+    }
+
+    notice.innerHTML = '<strong>' + (title || 'Status') + '</strong><br>' + (text || '');
+    if(refresh){
+      refresh.classList.toggle('is-hidden', !reloadAfter);
+    }
+    openDashboardBasicScanModal();
+  }
+
+  function clearDashboardBasicScanMessage(){
+    const notice = document.getElementById('wpil-dashboard-basic-scan-notice');
+    const refresh = document.querySelector('[data-wpil-dashboard-basic-scan-refresh]');
+    if(notice){
+      notice.classList.add('is-hidden');
+      notice.classList.remove('is-error', 'is-success');
+      notice.innerHTML = '';
+    }
+    if(refresh){
+      refresh.classList.add('is-hidden');
+    }
+  }
+
+  function queueDashboardBasicScanPoll(button, time, lastPassUnchanged){
+    if(dashboardBasicScanPollScheduled){
+      return;
+    }
+
+    dashboardBasicScanPollScheduled = true;
+    setTimeout(function(){
+      dashboardBasicScanPollScheduled = false;
+      pollDashboardBasicScan(button, time, lastPassUnchanged);
+    }, 50);
+  }
+
+  function pollDashboardBasicScan(button, time, lastPassUnchanged){
+    if(!window.jQuery || typeof ajaxurl === 'undefined'){
+      return;
+    }
+
+    if(dashboardBasicScanCancelled){
+      return;
+    }
+
+    dashboardBasicScanTimer = Math.floor(Date.now());
+    const nonce = (button && button.dataset && button.dataset.nonce) ? button.dataset.nonce : (window.WPIL_DASHBOARD_BASIC_SCAN_NONCE || '');
+
+    jQuery.ajax({
+      type: 'POST',
+      url: ajaxurl,
+      data: {
+        action: 'wpil_live_download_ai_data',
+        start_time: time || 0,
+        last_pass_unchanged: lastPassUnchanged ? '1' : '0',
+        dashboard_basic_scan: 1,
+        nonce: nonce
+      },
+      error: function(jqXHR, textStatus, errorThrown){
+        dashboardBasicScanRetry += 1;
+
+        if(dashboardBasicScanRetry < 5){
+          setTimeout(function(){
+            pollDashboardBasicScan(button, time || 0, lastPassUnchanged);
+          }, 5000);
+          return;
+        }
+
+        pendingFixAfterBasicScan = null;
+        updateDashboardBasicScanState({basic_scan_running: false});
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = '<strong>' + (textStatus || 'Error') + '</strong><br>' + (errorThrown || '');
+        if(jqXHR && jqXHR.responseText){
+          wrapper.innerHTML += jqXHR.responseText;
+        }
+        showDashboardBasicScanMessage('Error', wrapper.innerHTML, 'error', false);
+      },
+      success: function(response){
+        dashboardBasicScanRetry = 0;
+
+        if(response && response.error){
+          pendingFixAfterBasicScan = null;
+          updateDashboardBasicScanState({basic_scan_running: false});
+          showDashboardBasicScanMessage(response.error.title || 'Error', response.error.text || 'The scan ran into an error.', 'error', false);
+          return;
+        }
+
+        if(response && response.cancelled){
+          dashboardBasicScanCancelled = true;
+          pendingFixAfterBasicScan = null;
+          const cancelledPayload = response.cancelled.dashboard_basic_scan || {};
+          cancelledPayload.basic_scan_running = false;
+          updateDashboardBasicScanState(cancelledPayload);
+          showDashboardBasicScanMessage(response.cancelled.title || 'Scan Cancelled', response.cancelled.text || 'The scan was cancelled.', 'info', false);
+          return;
+        }
+
+        const data = response && response.continue ? response.continue : (response && response.success ? response.success : null);
+        const payload = (data && data.dashboard_basic_scan) ? data.dashboard_basic_scan : {};
+        if(data){
+          payload.current_process = data.current_process || payload.current_process;
+          payload.estimated_cost = data.estimated_cost;
+          payload.estimated_credit_cost = data.estimated_credit_cost;
+          payload.basic_scan_running = !!response.continue;
+          updateDashboardBasicScanState(payload);
+        }
+
+        if(response && response.continue){
+          let changed = false;
+          if(response.continue.data_total_processed){
+            if(Object.keys(dashboardBasicScanLastStats).length < 1){
+              changed = true;
+            }else{
+              const keys = Object.keys(response.continue.data_total_processed);
+              for(let i = 0; i < keys.length; i++){
+                const key = keys[i];
+                if(parseInt(dashboardBasicScanLastStats[key], 10) !== parseInt(response.continue.data_total_processed[key], 10)){
+                  changed = true;
+                  break;
+                }
+              }
+            }
+
+            if(changed){
+              dashboardBasicScanCompleteCount = 0;
+            }else if(dashboardBasicScanCompleteCount >= 3 && response.continue.completion_messages && response.continue.completion_messages.info){
+              updateDashboardBasicScanState({basic_scan_running: false});
+              showDashboardBasicScanMessage(response.continue.completion_messages.info.title, response.continue.completion_messages.info.text, 'info', true);
+              return;
+            }else if(response.continue.post_saving && response.continue.processed_embeddings < 1){
+              dashboardBasicScanCompleteCount++;
+            }
+
+            dashboardBasicScanLastStats = response.continue.data_total_processed;
+          }
+
+          let offset = (!changed || response.continue.oai_completed) ? 0 : ((dashboardBasicScanTimer && (65000 - (Math.floor(Date.now()) - dashboardBasicScanTimer)) > 0) ? (65000 - (Math.floor(Date.now()) - dashboardBasicScanTimer) + 150) : 0);
+          if(response.continue.is_rate_limited){
+            dashboardBasicScanRateLimitCount++;
+            if(dashboardBasicScanRateLimitCount > 10 && response.continue.completion_messages && response.continue.completion_messages.error){
+              updateDashboardBasicScanState({basic_scan_running: false});
+              showDashboardBasicScanMessage(response.continue.completion_messages.error.title, response.continue.completion_messages.error.text, 'error', true);
+              return;
+            }
+            offset += 60000;
+          }else{
+            dashboardBasicScanRateLimitCount = 0;
+          }
+
+          setTimeout(function(){
+            pollDashboardBasicScan(button, response.continue.start_time, !changed);
+          }, offset);
+          return;
+        }
+
+        if(response && response.success){
+          updateDashboardBasicScanState({basic_scan_running: false, basic_scan_complete: true});
+          showDashboardBasicScanMessage(response.success.title || 'Processing Complete!', response.success.text || 'All available site data has been processed!', 'success', true);
+          maybeStartPendingFixAfterBasicScan();
+        }
+      }
+    });
+  }
+
+  function isDashboardBasicScanBlockingFixes(){
+    const scan = normalizeDashboardBasicScanState(dashboardBasicScanState);
+    return !!scan.basic_scan_running;
+  }
+
+  function holdFixUntilBasicScanFinishes(ctx){
+    if(!ctx || !ctx.type){
+      return;
+    }
+
+    pendingFixAfterBasicScan = Object.assign({}, ctx);
+    showDashboardBasicScanMessage('Basic Scan Running', 'This fix will wait until the basic AI scan finishes.', 'info', false);
+    const btn = document.querySelector('[data-wpil-basic-scan]');
+    if(btn){
+      queueDashboardBasicScanPoll(btn, 0, false);
+    }
+  }
+
+  function cancelDashboardBasicScan(){
+    if(!window.jQuery || typeof ajaxurl === 'undefined'){
+      return;
+    }
+
+    dashboardBasicScanCancelled = true;
+    pendingFixAfterBasicScan = null;
+    updateDashboardBasicScanState({
+      basic_scan_running: false,
+      current_process: 'Cancelling basic AI scan...'
+    });
+
+    jQuery.ajax({
+      type: 'POST',
+      url: ajaxurl,
+      data: {
+        action: 'wpil_cancel_dashboard_basic_scan',
+        nonce: window.WPIL_DASHBOARD_BASIC_SCAN_NONCE || ''
+      },
+      success: function(response){
+        const data = response && response.success ? response.success : null;
+        if(data && data.dashboard_basic_scan){
+          data.dashboard_basic_scan.basic_scan_running = false;
+          updateDashboardBasicScanState(data.dashboard_basic_scan);
+        }
+
+        showDashboardBasicScanMessage((data && data.title) || 'Scan Cancelled', (data && data.text) || 'The basic AI scan has been cancelled.', 'info', false);
+      },
+      error: function(){
+        showDashboardBasicScanMessage('Cancel Failed', 'Link Whisper could not cancel the scan. Please refresh the Dashboard and try again.', 'error', false);
+      }
+    });
   }
 
   function isSameFixContext(a, b){
@@ -4222,6 +5498,755 @@ document.addEventListener('click', function(event) {
     modal.querySelectorAll(selector).forEach(function(el) {
       el.textContent = value;
     });
+  }
+
+  const defaultCustomLinkingStatus = (window.WPIL_CUSTOM_LINKING_STATUS && typeof window.WPIL_CUSTOM_LINKING_STATUS === 'object')
+    ? Object.assign({}, window.WPIL_CUSTOM_LINKING_STATUS)
+    : {
+        has_plan: false,
+        total_rows: 0,
+        inbound_targets: 0,
+        inbound_specified: 0,
+        inbound_auto: 0,
+        outbound_sources: 0,
+        outbound_specified: 0,
+        outbound_auto: 0,
+        source_posts_exact: 0,
+        target_posts_exact: 0,
+        potential_links_min: 0,
+        potential_links_max: 0,
+        process_key: '',
+        credit_estimate: 0,
+        manage_url: '',
+        template_filename: 'link-whisper-csv-template.csv',
+        parse_status: 'idle',
+        parse_phase: 'idle',
+        parse_progress: 0,
+        parse_message: '',
+        preview_ready: false,
+        parse_errors: [],
+        parse_error_total: 0
+      };
+  let customLinkingStatusCache = Object.assign({}, defaultCustomLinkingStatus);
+  let customLinkingBusyState = '';
+  let customLinkingParsePollTimer = null;
+
+  function getCustomLinkingModal(){
+    return document.getElementById('wpil-custom-linking-modal');
+  }
+
+  function resetCustomLinkingStatusCache(){
+    customLinkingStatusCache = Object.assign({}, defaultCustomLinkingStatus, {
+      has_plan: false,
+      total_rows: 0,
+      inbound_targets: 0,
+      inbound_specified: 0,
+      inbound_auto: 0,
+      outbound_sources: 0,
+      outbound_specified: 0,
+      outbound_auto: 0,
+      source_posts_exact: 0,
+      target_posts_exact: 0,
+      potential_links_min: 0,
+      potential_links_max: 0,
+      credit_estimate: 0,
+      parse_status: 'idle',
+      parse_phase: 'idle',
+      parse_progress: 0,
+      parse_message: '',
+      preview_ready: false,
+      parse_errors: [],
+      parse_error_total: 0
+    });
+    window.WPIL_CUSTOM_LINKING_STATUS = customLinkingStatusCache;
+    syncCustomLinkingButtonEstimate(0);
+  }
+
+  function syncCustomLinkingButtonEstimate(estimate){
+    const normalized = Math.max(0, wpilParseInt(estimate));
+    document.querySelectorAll('[data-wpil-fix-type="custom_link_map"]').forEach(function(btn){
+      btn.dataset.wpilFixEstimate = String(normalized);
+    });
+  }
+
+  function isCustomLinkingParseActive(status){
+    const data = status || customLinkingStatusCache || {};
+    return data.parse_status === 'running';
+  }
+
+  function stopCustomLinkingParsePolling(){
+    if(customLinkingParsePollTimer){
+      window.clearTimeout(customLinkingParsePollTimer);
+      customLinkingParsePollTimer = null;
+    }
+  }
+
+  function syncCustomLinkingUploadState(){
+    const modal = getCustomLinkingModal();
+    if(!modal){ return; }
+
+    const uploadButton = modal.querySelector('[data-wpil-custom-linking-upload]');
+    const fileInput = modal.querySelector('[data-wpil-custom-linking-file]');
+    if(!uploadButton || !fileInput){ return; }
+
+    const hasFile = !!(fileInput.files && fileInput.files[0]);
+    const isBusy = !!customLinkingBusyState;
+    const parseActive = isCustomLinkingParseActive();
+    uploadButton.disabled = isBusy || parseActive || !hasFile;
+  }
+
+  function setCustomLinkingBusyState(state){
+    customLinkingBusyState = state || '';
+    const modal = getCustomLinkingModal();
+    if(!modal){ return; }
+
+    const isBusy = !!customLinkingBusyState;
+    const parseActive = isCustomLinkingParseActive();
+    const uploadButton = modal.querySelector('[data-wpil-custom-linking-upload]');
+    const clearButton = modal.querySelector('[data-wpil-custom-linking-clear]');
+    const startButton = modal.querySelector('[data-wpil-custom-linking-start]');
+    const fileInput = modal.querySelector('[data-wpil-custom-linking-file]');
+
+    if(uploadButton){
+      uploadButton.textContent = (state === 'uploading')
+        ? 'Uploading...'
+        : 'Upload and Process';
+    }
+
+    if(clearButton){
+      clearButton.disabled = isBusy || (!customLinkingStatusCache || (!customLinkingStatusCache.has_plan && !parseActive));
+      if(state === 'clearing'){
+        clearButton.textContent = 'Clearing...';
+      }else{
+        clearButton.textContent = 'Clear Plan';
+      }
+    }
+
+    if(fileInput){
+      fileInput.disabled = isBusy || parseActive;
+    }
+
+    if(startButton){
+      startButton.disabled = isBusy || startButton.dataset.wpilDisabledByStatus === '1';
+      if(state === 'starting'){
+        startButton.textContent = 'Starting...';
+      }else{
+        startButton.textContent = 'Start Custom AI Linking';
+      }
+    }
+
+    syncCustomLinkingUploadState();
+  }
+
+  function showCustomLinkingFeedback(message, type){
+    const modal = getCustomLinkingModal();
+    if(!modal){ return; }
+
+    const feedback = modal.querySelector('[data-wpil-custom-linking-feedback]');
+    if(!feedback){ return; }
+
+    const normalizedType = (type === 'success') ? 'is-success' : 'is-error';
+    feedback.className = 'wpil-custom-feedback ' + normalizedType;
+    feedback.textContent = message || '';
+  }
+
+  function clearCustomLinkingFeedback(){
+    const modal = getCustomLinkingModal();
+    if(!modal){ return; }
+
+    const feedback = modal.querySelector('[data-wpil-custom-linking-feedback]');
+    if(!feedback){ return; }
+
+    feedback.className = 'wpil-custom-feedback';
+    feedback.textContent = '';
+  }
+
+  function syncCustomLinkingModeInputs(mode){
+    const normalized = (mode === 'auto') ? 'auto' : 'review';
+    const modal = getCustomLinkingModal();
+    if(!modal){ return; }
+
+    modal.querySelectorAll('input[name="wpil-custom-ai-linking-mode"]').forEach(function(input){
+      input.checked = (input.value === normalized);
+    });
+  }
+
+  function escapeHtml(text){
+    return String(text || '').replace(/[&<>"']/g, function(char){
+      switch(char){
+        case '&': return '&amp;';
+        case '<': return '&lt;';
+        case '>': return '&gt;';
+        case '"': return '&quot;';
+        case '\'': return '&#039;';
+        default: return char;
+      }
+    });
+  }
+
+  function formatCustomPotentialLinksRange(minLinks, maxLinks){
+    const normalizedMin = Math.max(0, wpilParseInt(minLinks));
+    const normalizedMax = Math.max(0, wpilParseInt(maxLinks));
+    if(normalizedMin === 0 && normalizedMax === 0){
+      return '0';
+    }
+
+    return wpilFormatInt(normalizedMin) + '-' + wpilFormatInt(normalizedMax);
+  }
+
+  function setFixModalCreditState(ctx, estimate, loading){
+    const modal = document.getElementById('wpil-fix-modal');
+    if(!modal){ return; }
+
+    const normalizedEstimate = Math.max(0, wpilParseInt(estimate));
+    const balance = Math.max(0, wpilParseInt(ctx && ctx.balance !== undefined ? ctx.balance : window.WPIL_AI_CREDITS));
+    const enoughCredits = !loading && normalizedEstimate > 0 && balance >= normalizedEstimate;
+    const beginButton = document.getElementById('wpil-fix-begin');
+    const statusBadge = modal.querySelector('[data-role="wpil-fix-status"]');
+    const bar = modal.querySelector('[data-role="wpil-fix-bar"]');
+    const warning = document.getElementById('wpil-fix-warning');
+    const actionsEnough = document.getElementById('wpil-fix-actions-enough');
+    const actionsShort = document.getElementById('wpil-fix-actions-short');
+    const creditFoot = modal.querySelector('.wpil-fix-credit-foot');
+
+    setAllInFixModal('[data-wpil-fix-estimate]', loading ? '...' : wpilFormatInt(normalizedEstimate));
+    setAllInFixModal('[data-wpil-fix-balance]', wpilFormatInt(balance));
+
+    if(statusBadge){
+      statusBadge.textContent = loading ? 'Generating Plan' : (normalizedEstimate < 1 ? 'No eligible links' : (enoughCredits ? 'Ready' : 'Not enough credits'));
+      statusBadge.classList.toggle('is-bad', !loading && normalizedEstimate > 0 && !enoughCredits);
+    }
+
+    if(bar){
+      const pct = loading ? 0 : ((normalizedEstimate > 0) ? Math.min(100, Math.round((balance / normalizedEstimate) * 100)) : 100);
+      bar.style.width = pct + '%';
+    }
+
+    if(creditFoot){
+      creditFoot.textContent = loading
+        ? 'Estimating credit cost...'
+        : (normalizedEstimate < 1 ? 'Unfortunately, we did not find eligible links for this fix.' : 'The estimated cost for this fix is ' + wpilFormatInt(normalizedEstimate) + ' credits.');
+    }
+
+    if(warning){ warning.classList.toggle('hidden', loading || normalizedEstimate < 1 || enoughCredits); }
+    if(actionsEnough){ actionsEnough.classList.toggle('hidden', !loading && !enoughCredits); }
+    if(actionsShort){ actionsShort.classList.toggle('hidden', loading || normalizedEstimate < 1 || enoughCredits); }
+    if(beginButton){
+      beginButton.disabled = !!loading || (!loading && !enoughCredits);
+      beginButton.textContent = loading ? 'Generating Plan...' : 'Fix With AI';
+    }
+
+    if(!loading && !enoughCredits){
+      const shortfall = Math.max(0, normalizedEstimate - balance);
+      const padded = padShortfall(shortfall);
+      setAllInFixModal('[data-wpil-fix-shortfall]', wpilFormatInt(padded));
+
+      const buyBtn = document.getElementById('wpil-fix-buy');
+      if(buyBtn){
+        buyBtn.dataset.credits = padded;
+        buyBtn.dataset.quantity = padded;
+      }
+    }
+  }
+
+  function renderFixPreviewMapStatus(ctx, data, loading){
+    const modal = document.getElementById('wpil-fix-modal');
+    if(!modal){ return; }
+
+    const status = data || {};
+    const ready = !loading && !!status.preview_ready;
+    const progress = Math.max(0, Math.min(100, wpilParseInt(status.progress)));
+    const progressWrap = modal.querySelector('[data-wpil-fix-preview-progress]');
+    const progressFill = modal.querySelector('[data-wpil-fix-preview-progress-fill]');
+    const progressPercent = modal.querySelector('[data-wpil-fix-preview-progress-percent]');
+    const progressCopy = modal.querySelector('[data-wpil-fix-preview-copy]');
+    const statusBadge = modal.querySelector('[data-wpil-fix-preview-status]');
+    const refreshButton = modal.querySelector('[data-wpil-fix-refresh-map]');
+    const statValues = {
+      source_posts_exact: ready ? wpilFormatInt(status.source_posts_exact) : '...',
+      target_posts_exact: ready ? wpilFormatInt(status.target_posts_exact) : '...',
+      potential_links_range: ready ? formatCustomPotentialLinksRange(status.potential_links_min, status.potential_links_max) : '...'
+    };
+
+    Object.keys(statValues).forEach(function(key){
+      const el = modal.querySelector('[data-wpil-fix-preview-stat="' + key + '"]');
+      if(el){
+        el.textContent = statValues[key];
+      }
+    });
+
+    if(statusBadge){
+      statusBadge.textContent = ready ? 'Ready' : 'Generating';
+      statusBadge.classList.toggle('is-ready', ready);
+    }
+    if(refreshButton){
+      refreshButton.disabled = loading;
+    }
+
+    if(progressWrap){
+      progressWrap.classList.toggle('is-visible', !ready);
+    }
+    if(progressFill){
+      progressFill.style.width = progress + '%';
+    }
+    if(progressPercent){
+      progressPercent.textContent = progress + '%';
+    }
+    if(progressCopy){
+      progressCopy.textContent = status.message || 'Link Whisper is building the sitemap used for this estimate.';
+    }
+
+    setFixModalCreditState(ctx, status.credit_estimate || 0, !ready);
+  }
+
+  function setFixSpecialOptionsDirty(dirty){
+    const modal = document.getElementById('wpil-fix-modal');
+    if(!modal){
+      return;
+    }
+
+    const button = modal.querySelector('[data-wpil-fix-update-plan]');
+    if(!button){
+      return;
+    }
+
+    button.disabled = !dirty;
+  }
+
+  function requestFixPreviewMap(ctx, reset){
+    if(!ctx || !ctx.type || !window.jQuery || typeof ajaxurl === 'undefined'){
+      return;
+    }
+
+    if(fixPreviewTimer){
+      clearTimeout(fixPreviewTimer);
+      fixPreviewTimer = null;
+    }
+
+    const requestId = ++fixPreviewRequestId;
+    ctx.previewReady = false;
+    ctx.specialOptions = readFixSpecialOptionsFromUi();
+    setFixSpecialOptionsDirty(false);
+    renderFixPreviewMapStatus(ctx, { progress: 0, message: 'Link Whisper is generating the linking plan for this fix.' }, true);
+
+    jQuery.post(ajaxurl, {
+      action: 'wpil_ai_fix_preview_map',
+      nonce: window.WPIL_AI_FIX_NONCE || '',
+      fix_type: ctx.type || '',
+      item_id: ctx.itemId || '',
+      reset: reset ? 1 : 0,
+      special_options: ctx.specialOptions || {}
+    }).done(function(response){
+      if(requestId !== fixPreviewRequestId){
+        return;
+      }
+
+      if(response && response.success && response.data){
+        const data = response.data;
+        if(data.process_key){
+          ctx.processKey = String(data.process_key);
+        }
+        ctx.estimate = wpilParseInt(data.credit_estimate);
+        ctx.previewReady = !!data.preview_ready;
+        renderFixPreviewMapStatus(ctx, data, !ctx.previewReady);
+
+        if(!ctx.previewReady && data.status === 'running'){
+          fixPreviewTimer = setTimeout(function(){
+            requestFixPreviewMap(ctx, false);
+          }, 900);
+        }
+        return;
+      }
+
+      renderFixPreviewMapStatus(ctx, {
+        progress: 0,
+        message: response && response.data && response.data.message ? response.data.message : 'The preview sitemap could not be generated.',
+        credit_estimate: ctx.estimate || 0
+      }, false);
+      setFixSpecialOptionsDirty(true);
+    }).fail(function(){
+      if(requestId !== fixPreviewRequestId){
+        return;
+      }
+      renderFixPreviewMapStatus(ctx, {
+        progress: 0,
+        message: 'The preview sitemap could not be generated.',
+        credit_estimate: ctx.estimate || 0
+      }, false);
+      setFixSpecialOptionsDirty(true);
+    });
+  }
+
+  function syncCustomProgressSummary(status){
+    const modal = document.getElementById('wpil-v3-fix-progress-modal');
+    if(!modal){
+      return;
+    }
+
+    const wrap = modal.querySelector('[data-wpil-custom-progress-summary]');
+    const copy = modal.querySelector('[data-wpil-custom-progress-copy]');
+    if(!wrap){
+      return;
+    }
+
+    const data = Object.assign({}, defaultCustomLinkingStatus, status || customLinkingStatusCache || {});
+    const hasPlan = !!data.has_plan;
+    wrap.classList.toggle('is-visible', hasPlan);
+
+    if(!hasPlan){
+      return;
+    }
+
+    const statValues = {
+      source_posts_exact: wpilFormatInt(wpilParseInt(data.source_posts_exact)),
+      target_posts_exact: wpilFormatInt(wpilParseInt(data.target_posts_exact)),
+      potential_links_range: formatCustomPotentialLinksRange(data.potential_links_min, data.potential_links_max)
+    };
+
+    Object.keys(statValues).forEach(function(key){
+      const el = modal.querySelector('[data-wpil-custom-progress-stat="' + key + '"]');
+      if(el){
+        el.textContent = statValues[key];
+      }
+    });
+
+    if(copy){
+      if(data.parse_status === 'running'){
+        copy.textContent = data.parse_message || 'The custom preview map is still being built.';
+      }else if(data.preview_ready){
+        copy.textContent = 'Stats come from the completed custom preview map.';
+      }else{
+        copy.textContent = 'This saved plan is waiting for its preview map to finish building.';
+      }
+    }
+  }
+
+  function downloadCustomLinkingTemplate(){
+    const rows = Array.isArray(window.WPIL_CUSTOM_LINKING_TEMPLATE_ROWS)
+      ? window.WPIL_CUSTOM_LINKING_TEMPLATE_ROWS
+      : [];
+    const filename = (window.WPIL_CUSTOM_LINKING_TEMPLATE_FILENAME || customLinkingStatusCache.template_filename || 'link-whisper-csv-template.csv').toString();
+
+    if(rows.length < 1){
+      showCustomLinkingFeedback('Template data is not available right now.', 'error');
+      return;
+    }
+
+    const csv = rows.map(function(row){
+      return (Array.isArray(row) ? row : []).map(function(cell){
+        const value = (cell === undefined || cell === null) ? '' : String(cell);
+        if(value.indexOf(',') !== -1 || value.indexOf('"') !== -1){
+          return '"' + value.replace(/"/g, '""') + '"';
+        }
+        return value;
+      }).join(',');
+    }).join('\r\n');
+
+    const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  }
+
+  function renderCustomLinkingStatus(status){
+    const modal = getCustomLinkingModal();
+    if(!modal){ return; }
+
+    const data = Object.assign({}, defaultCustomLinkingStatus, status || {});
+    const hasPlan = !!data.has_plan;
+    const parseActive = isCustomLinkingParseActive(data);
+    const parseComplete = data.parse_status === 'complete';
+    const estimate = Math.max(0, wpilParseInt(data.credit_estimate));
+    const balance = Math.max(0, wpilParseInt(window.WPIL_AI_CREDITS || 0));
+    const enoughCredits = estimate <= 0 ? false : balance >= estimate;
+    const warnings = Array.isArray(data.parse_errors) ? data.parse_errors.filter(Boolean) : [];
+
+    customLinkingStatusCache = data;
+    window.WPIL_CUSTOM_LINKING_STATUS = data;
+    syncCustomLinkingButtonEstimate(estimate);
+
+    const fileNameEl = modal.querySelector('[data-wpil-custom-linking-file-name]');
+    const manageLink = modal.querySelector('[data-wpil-custom-linking-manage-page]');
+    const summaryEmpty = modal.querySelector('[data-wpil-custom-linking-summary-empty]');
+    const warningsCard = modal.querySelector('[data-wpil-custom-linking-warnings-card]');
+    const warningsList = modal.querySelector('[data-wpil-custom-linking-warnings]');
+    const statusBadge = modal.querySelector('[data-wpil-custom-credit-status]');
+    const balanceEl = modal.querySelector('[data-wpil-custom-credit-balance]');
+    const estimateEl = modal.querySelector('[data-wpil-custom-credit-estimate]');
+    const creditBar = modal.querySelector('[data-wpil-custom-credit-bar]');
+    const creditFoot = modal.querySelector('[data-wpil-custom-credit-foot]');
+    const creditWarning = modal.querySelector('[data-wpil-custom-credit-warning]');
+    const progressWrap = modal.querySelector('[data-wpil-custom-linking-progress]');
+    const progressPhase = modal.querySelector('[data-wpil-custom-linking-progress-phase]');
+    const progressPercent = modal.querySelector('[data-wpil-custom-linking-progress-percent]');
+    const progressFill = modal.querySelector('[data-wpil-custom-linking-progress-fill]');
+    const progressCopy = modal.querySelector('[data-wpil-custom-linking-progress-copy]');
+    const clearButton = modal.querySelector('[data-wpil-custom-linking-clear]');
+    const startButton = modal.querySelector('[data-wpil-custom-linking-start]');
+
+    if(manageLink && data.manage_url){
+      manageLink.setAttribute('href', data.manage_url);
+    }
+
+    if(fileNameEl && !fileNameEl.textContent){
+      fileNameEl.textContent = 'No file selected yet.';
+    }
+
+    const statMap = {
+      source_posts_exact: {
+        value: parseComplete ? wpilFormatInt(wpilParseInt(data.source_posts_exact)) : '...',
+        copy: parseComplete
+          ? 'Exact unique posts that may place links after preview building.'
+          : 'Calculated after the preview map finishes building.'
+      },
+      target_posts_exact: {
+        value: parseComplete ? wpilFormatInt(wpilParseInt(data.target_posts_exact)) : '...',
+        copy: parseComplete
+          ? 'This is the estimated number of posts that will get links pointed to them.'
+          : 'Calculated after the preview map finishes building.'
+      },
+      potential_links_range: {
+        value: parseComplete
+          ? formatCustomPotentialLinksRange(data.potential_links_min, data.potential_links_max)
+          : '...',
+        copy: parseComplete
+          ? 'This is the estimated number of links that this plan will generate.'
+          : 'The final range is calculated from each completed preview relation.'
+      }
+    };
+
+    Object.keys(statMap).forEach(function(key){
+      const stat = modal.querySelector('[data-wpil-custom-stat="' + key + '"]');
+      const copy = modal.querySelector('[data-wpil-custom-copy="' + key + '"]');
+      if(stat){ stat.textContent = statMap[key].value; }
+      if(copy){ copy.textContent = statMap[key].copy; }
+    });
+
+    if(summaryEmpty){
+      if(parseActive){
+        summaryEmpty.textContent = 'Preview build in progress. Start stays disabled until the map is fully ready.';
+      }else if(parseComplete && hasPlan){
+        summaryEmpty.textContent = 'Plan ready.';
+      }else if(hasPlan){
+        summaryEmpty.textContent = 'This plan is saved, but the preview map is not ready yet.';
+      }else{
+        summaryEmpty.textContent = 'No custom CSV plan has been uploaded yet.';
+      }
+    }
+
+    if(progressWrap){
+      progressWrap.classList.toggle('is-visible', parseActive);
+    }
+    if(progressPhase){
+      progressPhase.textContent = (data.parse_phase || 'Parsing').replace(/_/g, ' ').replace(/\b\w/g, function(char){ return char.toUpperCase(); });
+    }
+    if(progressPercent){
+      progressPercent.textContent = wpilParseInt(data.parse_progress) + '%';
+    }
+    if(progressFill){
+      progressFill.style.width = Math.max(0, Math.min(100, wpilParseInt(data.parse_progress))) + '%';
+    }
+    if(progressCopy){
+      progressCopy.textContent = data.parse_message || 'Upload a CSV to begin building the preview map.';
+    }
+
+    if(warningsCard && warningsList){
+      warningsList.innerHTML = warnings.slice(0, 5).map(function(item){
+        return '<li>' + escapeHtml(item) + '</li>';
+      }).join('');
+
+      if(warnings.length > 5){
+        warningsList.innerHTML += '<li>Plus ' + escapeHtml(String(warnings.length - 5)) + ' more warning' + ((warnings.length - 5) === 1 ? '' : 's') + '.</li>';
+      }
+
+      warningsCard.classList.toggle('hidden', warnings.length < 1);
+    }
+
+    if(balanceEl){ balanceEl.textContent = wpilFormatInt(balance); }
+    if(estimateEl){ estimateEl.textContent = wpilFormatInt(estimate); }
+
+    if(creditBar){
+      const pct = estimate > 0 ? Math.min(100, Math.round((balance / estimate) * 100)) : 0;
+      creditBar.style.width = pct + '%';
+    }
+
+    if(statusBadge){
+      statusBadge.classList.remove('is-bad', 'is-muted');
+      if(parseActive){
+        statusBadge.textContent = 'Building Preview';
+        statusBadge.classList.add('is-muted');
+      }else if(!hasPlan){
+        statusBadge.textContent = 'Upload Required';
+        statusBadge.classList.add('is-muted');
+      }else if(estimate <= 0){
+        statusBadge.textContent = 'No eligible items';
+        statusBadge.classList.add('is-muted');
+      }else if(enoughCredits){
+        statusBadge.textContent = 'Ready';
+      }else{
+        statusBadge.textContent = 'Not enough credits';
+        statusBadge.classList.add('is-bad');
+      }
+    }
+
+    if(creditFoot){
+      if(parseActive){
+        creditFoot.textContent = 'Credits will lock in once the preview map has finished building.';
+      }else if(!hasPlan){
+        creditFoot.textContent = 'Upload a CSV plan to calculate the credit estimate.';
+      }else if(estimate <= 0){
+        creditFoot.textContent = 'This plan does not currently have any eligible items to run.';
+      }else{
+        creditFoot.textContent = wpilFormatInt(estimate) + ' credits required for this custom plan.';
+      }
+    }
+
+    if(creditWarning){
+      if(!parseActive && hasPlan && estimate > 0 && !enoughCredits){
+        const shortfall = Math.max(0, estimate - balance);
+        creditWarning.textContent = 'You need ' + wpilFormatInt(shortfall) + ' more credits to run this custom plan.';
+        creditWarning.classList.add('is-visible');
+      }else{
+        creditWarning.textContent = '';
+        creditWarning.classList.remove('is-visible');
+      }
+    }
+
+    if(clearButton){
+      clearButton.disabled = (!hasPlan && !parseActive);
+    }
+
+    if(startButton){
+      const disabledByStatus = (!parseComplete || !hasPlan || estimate <= 0 || !enoughCredits) ? '1' : '0';
+      startButton.dataset.wpilDisabledByStatus = disabledByStatus;
+      startButton.disabled = customLinkingBusyState !== '' || disabledByStatus === '1';
+    }
+
+    if(fileNameEl && fileNameEl.textContent === ''){
+      fileNameEl.textContent = 'No file selected yet.';
+    }
+
+    setCustomLinkingBusyState(customLinkingBusyState);
+    syncCustomProgressSummary(data);
+
+    if(parseActive){
+      stopCustomLinkingParsePolling();
+      customLinkingParsePollTimer = window.setTimeout(function(){
+        if(!window.jQuery || typeof ajaxurl === 'undefined'){
+          return;
+        }
+
+        jQuery.post(ajaxurl, {
+          action: 'wpil_csv_link_map_parse_step',
+          nonce: window.WPIL_CSV_LINK_MAP_NONCE || ''
+        }).done(function(response){
+          if(response && response.success && response.data){
+            renderCustomLinkingStatus(response.data);
+            return;
+          }
+
+          stopCustomLinkingParsePolling();
+          showCustomLinkingFeedback(
+            response && response.data && response.data.message ? response.data.message : 'The custom linking preview stopped unexpectedly.',
+            'error'
+          );
+        }).fail(function(){
+          stopCustomLinkingParsePolling();
+          showCustomLinkingFeedback('Unable to continue building the custom linking preview.', 'error');
+        });
+      }, 900);
+    }else{
+      stopCustomLinkingParsePolling();
+    }
+  }
+
+  function fetchCustomLinkingStatus(callback){
+    if(!window.jQuery || typeof ajaxurl === 'undefined'){
+      if(typeof callback === 'function'){
+        callback(null, { message: 'Ajax unavailable' });
+      }
+      return;
+    }
+
+    jQuery.post(ajaxurl, {
+      action: 'wpil_csv_link_map_status',
+      nonce: window.WPIL_CSV_LINK_MAP_NONCE || ''
+    }).done(function(response){
+      if(response && response.success && response.data){
+        renderCustomLinkingStatus(response.data);
+        if(typeof callback === 'function'){
+          callback(response.data, null);
+        }
+        return;
+      }
+
+      if(typeof callback === 'function'){
+        callback(null, response && response.data ? response.data : { message: 'Unable to load the current custom plan.' });
+      }
+    }).fail(function(){
+      if(typeof callback === 'function'){
+        callback(null, { message: 'Unable to load the current custom plan.' });
+      }
+    });
+  }
+
+  function getCustomLinkingContext(trigger){
+    const estimate = Math.max(
+      0,
+      wpilParseInt(customLinkingStatusCache && customLinkingStatusCache.credit_estimate ? customLinkingStatusCache.credit_estimate : 0)
+    );
+
+    return {
+      type: 'custom_link_map',
+      itemId: '0',
+      estimate: estimate,
+      processKey: getDashboardProcessKey('custom_link_map'),
+      description: (trigger && trigger.dataset && trigger.dataset.wpilFixDescription)
+        ? trigger.dataset.wpilFixDescription
+        : 'Build links from your custom CSV plan using AI suggestions.',
+      balance: window.WPIL_AI_CREDITS || 0
+    };
+  }
+
+  function openCustomLinkingModal(trigger){
+    const modal = getCustomLinkingModal();
+    if(!modal){ return; }
+
+    clearCustomLinkingFeedback();
+    syncCustomLinkingModeInputs(getLinkMode());
+    renderCustomLinkingStatus(customLinkingStatusCache);
+    syncCustomLinkingUploadState();
+
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('wpil-fix-modal-open');
+
+    fetchCustomLinkingStatus(function(status, error){
+      if(error){
+        showCustomLinkingFeedback(error.message || 'Unable to refresh the current custom plan.', 'error');
+      }else if(status && trigger){
+        const fileNameEl = modal.querySelector('[data-wpil-custom-linking-file-name]');
+        if(fileNameEl){
+          fileNameEl.textContent = 'No file selected yet.';
+        }
+      }
+    });
+  }
+
+  function closeCustomLinkingModal(){
+    const modal = getCustomLinkingModal();
+    if(!modal){ return; }
+
+    stopCustomLinkingParsePolling();
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('wpil-fix-modal-open');
+    setCustomLinkingBusyState('');
   }
 
   function padShortfall(shortfall) {
@@ -4528,12 +6553,18 @@ document.addEventListener('click', function(event) {
     }else{
       syncReviewButtonState(0);
     }
+    if(ctx && ctx.type === 'custom_link_map'){
+      syncCustomProgressSummary(customLinkingStatusCache);
+    }else{
+      syncCustomProgressSummary({ has_plan: false });
+    }
     const titleMap = {
       orphaned_posts: 'Fixing Orphaned Posts',
       link_coverage: 'Fixing Link Coverage',
       link_quality: 'Fixing Link Quality',
       broken_links: 'Fixing Broken Links',
-      external_focus: 'Fixing External Focus'
+      external_focus: 'Fixing External Focus',
+      custom_link_map: 'Running Custom CSV Linking Plan'
     };
     document.getElementById('wpil-v3-progress-title').textContent = titleMap[ctx.type] || 'AI Fix In Progress';
     document.getElementById('wpil-v3-progress-description').textContent = 'Link Whisper is applying AI updates now. You can close this modal and the process will keep running.';
@@ -4553,6 +6584,55 @@ document.addEventListener('click', function(event) {
     if(!modal){ return; }
     modal.classList.remove('is-open');
     modal.setAttribute('aria-hidden', 'true');
+    if(pendingCompletedCustomPlanDismiss){
+      clearCompletedCustomLinkMapPlan();
+    }
+  }
+
+  function removeCompletedCustomPlanCard(){
+    const card = document.querySelector('[data-wpil-custom-plan-card="1"]');
+    if(!card){
+      return;
+    }
+
+    const container = card.closest('.tasks-container-compact');
+    const grid = card.closest('.tasks-activity-grid');
+    card.remove();
+
+    if(container && !container.querySelector('.task-card')){
+      container.remove();
+    }
+
+    if(grid && !grid.querySelector('.tasks-container-compact, .activity-section-compact')){
+      grid.remove();
+    }
+  }
+
+  function clearCompletedCustomLinkMapPlan(){
+    if(isClearingCompletedCustomPlan || !pendingCompletedCustomPlanDismiss || !window.jQuery || typeof ajaxurl === 'undefined'){
+      return;
+    }
+
+    isClearingCompletedCustomPlan = true;
+    pendingCompletedCustomPlanDismiss = false;
+
+    jQuery.post(ajaxurl, {
+      action: 'wpil_csv_link_map_clear',
+      nonce: window.WPIL_CSV_LINK_MAP_NONCE || ''
+    }).done(function(response){
+      if(response && response.success){
+        resetCustomLinkingStatusCache();
+        renderCustomLinkingStatus(customLinkingStatusCache);
+        removeCompletedCustomPlanCard();
+        return;
+      }
+
+      pendingCompletedCustomPlanDismiss = true;
+    }).fail(function(){
+      pendingCompletedCustomPlanDismiss = true;
+    }).always(function(){
+      isClearingCompletedCustomPlan = false;
+    });
   }
 
   function setProgressModalRunningState(isRunning){
@@ -4671,6 +6751,11 @@ document.addEventListener('click', function(event) {
       return null;
     }
 
+    if(isDashboardBasicScanBlockingFixes()){
+      holdFixUntilBasicScanFinishes(ctx);
+      return null;
+    }
+
     return runner.start(ctx);
   }
 
@@ -4759,13 +6844,23 @@ document.addEventListener('click', function(event) {
 
     if(finalData.status === 'complete'){
       setReviewLinkingComplete(true);
+      if(ctx.type === 'custom_link_map'){
+        pendingCompletedCustomPlanDismiss = true;
+      }
+      const title = document.getElementById('wpil-v3-progress-title');
+      const description = document.getElementById('wpil-v3-progress-description');
+      if(title){ title.textContent = 'AI Fix Complete'; }
+      if(description){ description.textContent = 'Link Whisper finished applying your AI fix.'; }
       updateProgressModal({
         status: 'complete',
         progress: 100,
-        message: finalData.message || 'Fix complete'
+        message: finalData.message || 'Complete'
       });
     }else if(finalData.status === 'cancelled'){
       setReviewLinkingComplete(false);
+      if(ctx.type === 'custom_link_map'){
+        pendingCompletedCustomPlanDismiss = false;
+      }
       updateProgressModal({
         status: 'cancelled',
         progress: finalData.progress || 0,
@@ -4773,6 +6868,9 @@ document.addEventListener('click', function(event) {
       });
     }else if(finalData.status === 'error'){
       setReviewLinkingComplete(false);
+      if(ctx.type === 'custom_link_map'){
+        pendingCompletedCustomPlanDismiss = false;
+      }
       updateProgressModal({
         status: 'error',
         progress: finalData.progress || 0,
@@ -4780,6 +6878,9 @@ document.addEventListener('click', function(event) {
       });
     }else{
       setReviewLinkingComplete(false);
+      if(ctx.type === 'custom_link_map'){
+        pendingCompletedCustomPlanDismiss = false;
+      }
     }
 
     if(resolvedProcessKey){
@@ -4928,6 +7029,7 @@ document.addEventListener('click', function(event) {
 
     const activeSpecialOptions = getFixSpecialOptionsFromWindow();
     writeFixSpecialOptionsToUi(activeSpecialOptions);
+    setFixSpecialOptionsDirty(false);
     ctx.specialOptions = activeSpecialOptions;
 
     const copy = fixCopy[ctx.type] || {};
@@ -4980,55 +7082,80 @@ document.addEventListener('click', function(event) {
         noteEl.textContent = copy.note || 'Nothing runs until you click “Start AI Fix”.';
     }
 
-    setAllInFixModal('[data-wpil-fix-estimate]', wpilFormatInt(estimate));
-    setAllInFixModal('[data-wpil-fix-balance]', wpilFormatInt(balance));
-
-    const enoughCredits = (estimate <= 0) ? true : (balance >= estimate);
-
-    const statusBadge = document.querySelector('[data-role="wpil-fix-status"]');
-    if (statusBadge) {
-      statusBadge.textContent = enoughCredits ? 'Ready' : 'Not enough credits';
-      statusBadge.classList.toggle('is-bad', !enoughCredits);
-    }
-
-    const bar = document.querySelector('[data-role="wpil-fix-bar"]');
-    if (bar) {
-      const pct = (estimate > 0) ? Math.min(100, Math.round((balance / estimate) * 100)) : 100;
-      bar.style.width = pct + '%';
-    }
-
-    document.getElementById('wpil-fix-warning').classList.toggle('hidden', enoughCredits);
-    document.getElementById('wpil-fix-actions-enough').classList.toggle('hidden', !enoughCredits);
-    document.getElementById('wpil-fix-actions-short').classList.toggle('hidden', enoughCredits);
-
-    if (!enoughCredits) {
-      const shortfall = Math.max(0, estimate - balance);
-      const padded = padShortfall(shortfall);
-      setAllInFixModal('[data-wpil-fix-shortfall]', wpilFormatInt(padded));
-
-      const buyBtn = document.getElementById('wpil-fix-buy');
-      if (buyBtn) {
-        buyBtn.dataset.credits = padded;
-        buyBtn.dataset.quantity = padded;
-      }
-    }
+    setFixModalCreditState(ctx, estimate, true);
+    renderFixPreviewMapStatus(ctx, { progress: 0, message: 'Link Whisper is building the sitemap used for this estimate.' }, true);
 
     modal.classList.remove('hidden');
     modal.setAttribute('aria-hidden', 'false');
     document.body.classList.add('wpil-fix-modal-open');
+
+    requestFixPreviewMap(ctx, true);
   }
 
   function closeFixModal() {
     const modal = document.getElementById('wpil-fix-modal');
     if (!modal) { return; }
+    if(fixPreviewTimer){
+      clearTimeout(fixPreviewTimer);
+      fixPreviewTimer = null;
+    }
+    fixPreviewRequestId++;
     modal.classList.add('hidden');
     modal.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('wpil-fix-modal-open');
   }
 
+  document.addEventListener('click', function(e){
+    const customBtn = e.target.closest('[data-wpil-custom-linking-open]');
+    if(!customBtn){
+      return;
+    }
+
+    e.preventDefault();
+
+    const ctx = getCustomLinkingContext(customBtn);
+    if(!claimFixWaiter(ctx, 'open', 2500)){
+      return;
+    }
+
+    const runner = configureAiFixRunner();
+    const activeJob = runner ? runner.getJob(ctx) : null;
+    if(activeJob && activeJob.lastData && activeJob.lastData.status === 'running'){
+      releaseFixWaiter(ctx, 'open');
+      if(activeJob.ctx && activeJob.ctx.processKey){
+        ctx.processKey = String(activeJob.ctx.processKey);
+      }
+      setFixButtonsRunningState(ctx, true);
+      setInlineIndicator(ctx.type, true, activeJob.lastData.progress || 0, activeJob.lastData.message || 'Fixing...');
+      openProgressModal(ctx);
+      return;
+    }
+
+    checkExistingJobStatus(ctx, function(statusData){
+      releaseFixWaiter(ctx, 'open');
+      if(statusData && statusData.status === 'running'){
+        if(statusData.process_key){
+          ctx.processKey = String(statusData.process_key);
+        }
+        if(runner){
+          runner.resume(ctx, statusData, { transportMode: 'run' });
+        }
+        setFixButtonsRunningState(ctx, true);
+        setInlineIndicator(ctx.type, true, statusData.progress || 0, statusData.message || 'Fixing...');
+        openProgressModal(ctx);
+        return;
+      }
+
+      openCustomLinkingModal(customBtn);
+    });
+  });
+
   document.addEventListener('click', function(e) {
     const fixBtn = e.target.closest('[data-wpil-fix-type]');
     if (!fixBtn) return;
+    if(fixBtn.dataset.wpilCustomLinkingOpen){
+      return;
+    }
 
     e.preventDefault();
 
@@ -5078,6 +7205,146 @@ document.addEventListener('click', function(event) {
     });
   });
 
+  document.querySelectorAll('[data-wpil-custom-linking-close]').forEach(function(btn){
+    btn.addEventListener('click', closeCustomLinkingModal);
+  });
+
+  document.getElementById('wpil-custom-linking-modal')
+    ?.querySelector('[data-wpil-custom-linking-download]')
+    ?.addEventListener('click', function(e){
+      e.preventDefault();
+      downloadCustomLinkingTemplate();
+    });
+
+  document.getElementById('wpil-custom-linking-modal')
+    ?.querySelector('[data-wpil-custom-linking-file]')
+    ?.addEventListener('change', function(){
+      const modal = getCustomLinkingModal();
+      if(!modal){ return; }
+      const fileNameEl = modal.querySelector('[data-wpil-custom-linking-file-name]');
+      const file = this.files && this.files[0] ? this.files[0] : null;
+      if(fileNameEl){
+        fileNameEl.textContent = file ? file.name : 'No file selected yet.';
+      }
+      syncCustomLinkingUploadState();
+    });
+
+  document.getElementById('wpil-custom-linking-modal')
+    ?.querySelector('[data-wpil-custom-linking-upload-form]')
+    ?.addEventListener('submit', function(e){
+      e.preventDefault();
+
+      const modal = getCustomLinkingModal();
+      if(!modal || !window.jQuery || typeof ajaxurl === 'undefined'){
+        return;
+      }
+
+      const fileInput = modal.querySelector('[data-wpil-custom-linking-file]');
+      const file = fileInput && fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+      if(!file){
+        showCustomLinkingFeedback('Choose a CSV file before uploading.', 'error');
+        return;
+      }
+
+      clearCustomLinkingFeedback();
+      setCustomLinkingBusyState('uploading');
+
+      const formData = new FormData();
+      formData.append('action', 'wpil_csv_link_map_upload');
+      formData.append('nonce', window.WPIL_CSV_LINK_MAP_NONCE || '');
+      formData.append('csv_file', file);
+
+      jQuery.ajax({
+        url: ajaxurl,
+        type: 'POST',
+        data: formData,
+        processData: false,
+        contentType: false
+      }).done(function(response){
+        if(response && response.success && response.data){
+          renderCustomLinkingStatus(response.data);
+          showCustomLinkingFeedback('Upload received. Link Whisper is now parsing the CSV and building the preview map.', 'success');
+          return;
+        }
+
+        showCustomLinkingFeedback(
+          response && response.data && response.data.message ? response.data.message : 'Upload failed.',
+          'error'
+        );
+      }).fail(function(){
+        showCustomLinkingFeedback('Upload failed. Please try again.', 'error');
+      }).always(function(){
+        setCustomLinkingBusyState('');
+      });
+    });
+
+  document.getElementById('wpil-custom-linking-modal')
+    ?.querySelector('[data-wpil-custom-linking-clear]')
+    ?.addEventListener('click', function(){
+      if(!customLinkingStatusCache || !customLinkingStatusCache.has_plan){
+        return;
+      }
+
+      if(!window.confirm('Clear the current custom linking plan and queued processing data?')){
+        return;
+      }
+
+      clearCustomLinkingFeedback();
+      setCustomLinkingBusyState('clearing');
+
+      if(!window.jQuery || typeof ajaxurl === 'undefined'){
+        setCustomLinkingBusyState('');
+        showCustomLinkingFeedback('Ajax is unavailable right now.', 'error');
+        return;
+      }
+
+      jQuery.post(ajaxurl, {
+        action: 'wpil_csv_link_map_clear',
+        nonce: window.WPIL_CSV_LINK_MAP_NONCE || ''
+      }).done(function(response){
+        if(response && response.success){
+          resetCustomLinkingStatusCache();
+          renderCustomLinkingStatus(customLinkingStatusCache);
+          showCustomLinkingFeedback('Custom plan cleared.', 'success');
+          removeCompletedCustomPlanCard();
+          return;
+        }
+
+        showCustomLinkingFeedback(
+          response && response.data && response.data.message ? response.data.message : 'Unable to clear the current plan.',
+          'error'
+        );
+      }).fail(function(){
+        showCustomLinkingFeedback('Unable to clear the current plan.', 'error');
+      }).always(function(){
+        setCustomLinkingBusyState('');
+      });
+    });
+
+  document.getElementById('wpil-custom-linking-modal')
+    ?.querySelector('[data-wpil-custom-linking-start]')
+    ?.addEventListener('click', function(){
+      const ctx = getCustomLinkingContext();
+      if(!customLinkingStatusCache || !customLinkingStatusCache.has_plan){
+        showCustomLinkingFeedback('Upload a CSV plan before starting.', 'error');
+        return;
+      }
+
+      if(!claimFixWaiter(ctx, 'start', 4000)){
+        return;
+      }
+
+      clearCustomLinkingFeedback();
+      setCustomLinkingBusyState('starting');
+      closeCustomLinkingModal();
+      openProgressModal(ctx);
+      startFixProcess(ctx);
+      setTimeout(function(){
+        setCustomLinkingBusyState('');
+        releaseFixWaiter(ctx, 'start');
+      }, 500);
+    });
+
   document.querySelectorAll('[data-wpil-fix-cancel]').forEach(function(btn) {
     btn.addEventListener('click', closeFixModal);
   });
@@ -5089,11 +7356,20 @@ document.addEventListener('click', function(event) {
     const modal = document.getElementById('wpil-fix-modal');
     if (modal && !modal.classList.contains('hidden')) {
       closeFixModal();
+      return;
+    }
+    const customModal = getCustomLinkingModal();
+    if (customModal && !customModal.classList.contains('hidden')) {
+      closeCustomLinkingModal();
     }
   });
 
   document.getElementById('wpil-fix-begin')
     ?.addEventListener('click', function() {
+      if(lastFixContext && !lastFixContext.previewReady){
+        return;
+      }
+
       if(!lastFixContext || !claimFixWaiter(lastFixContext, 'start', 4000)){
         return;
       }
@@ -5123,6 +7399,42 @@ document.addEventListener('click', function(event) {
     if(wrap){
       wrap.classList.toggle('is-active', !!toggle.checked);
     }
+  });
+
+  document.addEventListener('change', function(event){
+    const option = event.target.closest('[data-wpil-fix-option]');
+    const modal = document.getElementById('wpil-fix-modal');
+    if(!option || !modal || modal.classList.contains('hidden') || !lastFixContext){
+      return;
+    }
+
+    if(!canShowFixSpecialOptions(lastFixContext.type)){
+      return;
+    }
+
+    setFixSpecialOptionsDirty(true);
+  });
+
+  document.addEventListener('click', function(event){
+    const button = event.target.closest('[data-wpil-fix-refresh-map]');
+    const modal = document.getElementById('wpil-fix-modal');
+    if(!button || button.disabled || !modal || modal.classList.contains('hidden') || !lastFixContext){
+      return;
+    }
+
+    event.preventDefault();
+    requestFixPreviewMap(lastFixContext, true);
+  });
+
+  document.addEventListener('click', function(event){
+    const button = event.target.closest('[data-wpil-fix-update-plan]');
+    const modal = document.getElementById('wpil-fix-modal');
+    if(!button || button.disabled || !modal || modal.classList.contains('hidden') || !lastFixContext){
+      return;
+    }
+
+    event.preventDefault();
+    requestFixPreviewMap(lastFixContext, true);
   });
 
   document.addEventListener('click', function(event){
@@ -5376,6 +7688,75 @@ document.addEventListener('click', function(event) {
 
   }
 
+  if(window.jQuery){
+    jQuery(document).on('click', '[data-wpil-basic-scan]', function(e){
+      e.preventDefault();
+      const btn = this;
+
+      const scan = normalizeDashboardBasicScanState(dashboardBasicScanState);
+      const mode = btn.getAttribute('data-wpil-basic-scan') || (scan.basic_scan_running ? 'review' : 'start');
+      if(mode === 'review'){
+        openDashboardBasicScanModal();
+        if(scan.basic_scan_running){
+          queueDashboardBasicScanPoll(btn, 0, false);
+        }
+        return;
+      }
+
+      clearDashboardBasicScanMessage();
+      openDashboardBasicScanModal();
+    });
+
+    jQuery(document).on('click', '[data-wpil-dashboard-basic-scan-begin]', function(e){
+      e.preventDefault();
+      const btn = this;
+
+      const trigger = document.querySelector('[data-wpil-basic-scan]');
+      clearDashboardBasicScanMessage();
+      dashboardBasicScanCancelled = false;
+      updateDashboardBasicScanState({
+        basic_scan_running: true,
+        current_process: 'Beginning basic AI scan...'
+      });
+      openDashboardBasicScanModal();
+      showDashboardBasicScanMessage('Beginning Processing', 'The basic AI scan has begun. You can close this window and keep working while Link Whisper processes the AI data.', 'info', false);
+      queueDashboardBasicScanPoll(trigger || btn, 0, false);
+    });
+
+    jQuery(document).on('click', '[data-wpil-dashboard-basic-scan-close]', closeDashboardBasicScanModal);
+
+    jQuery(document).on('click', '[data-wpil-dashboard-basic-scan-refresh]', function(e){
+      e.preventDefault();
+      window.location.reload();
+    });
+
+    jQuery(document).on('click', '[data-wpil-dashboard-basic-scan-cancel]', function(e){
+      e.preventDefault();
+      cancelDashboardBasicScan();
+    });
+  }
+
+  document.addEventListener('keydown', function(e){
+    if(e.key !== 'Escape'){
+      return;
+    }
+
+    const modal = document.getElementById('wpil-dashboard-basic-scan-modal');
+    if(modal && modal.classList.contains('is-open')){
+      closeDashboardBasicScanModal();
+    }
+  });
+
+  updateDashboardBasicScanState(dashboardBasicScanState);
+  if(dashboardBasicScanState.basic_scan_running){
+    setTimeout(function(){
+      const btn = document.querySelector('[data-wpil-basic-scan]');
+      if(btn){
+        queueDashboardBasicScanPoll(btn, 0, false);
+      }
+    }, 1500);
+  }
+
   document.querySelectorAll('[data-wpil-v3-progress-close]').forEach(function(btn){
     btn.addEventListener('click', closeProgressModal);
   });
@@ -5383,6 +7764,14 @@ document.addEventListener('click', function(event) {
   document.querySelectorAll('input[name="wpil-ai-linking-mode"]').forEach(function(input){
     input.addEventListener('change', function(){
       setLinkMode(this && this.value ? this.value : 'review');
+      syncCustomLinkingModeInputs(getLinkMode());
+    });
+  });
+
+  document.querySelectorAll('input[name="wpil-custom-ai-linking-mode"]').forEach(function(input){
+    input.addEventListener('change', function(){
+      setLinkMode(this && this.value ? this.value : 'review');
+      syncCustomLinkingModeInputs(getLinkMode());
     });
   });
 
@@ -5395,7 +7784,10 @@ document.addEventListener('click', function(event) {
   });
 
   document.getElementById('wpil-review-open')?.addEventListener('click', function(){
+    const pendingDismiss = pendingCompletedCustomPlanDismiss;
+    pendingCompletedCustomPlanDismiss = false;
     closeProgressModal();
+    pendingCompletedCustomPlanDismiss = pendingDismiss;
   });
 
   if(window.jQuery){
@@ -5417,6 +7809,8 @@ document.addEventListener('click', function(event) {
 
   (function syncLinkModeInputs(){
     hydrateLinkModePreference();
+    syncCustomLinkingModeInputs(getLinkMode());
+    renderCustomLinkingStatus(customLinkingStatusCache);
   })();
 
     <?php if($show_ai_fix_controls){ ?>

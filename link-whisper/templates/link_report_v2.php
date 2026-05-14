@@ -27,6 +27,8 @@
         <div id="post-body" class="metabox-holder">
             <div id="post-body-content" style="position: relative;">
                 <input id="wpil-object-cache-flush-nonce" type="hidden" value="<?php echo wp_create_nonce('wpil-flush-object-cache'); ?>" />
+                <input id="wpil-refresh-link-report-nonce" type="hidden" value="<?php echo wp_create_nonce(get_current_user_id() . 'wpil-refresh-link-report-rows'); ?>" />
+                <input id="wpil-report-sub-type" type="hidden" value="<?php echo esc_attr(!empty($report_sub_type) ? $report_sub_type: 'links'); ?>" />
                 <?php echo $sub_report ?>
                 <?php include_once 'report_tabs.php'; ?>
                 <div class="tbl-link-reports">
