@@ -2,8 +2,8 @@ Link Whisper Free
 Contributors: sreenathlw, mattbissett, linkwhspr
 Tags: links, SEO, internal linking, link building, orphan content
 Requires at least: 4.6
-Tested up to: 6.9.4
-Stable Tag: 0.9.4
+Tested up to: 7.0.0
+Stable Tag: 0.9.5
 Requires PHP: 5.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -200,6 +200,11 @@ Please report security bugs found in the source code of the Link Whisper Free pl
 15. [Premium] The URL Changer allows you to update old links to point to new URLs.
 
 == Changelog ==
+= 0.9.5 =
+* [SECURITY] Improving filter sanitization.
+* [BUGFIX] Fixing error when processing Elementor-based content.
+* [BUGFIX] Fixing minor PHP notice about an undefined variable called "added_secondary".
+
 = 0.9.4 =
 * [NEW FEATURE] Creating a “Basic AI Scan” option for the Dashboard! (Now you can run the AI scanning from the Dashboard without needing to run the One Click Setup)
 * [NEW FEATURE] Creating an alternate Relation Analysis system for large sites that aren’t able to complete the standard relation calculations.

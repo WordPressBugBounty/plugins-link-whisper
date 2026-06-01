@@ -809,9 +809,9 @@ class Wpil_Table_Report extends WP_List_Table
         $cat = !empty($_GET['category']) ? $_GET['category'] : 0;
         $location = !empty($_GET['location']) ? $_GET['location'] : null;
         $filter_type = !empty($_GET['filter_type']) ? $_GET['filter_type'] : 0;
-        $link_type = !empty($_GET['link_type']) ? $_GET['link_type'] : null;
-        $min = !empty($_GET['link_min_count']) ? $_GET['link_min_count'] : 0;
-        $max = array_key_exists('link_max_count', $_GET) ? $_GET['link_max_count'] : null;
+        $link_type = !empty($_GET['link_type']) ? sanitize_text_field($_GET['link_type']) : null;
+        $min = !empty($_GET['link_min_count']) ? (int)$_GET['link_min_count'] : 0;
+        $max = array_key_exists('link_max_count', $_GET) ? (int)$_GET['link_max_count'] : null;
 
         $post_types = get_post_types(array('public' => true));
         $post_types = array_values($post_types);

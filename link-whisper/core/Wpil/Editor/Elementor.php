@@ -160,6 +160,27 @@ class Wpil_Editor_Elementor
         return self::$document;
     }
 
+    public static function appendProcessableValue(&$content, $value)
+    {
+        if (is_string($value)) {
+            $content .= "\n" . $value;
+            return;
+        }
+
+        if (is_scalar($value)) {
+            $content .= "\n" . (string) $value;
+            return;
+        }
+
+        if (is_array($value) || is_object($value)) {
+            foreach ($value as $sub_value) {
+                if (!empty($sub_value)) {
+                    self::appendProcessableValue($content, $sub_value);
+                }
+            }
+        }
+    }
+
     /**
      * Checks the given item to see if its a heading and it can have links added to it.
      * @param object $item The Elementor item that we're going to check

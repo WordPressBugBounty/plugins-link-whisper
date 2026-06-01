@@ -1047,7 +1047,7 @@ class Wpil_Base
 
         if($added_standard){
             wp_localize_script('wpil_admin_script', 'wpil_ajax', $script_params);
-        }elseif($added_secondary){
+        }elseif(!empty($added_secondary)){
             foreach($script_handles as $handle){
                 wp_localize_script($handle, 'wpil_ajax', $script_params);
                 break; // just need this once
