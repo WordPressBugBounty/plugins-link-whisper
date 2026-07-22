@@ -4507,6 +4507,7 @@
             startId: (ctx.startId || ctx.start_id || '').toString(),
             processKey: (ctx.processKey || ctx.process_key || '').toString(),
             specialOptions: ctx.specialOptions || ctx.special_options || null,
+            processCurrentMap: !!(ctx.processCurrentMap || ctx.process_current_map),
             description: (ctx.description || '').toString(),
             balance: wpilAiFixParseInt(ctx.balance || 0)
         };
@@ -4687,6 +4688,7 @@
             start_id: normalized.startId || '',
             process_key: normalized.processKey,
             link_mode: wpilAiFixResolveLinkMode(),
+            process_current_map: normalized.processCurrentMap ? 1 : 0,
             step: step || 'run'
         };
 

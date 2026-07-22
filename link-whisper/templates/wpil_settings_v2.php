@@ -80,6 +80,7 @@
     $ai_suggestion_relatedness_threshold = Wpil_Settings::get_ai_suggestion_relatedness_threshold();
     $ai_auto_insert_relatedness_threshold = Wpil_Settings::get_ai_auto_insert_relatedness_threshold();
     $ai_linkwhisper_decoding_error = !empty(get_option('wpil_ai_token_decoding_error', '0'));
+    $ai_empty_embedding_count = Wpil_AI::get_empty_ai_embedding_count();
 
     // if we're not doing anything
     if(!empty($ai_selected_process)){
@@ -2312,6 +2313,42 @@
                                             <br>
                                             <p><?php esc_html_e('(If you are already debugging with WP_DEBUG, then there\'s no need to activate this.)', 'wpil'); ?></p>
                                         </div>
+                                    </div>
+                                    <br>
+                                </div>
+                                <?php if(function_exists('opcache_reset')){ ?>
+                                <div class="setting-control">
+                                    <div>
+                                        <a style="margin-top:5px;" class="wpil-flush-opcache button-primary" data-nonce="<?php echo esc_attr(wp_create_nonce('wpil-flush-opcache')); ?>"><?php esc_html_e('Clear OP Cache', 'wpil'); ?></a>
+                                        <div class="wpil_help" style="float:right;">
+                                            <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
+                                            <div style="margin: -220px 0 0 30px;">
+                                                <p><?php esc_html_e('Clicking this will ask PHP to clear the OPcache so recently changed files can be loaded fresh.', 'wpil'); ?></p>
+                                                <br>
+                                                <p><?php esc_html_e('This is useful when debugging sites where PHP is still serving an older cached version of the plugin files or reports aren\'t showing updates.', 'wpil'); ?></p>
+                                            </div>
+                                        </div>
+                                        <br><br>
+                                        <span class="wpil-flush-opcache-status"></span>
+                                    </div>
+                                    <br>
+                                </div>
+                                <?php } ?>
+                                <div class="setting-control">
+                                    <div>
+                                        <a style="margin-top:5px;" class="wpil-rescan-empty-ai-embeddings button-primary <?php echo empty($ai_empty_embedding_count) ? 'button-disabled': '';?>" data-nonce="<?php echo esc_attr(wp_create_nonce(wp_get_current_user()->ID . 'wpil_rescan_empty_ai_embeddings')); ?>"><?php esc_html_e('Repair Empty AI Embeddings', 'wpil'); ?></a>
+                                        <div class="wpil_help" style="float:right;">
+                                            <i class="dashicons dashicons-editor-help" style="margin-top: 6px;"></i>
+                                            <div style="margin: -220px 0 0 30px;">
+                                                <p><?php esc_html_e('Clicking this will rescan posts that were saved as empty AI embeddings and then refresh their AI Relation calculations.', 'wpil'); ?></p>
+                                                <br>
+                                                <p><?php esc_html_e('This is a debug repair tool for cases where an embedding request failed and good posts were accidentally marked as empty.', 'wpil'); ?></p>
+                                            </div>
+                                        </div>
+                                        <br><br>
+                                        <span class="wpil-empty-ai-embedding-status" data-empty-count="<?php echo (int)$ai_empty_embedding_count; ?>">
+                                            <?php echo sprintf(esc_html__('%d posts are listed as empty AI embeddings.', 'wpil'), (int)$ai_empty_embedding_count); ?>
+                                        </span>
                                     </div>
                                     <br>
                                 </div>

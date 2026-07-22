@@ -2963,8 +2963,9 @@ function triggerConfettiExplosion() {
      * 
      * @return int
      */
-    public static function getSuggestionMaxAnchorSize(){
-        return (int) get_option('wpil_suggestion_anchor_max_size', 10);
+    public static function getSuggestionMaxAnchorSize($max = null){
+        $num = (int) get_option('wpil_suggestion_anchor_max_size', 10);
+        return (!is_null($max) && $max < $num) ? $max: $num; // HA!
     }
 
     /**
@@ -2973,8 +2974,9 @@ function triggerConfettiExplosion() {
      * 
      * @return int
      */
-    public static function getSuggestionMinAnchorSize(){
-        return (int) get_option('wpil_suggestion_anchor_min_size', 1);
+    public static function getSuggestionMinAnchorSize($min = null){
+        $num = (int) get_option('wpil_suggestion_anchor_min_size', 1);
+        return (!is_null($min) && $min > $num) ? $min: $num; // HAHA!
     }
 
     /**
@@ -3174,7 +3176,7 @@ function triggerConfettiExplosion() {
      * If that's not possible, or there isn't a translation plugin, it defaults to the set language
      **/
     public static function getCurrentLanguage(){
-
+        // TODO: Update so that this supplise the language that is currently being processed generally, with a fallback to the setting.
         // if Polylang is active
         if(defined('POLYLANG_VERSION')){
             // see if we're creating suggestions and there's a post
@@ -4101,7 +4103,7 @@ function triggerConfettiExplosion() {
             }
         }
 
-        return $return_tags;
+        return apply_filters('wpil_filter_ignore_linking_tags', $return_tags);
     }
 
     /**
@@ -4159,7 +4161,7 @@ function triggerConfettiExplosion() {
         }elseif($has_openai_key){
             $selected = 'openai';
         }else{
-            $selected = '';
+            $selected = 'linkwhisper';
         }
 
         return $selected;
@@ -5616,18 +5618,26 @@ function triggerConfettiExplosion() {
                         $url_pieces_count = count($url_pieces);
 
                         if($post_name_position && $url_pieces_count === $piece_count){  // if the url uses the permalink settings and therefor has the same number of pieces as the permalink string (EX: it's a post)
-                            $post_names[] = $url_pieces[$post_name_position];
+                            $post_names[] = sanitize_title($url_pieces[$post_name_position]);
                         }elseif($url_pieces_count === 1){                               // if the url is just the slug
-                            $post_names[] = $dat->from_url;
+                            $post_names[] = sanitize_title($dat->from_url);
                         }elseif($url_pieces_count === 2 || $url_pieces_count === 3){    // if the url is just the slug, but there's a slash or two
-                            $post_names[] = $url_pieces[1];
+                            $post_names[] = sanitize_title($url_pieces[1]);
                         }
                     }
                 }
 
                 // if we've found the post names
                 if(!empty($post_names)){
+                    // sanitize slugs: remove empty strings, numeric-only values, WP reserved slugs, and anything with non-slug characters
+                    $reserved_slugs = array('feed', 'trackback', 'embed', 'wp-json', 'wp-admin', 'wp-login.php', 'wp-cron.php', 'account', 'wise');
+                    $post_names = array_filter($post_names, function($slug) use ($reserved_slugs) {
+                        return !empty($slug)
+                            && !is_numeric($slug)
+                            && !in_array($slug, $reserved_slugs, true);
+                    });
                     // query the post table with them to get the post ids
+                    $post_names = array_map('esc_sql', $post_names);
                     $post_names = implode('\', \'', $post_names);
                     $ids = $wpdb->get_col("SELECT `ID` FROM {$wpdb->posts} WHERE `post_name` IN ('{$post_names}')");
 
@@ -6174,10 +6184,17 @@ function triggerConfettiExplosion() {
     }
 
     public static function get_money_page_ids($refresh = false){
-        $ids = get_option('wpil_pillar_content_post_ids', Wpil_Post::get_money_pages());
+        $ids = get_option('wpil_pillar_content_post_ids', null);
+        $has_saved_ids = !($ids === null || $ids === false);
+
+        // If nothing has been saved yet, fall back to the pages we can find.
+        // But if the user cleared the list on purpose, let it stay empty.
+        if(!$has_saved_ids){
+            $ids = Wpil_Post::get_money_pages();
+        }
 
         // if we're refreshing the ids with new ones
-        if($refresh){
+        if($refresh && !empty($ids)){
             // check the site for ids
             $new_ids = Wpil_Post::get_money_pages();
 

@@ -10,6 +10,9 @@ class Wpil_Wizard
      */
     public static function init()
     {
+        // NOTE: Decoupling AI from One Click Scan — AI scanning + linking are re-enabled when the wizard is loaded with ?doLinking=1
+        $do_linking = (isset($_GET['doLinking']) && $_GET['doLinking'] === '1');
+
         include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/welcome.php';
         include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/license.php';
         include WP_INTERNAL_LINKING_PLUGIN_DIR . '/templates/wizard/moneypage.php';

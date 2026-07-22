@@ -3086,7 +3086,7 @@ class Wpil_Report
                             $related = (!empty($link->get_ai_relation_percent(true)) && $link->get_ai_relation_percent(true) < 50) ? 'ai-not-related': '';
                             $edit_link = '';
                             $rep .= '<tr class="wpil-activity-panel-edit inactive">
-                                        <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="'.base64_encode($link->raw_anchor).'" data-url="'.base64_encode($link->url).'" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
+                                        <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->link_id . '" data-post_id="'.$link->post->id.'" data-post_type="'.$link->post->type.'" data-anchor="'.base64_encode($link->raw_anchor).'" data-url="'.base64_encode($link->url).'" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->link_id) . '"></td>
                                         <td class="wpil-activity-panel-post wpil-activity-panel-limited-text-cell"><div style="margin: 3px 0;"> ' . esc_html($link->post->getTitle()) . '</div></td>
                                         <td class="wpil-activity-panel-limited-text-cell">
                                             <div style="margin: 3px 0; display:flex;">
@@ -3189,7 +3189,7 @@ class Wpil_Report
                         }
 
                         $rep .= '<tr class="wpil-activity-panel-edit sentences inactive" '.$phrase_key_id.'>
-                                    <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->raw_anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
+                                    <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->link_id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->raw_anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->link_id) . '"></td>
                                     <td class="wpil-activity-panel-post wpil-activity-panel-limited-text-cell"><div style="margin: 3px 0;"> ' . ((!empty($target_post)) ? esc_html($target_post->getTitle()): 'Unknown Post') . '</div></td>
                                     <td class="'. (false !== $phrase_key ? '': 'wpil-activity-panel-limited-text-cell') .'">';
                             if(false !== $phrase_key && isset($phrases[$phrase_key])){
@@ -3308,7 +3308,7 @@ class Wpil_Report
                         }
 
                         $rep .= '<tr class="wpil-activity-panel-edit sentences inactive" '.$phrase_key_id.'>
-                                    <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->post->id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->raw_anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->post->id) . '"></td>
+                                    <td class="wpil-activity-panel-checkbox"><input type="checkbox" class="wpil_link_select wpil_activity_select" data-link_id="' . $link->link_id . '" data-post_id="' . $post->id . '" data-post_type="' . $post->type . '" data-anchor="' . base64_encode($link->raw_anchor) . '" data-url="' . base64_encode($link->url) . '" data-nonce="' . wp_create_nonce('wpil_report_edit_' . $link->post->id . '_nonce_' . $link->link_id) . '"></td>
                                     <td class="'. (false !== $phrase_key ? '': 'wpil-activity-panel-limited-text-cell') .'">';
                             if(false !== $phrase_key && isset($phrases[$phrase_key])){
                                     $phrase = $phrases[$phrase_key];

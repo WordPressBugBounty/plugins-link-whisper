@@ -4486,8 +4486,30 @@ class Wpil_TargetKeyword{
      * @param bool $useBigrams
      */
     public static function build_site_model($postKeywordsMap, $useBigrams = true){
-        if(!is_null(self::$site_model) && self::$site_model['useBigrams'] === $useBigrams){
+        if(!is_null(self::$site_model) && is_array(self::$site_model) && isset(self::$site_model['useBigrams']) && self::$site_model['useBigrams'] === $useBigrams){
             return self::$site_model;
+        }
+
+        // check to see if we have a cached mapp
+        $cache = get_transient('wpil_keyword_site_model_cache');
+        if(!empty($cache)){
+            // refresh the cache before decompressing
+            Wpil_Base::set_transient('wpil_keyword_site_model_cache', $cache, 10 * MINUTE_IN_SECONDS);
+            $cache = Wpil_Toolbox::json_decompress($cache, true);
+
+            if(
+                !empty($cache) &&
+                empty(json_last_error()) &&
+                is_array($cache) &&
+                isset($cache['stopRaw'], $cache['stopStem'], $cache['idf'], $cache['useBigrams']) &&
+                $cache['useBigrams'] === $useBigrams
+            ){
+                self::$site_model = $cache;
+                return self::$site_model;
+            }else{
+                // clear the cache if there's been an error
+                delete_transient('wpil_keyword_site_model_cache');
+            }
         }
 
         [$stopRaw, $stopStem] = self::build_stopword_sets();
@@ -4502,6 +4524,9 @@ class Wpil_TargetKeyword{
             'useBigrams' => $useBigrams,
             'N'          => $N,
         ];
+
+        // cache the model so we can save on calculation time on the next go round
+        Wpil_Base::set_transient('wpil_keyword_site_model_cache', Wpil_Toolbox::json_compress(self::$site_model), 10 * MINUTE_IN_SECONDS);
 
         return self::$site_model;
     }

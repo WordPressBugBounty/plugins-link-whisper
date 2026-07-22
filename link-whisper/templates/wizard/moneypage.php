@@ -126,6 +126,9 @@
                     <div class="wpil-setup-maintenance-loading hidden text-sm text-gray-500">
                         Saving...
                     </div>
+                    <button type="button" class="wpil-wizard-link bg-white text-gray-600 font-bold text-lg px-8 py-4 rounded-xl border border-gray-200 hover:border-gray-300 hover:text-gray-800 hover:bg-gray-50 transition-all focus:ring-4 focus:ring-gray-100 outline-none" data-wpil-wizard-link-id="<?php echo esc_attr($money_pages_next_page); ?>">
+                        Skip for Now
+                    </button>
                     <button id="wpil-pillars-save-next" type="button" data-wpil-nonce="<?php echo esc_attr($money_page_nonce); ?>" data-wpil-wizard-link-id="<?php echo $money_pages_next_page; ?>" class="lw-gradient-bg text-white font-bold text-lg px-10 py-4 rounded-xl shadow-lg hover:shadow-xl hover:opacity-95 transition-all focus:ring-4 focus:ring-purple-200 outline-none">
                         Save and Continue
                     </button>

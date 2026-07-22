@@ -627,7 +627,7 @@ class Wpil_Error
                                         id int(10) unsigned NOT NULL AUTO_INCREMENT,
                                         post_id bigint(20) unsigned NOT NULL,
                                         post_type text,
-                                        url text,
+                                        url text DEFAULT NULL,
                                         internal tinyint(1) DEFAULT 0,
                                         code int(10),
                                         created DATETIME,
@@ -635,7 +635,7 @@ class Wpil_Error
                                         check_count INT(2) DEFAULT 0,
                                         ignore_link tinyint(1) DEFAULT 0,
                                         sentence varchar(255) DEFAULT 0,
-                                        anchor text NOT NULL,
+                                        anchor text DEFAULT NULL,
                                         raw_anchor text DEFAULT NULL,
                                         suggested_url_replacement text DEFAULT NULL,
                                         recommended_action varchar(32) DEFAULT NULL,
@@ -964,6 +964,8 @@ class Wpil_Error
     {
         global $wpdb;
 
+        $anchor = (null === $anchor) ? '' : $anchor;
+        $raw_anchor = (null === $raw_anchor) ? '' : $raw_anchor;
         $internal = Wpil_Link::isInternal($url) ? 1 : 0;
         $wpdb->insert($wpdb->prefix . 'wpil_broken_links', [
             'post_id' => $post->id,
@@ -1662,7 +1664,7 @@ class Wpil_Error
 
             // go over the links and remove the good ones
             foreach($codes_1 as $url => $code_1){
-                if($code_1 > 199 || $code_1 < 300){
+                if($code_1 > 199 && $code_1 < 300){
                     unset($codes_1[$url]);
                 }
             }
@@ -1686,7 +1688,7 @@ class Wpil_Error
             // go over the second set of codes
             foreach($codes_2 as $url => $code_2){
                 // skip any good codes
-                if($code_2 > 199 || $code_2 < 300){
+                if($code_2 > 199 && $code_2 < 300){
                     continue;
                 }
 
@@ -1697,7 +1699,7 @@ class Wpil_Error
                 // compare the results of the GET request against the HEAD request to see which one we'll be storing
                 if($codes_1[$url] > 99 && $code_2 < 100){     // if the HEAD method got an http code, while the GET method got a curl error
                     $url_sentence = self::getUrlSentence($url, $data->anchor, $post->getContent());
-                    self::saveLink($url, $post, $code_1[$url], $url_sentence, $data->raw_anchor);
+                    self::saveLink($url, $post, $codes_1[$url], $url_sentence, $data->anchor, $data->raw_anchor);
                     $saved_broken_links = true;
 
                 }elseif($code_2 > 0){// if the last two were false, go with the GET method results since they tend to be more correct
@@ -1740,7 +1742,7 @@ class Wpil_Error
 
         // if we didn't find any broken links, flip the scan flag so we can re-check previously scanned links
         if(empty($links) && !empty($wpdb->get_var("SELECT count(*) FROM {$wpdb->prefix}wpil_broken_links"))){
-            $option = !empty($option) ? 1: 0;
+            $option = empty($option) ? 1: 0;
             update_option('wpil_error_scan_toggle', $option);
         }
 

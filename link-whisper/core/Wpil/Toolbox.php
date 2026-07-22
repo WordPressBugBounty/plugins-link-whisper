@@ -14,6 +14,7 @@ class Wpil_Toolbox
 
     public static function register(){
         add_action('wp_ajax_wpil_flush_object_cache', array(__CLASS__, 'ajax_flush_object_cache'));
+        add_action('wp_ajax_wpil_flush_opcache', array(__CLASS__, 'ajax_flush_opcache'));
     }
 
     /**
@@ -387,6 +388,76 @@ class Wpil_Toolbox
             self::attempt_object_cache_flush();
         }
         die();
+    }
+
+    /**
+     * Attempts to flush the PHP OPcache via AJAX.
+     **/
+    public static function ajax_flush_opcache(){
+        // if:
+        if( !is_admin() || // we're not in the admin
+            !isset($_POST['nonce']) || // we don't have a nonce
+            !wp_verify_nonce($_POST['nonce'], 'wpil-flush-opcache') || // the nonce isn't good
+            !current_user_can(apply_filters('wpil_filter_main_permission_check', 'manage_categories', Wpil_Base::get_current_page()))) // or the user can't use LinkWhisper
+        {
+            wp_send_json(array(
+                'error' => array(
+                    'title' => __('Permission Error', 'wpil'),
+                    'text'  => __('You do not have permission to clear the OPcache.', 'wpil'),
+                )
+            ));
+        }
+
+        if(function_exists('sg_cachepress_purge_cache')){
+            sg_cachepress_purge_cache();
+            wp_send_json(array(
+                'success' => array(
+                    'title' => __('OPcache Cleared', 'wpil'),
+                    'text'  => __('The PHP OPcache (Siteground) has been cleared.', 'wpil'),
+                )
+            ));
+        }
+
+        // flush Memcache(d) if the extension is present, so stale object cache entries don't linger
+        try{
+            if(class_exists('Memcached')){
+                $memcached = new Memcached();
+                $memcached->addServer('localhost', 11211);
+                $memcached->flush();
+            }elseif(class_exists('Memcache')){
+                $memcache = new Memcache();
+                if(@$memcache->connect('localhost', 11211)){
+                    $memcache->flush();
+                }
+            }
+        }catch(Exception $e){
+            // couldn't reach the memcache server; carry on to the OPcache reset
+        }
+
+        if(!function_exists('opcache_reset')){
+            wp_send_json(array(
+                'error' => array(
+                    'title' => __('OPcache Not Available', 'wpil'),
+                    'text'  => __('PHP OPcache is not available on this site.', 'wpil'),
+                )
+            ));
+        }
+
+        if(!opcache_reset()){
+            wp_send_json(array(
+                'error' => array(
+                    'title' => __('OPcache Not Cleared', 'wpil'),
+                    'text'  => __('The OPcache reset did not complete. The host may be blocking programmatic resets.', 'wpil'),
+                )
+            ));
+        }
+
+        wp_send_json(array(
+            'success' => array(
+                'title' => __('OPcache Cleared', 'wpil'),
+                'text'  => __('The PHP OPcache has been cleared.', 'wpil'),
+            )
+        ));
     }
 
     /**

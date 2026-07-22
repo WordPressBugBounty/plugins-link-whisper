@@ -305,7 +305,7 @@
     if(Wpil_CsvLinkMap::has_active_plan()){
         $csv_pk      = Wpil_CsvLinkMap::get_process_key();
         $csv_summary = Wpil_CsvLinkMap::get_plan_summary();
-        $csv_estimate = !empty($csv_summary['credit_estimate']) ? (int) $csv_summary['credit_estimate'] : Wpil_CsvLinkMap::estimate_credit_cost();
+        $csv_estimate = !empty($csv_summary['credit_estimate']) ? (int) $csv_summary['credit_estimate'] : 0;
         $csv_job_key = 'custom_link_map:0';
         $csv_running = isset($running_fix_jobs[$csv_job_key]);
         $csv_progress = $csv_running ? $running_fix_jobs[$csv_job_key]['progress'] : 0;
@@ -2687,9 +2687,9 @@
 }
 
 #wpil-fix-modal .wpil-fix-secondary[data-wpil-fix-cancel] {
-  background: var(--gray-200) !important;
-  color: var(--gray-700) !important;
-  border: 1px solid var(--gray-300) !important;
+  background: #fff !important;
+  color: #2c6bff !important;
+  border: 1px solid #2c6bff !important;
   border-radius: 8px;
   padding: 8px 14px;
   min-height: 36px;
@@ -2698,8 +2698,8 @@
 }
 
 #wpil-fix-modal .wpil-fix-secondary[data-wpil-fix-cancel]:hover {
-  background: var(--gray-300) !important;
-  color: var(--gray-900) !important;
+  background: #eff6ff !important;
+  color: #1d4ed8 !important;
 }
 
 /* Compact Row - Time Saved + Coming Soon */
@@ -4908,6 +4908,7 @@ document.addEventListener('click', function(event) {
       <small>When the scan is done, Link Whisper AI will have better context for future suggestions.</small>
       <div class="wpil-dashboard-basic-scan-actions">
         <button class="button wpil-dashboard-basic-scan-refresh is-hidden" type="button" data-wpil-dashboard-basic-scan-refresh="1">Refresh Dashboard</button>
+        <button class="wpil-dashboard-basic-scan-primary is-hidden" type="button" data-wpil-dashboard-basic-scan-retry="1">Retry Scan</button>
         <button class="wpil-dashboard-basic-scan-primary" type="button" data-wpil-dashboard-basic-scan-begin="1">Begin Scan</button>
         <button class="button wpil-dashboard-basic-scan-cancel is-hidden" type="button" data-wpil-dashboard-basic-scan-cancel="1">Cancel Scan</button>
         <button class="button" type="button" data-wpil-dashboard-basic-scan-close="1">Close</button>
@@ -4947,6 +4948,7 @@ document.addEventListener('click', function(event) {
   let isClearingCompletedCustomPlan = false;
   let fixPreviewTimer = null;
   let fixPreviewRequestId = 0;
+  let fixLiveCounterState = {};
   const fixButtonWaiters = {};
   const lastReviewCountPollByKey = {};
 
@@ -4999,7 +5001,11 @@ document.addEventListener('click', function(event) {
       keyword_total: Math.max(0, wpilParseInt(normalized.keyword_total)),
       keyword_complete: !!normalized.keyword_complete,
       estimated_cost: (normalized.estimated_cost !== undefined) ? normalized.estimated_cost : 0,
-      estimated_credit_cost: (normalized.estimated_credit_cost !== undefined) ? normalized.estimated_credit_cost : 0
+      estimated_credit_cost: (normalized.estimated_credit_cost !== undefined) ? normalized.estimated_credit_cost : 0,
+      scan_phase: normalized.scan_phase || (normalized.basic_scan_complete ? 'complete' : (normalized.basic_scan_running ? 'running' : 'idle')),
+      last_heartbeat: Math.max(0, wpilParseInt(normalized.last_heartbeat)),
+      seconds_since_heartbeat: Math.max(0, wpilParseInt(normalized.seconds_since_heartbeat)),
+      last_error: (normalized.last_error && typeof normalized.last_error === 'object') ? normalized.last_error : {}
     };
   }
 
@@ -5055,10 +5061,11 @@ document.addEventListener('click', function(event) {
     const keywordStatusEl = document.getElementById('wpil-dashboard-basic-scan-keyword-status');
     const creditEl = document.getElementById('wpil-dashboard-basic-scan-credits');
     const beginBtn = document.querySelector('[data-wpil-dashboard-basic-scan-begin]');
+    const retryBtn = document.querySelector('[data-wpil-dashboard-basic-scan-retry]');
 
     if(processTextEl){
-      processTextEl.textContent = scan.current_process || relationPhase.status;
-      processTextEl.classList.toggle('is-hidden', !scan.basic_scan_running);
+      processTextEl.textContent = getDashboardBasicScanProcessText(scan, relationPhase);
+      processTextEl.classList.toggle('is-hidden', ['running', 'stalled', 'failed'].indexOf(scan.scan_phase) === -1);
     }
     if(overallFillEl){ overallFillEl.style.width = overallPercent + '%'; }
     if(overallPercentEl){ overallPercentEl.textContent = overallPercent + '%'; }
@@ -5083,7 +5090,21 @@ document.addEventListener('click', function(event) {
       creditEl.textContent = wpilFormatInt(scan.estimated_credit_cost || 0);
     }
     if(beginBtn){
-      beginBtn.classList.toggle('is-hidden', scan.basic_scan_running || scan.basic_scan_complete);
+      beginBtn.classList.toggle('is-hidden', scan.basic_scan_running || scan.basic_scan_complete || scan.scan_phase === 'stalled' || scan.scan_phase === 'failed');
+    }
+    if(retryBtn){
+      retryBtn.classList.toggle('is-hidden', scan.scan_phase !== 'stalled' && scan.scan_phase !== 'failed');
+    }
+    syncDashboardBasicScanPhaseNotice(scan);
+  }
+
+  function getDashboardBasicScanProcessText(scan, relationPhase){
+    if(scan.scan_phase === 'stalled'){
+      return 'The scan has not checked in recently.';
+    }
+
+    if(scan.scan_phase === 'failed' && scan.last_error && scan.last_error.title){
+      return scan.last_error.title;
     }
     if(window.jQuery){
       jQuery('[data-wpil-dashboard-basic-scan-cancel]').each(function(){
@@ -5150,9 +5171,9 @@ document.addEventListener('click', function(event) {
   function syncDashboardBasicScanButtons(){
     document.querySelectorAll('[data-wpil-basic-scan]').forEach(function(btn){
       const scan = normalizeDashboardBasicScanState(dashboardBasicScanState);
-      const mode = scan.basic_scan_running ? 'review' : 'start';
+      const mode = (scan.basic_scan_running || scan.scan_phase === 'stalled' || scan.scan_phase === 'failed') ? 'review' : 'start';
       btn.setAttribute('data-wpil-basic-scan', mode);
-      btn.textContent = (mode === 'review') ? 'Review Progress' : 'Perform Basic AI Scanning';
+      btn.textContent = (mode === 'review') ? (scan.scan_phase === 'stalled' ? 'Retry Scan' : 'Review Progress') : 'Perform Basic AI Scanning';
     });
 
     if(window.jQuery){
@@ -5188,6 +5209,7 @@ document.addEventListener('click', function(event) {
     }
 
     notice.classList.remove('is-hidden', 'is-error', 'is-success');
+    notice.removeAttribute('data-wpil-dashboard-basic-scan-phase-notice');
     if(type === 'error'){
       notice.classList.add('is-error');
     }else if(type === 'success'){
@@ -5201,6 +5223,35 @@ document.addEventListener('click', function(event) {
     openDashboardBasicScanModal();
   }
 
+  function syncDashboardBasicScanPhaseNotice(scan){
+    const notice = document.getElementById('wpil-dashboard-basic-scan-notice');
+    if(!notice){
+      return;
+    }
+
+    if(scan.scan_phase !== 'stalled' && scan.scan_phase !== 'failed'){
+      if(notice.getAttribute('data-wpil-dashboard-basic-scan-phase-notice') === '1'){
+        notice.classList.add('is-hidden');
+        notice.classList.remove('is-error', 'is-success');
+        notice.innerHTML = '';
+        notice.removeAttribute('data-wpil-dashboard-basic-scan-phase-notice');
+      }
+      return;
+    }
+
+    notice.setAttribute('data-wpil-dashboard-basic-scan-phase-notice', '1');
+    notice.classList.remove('is-hidden', 'is-success');
+    notice.classList.add('is-error');
+
+    if(scan.scan_phase === 'stalled'){
+      notice.innerHTML = '<strong>Scan Stalled</strong><br>Link Whisper has not heard from the scan recently. Retry the scan to pick up where it left off.';
+      return;
+    }
+
+    const error = scan.last_error || {};
+    notice.innerHTML = '<strong>' + (error.title || 'Scan Failed') + '</strong><br>' + (error.text || 'The scan ran into an error. Retry the scan to continue.');
+  }
+
   function clearDashboardBasicScanMessage(){
     const notice = document.getElementById('wpil-dashboard-basic-scan-notice');
     const refresh = document.querySelector('[data-wpil-dashboard-basic-scan-refresh]');
@@ -5208,6 +5259,7 @@ document.addEventListener('click', function(event) {
       notice.classList.add('is-hidden');
       notice.classList.remove('is-error', 'is-success');
       notice.innerHTML = '';
+      notice.removeAttribute('data-wpil-dashboard-basic-scan-phase-notice');
     }
     if(refresh){
       refresh.classList.add('is-hidden');
@@ -5292,7 +5344,9 @@ document.addEventListener('click', function(event) {
         if(data){
           payload.current_process = data.current_process || payload.current_process;
           payload.estimated_cost = data.estimated_cost;
-          payload.estimated_credit_cost = data.estimated_credit_cost;
+          if(payload.estimated_credit_cost === undefined){
+            payload.estimated_credit_cost = data.estimated_credit_cost;
+          }
           payload.basic_scan_running = !!response.continue;
           updateDashboardBasicScanState(payload);
         }
@@ -5346,7 +5400,11 @@ document.addEventListener('click', function(event) {
         }
 
         if(response && response.success){
-          updateDashboardBasicScanState({basic_scan_running: false, basic_scan_complete: true});
+          const successPayload = response.success.dashboard_basic_scan || {};
+          successPayload.basic_scan_running = false;
+          successPayload.basic_scan_complete = true;
+          successPayload.scan_phase = 'complete';
+          updateDashboardBasicScanState(successPayload);
           showDashboardBasicScanMessage(response.success.title || 'Processing Complete!', response.success.text || 'All available site data has been processed!', 'success', true);
           maybeStartPendingFixAfterBasicScan();
         }
@@ -5498,6 +5556,81 @@ document.addEventListener('click', function(event) {
     modal.querySelectorAll(selector).forEach(function(el) {
       el.textContent = value;
     });
+  }
+
+  function resetFixLiveCounter(ctx){
+    const key = getFixWaiterKey(ctx || {}, 'live');
+    if(key && fixLiveCounterState[key]){
+      delete fixLiveCounterState[key];
+    }
+    const modal = document.getElementById('wpil-fix-modal');
+    if(!modal){ return; }
+    const counter = modal.querySelector('[data-wpil-fix-live-counter]');
+    const eta = modal.querySelector('[data-wpil-fix-eta]');
+    if(counter){ counter.style.display = 'none'; }
+    if(eta){ eta.textContent = ''; }
+  }
+
+  function formatFixEta(seconds){
+    seconds = Math.max(0, wpilParseInt(seconds));
+    if(seconds < 60){
+      return 'less than 1 min left';
+    }
+
+    const minutes = Math.ceil(seconds / 60);
+    if(minutes < 60){
+      return minutes + ' min left';
+    }
+
+    const hours = Math.floor(minutes / 60);
+    const remainder = minutes % 60;
+    return hours + ' hr' + (hours === 1 ? '' : 's') + (remainder ? ' ' + remainder + ' min left' : ' left');
+  }
+
+  function syncFixLiveCounter(ctx, data){
+    const modal = document.getElementById('wpil-fix-modal');
+    if(!modal || !data){
+      return;
+    }
+
+    const total = wpilParseInt(data.total_posts);
+    const analyzed = Math.max(0, Math.min(total, wpilParseInt(data.analyzed_count)));
+    const counter = modal.querySelector('[data-wpil-fix-live-counter]');
+    const analyzedEl = modal.querySelector('[data-wpil-fix-analyzed]');
+    const totalEl = modal.querySelector('[data-wpil-fix-total]');
+    const etaEl = modal.querySelector('[data-wpil-fix-eta]');
+
+    if(!counter || total < 50){
+      if(counter){ counter.style.display = 'none'; }
+      if(etaEl){ etaEl.textContent = ''; }
+      return;
+    }
+
+    if(analyzedEl){ analyzedEl.textContent = wpilFormatInt(analyzed); }
+    if(totalEl){ totalEl.textContent = wpilFormatInt(total); }
+    counter.style.display = 'block';
+
+    const key = getFixWaiterKey(ctx || {}, 'live');
+    const now = Date.now();
+    const previous = fixLiveCounterState[key] || null;
+    let etaText = '';
+
+    if(previous && analyzed > previous.analyzed && now > previous.at){
+      const rate = (analyzed - previous.analyzed) / ((now - previous.at) / 1000);
+      const samples = wpilParseInt(previous.samples) + 1;
+      if(rate > 0 && samples > 1 && analyzed < total){
+        etaText = formatFixEta((total - analyzed) / rate);
+      }
+      fixLiveCounterState[key] = { analyzed: analyzed, at: now, samples: samples, total: total, etaText: etaText || (previous.etaText || '') };
+    }else if(!previous || analyzed < previous.analyzed || total !== previous.total){
+      fixLiveCounterState[key] = { analyzed: analyzed, at: now, samples: 0, total: total, etaText: '' };
+    }else if(previous && previous.etaText){
+      etaText = previous.etaText;
+    }
+
+    if(etaEl){
+      etaEl.textContent = etaText ? '(' + etaText + ')' : '';
+    }
   }
 
   const defaultCustomLinkingStatus = (window.WPIL_CUSTOM_LINKING_STATUS && typeof window.WPIL_CUSTOM_LINKING_STATUS === 'object')
@@ -5700,8 +5833,10 @@ document.addEventListener('click', function(event) {
 
     const normalizedEstimate = Math.max(0, wpilParseInt(estimate));
     const balance = Math.max(0, wpilParseInt(ctx && ctx.balance !== undefined ? ctx.balance : window.WPIL_AI_CREDITS));
-    const enoughCredits = !loading && normalizedEstimate > 0 && balance >= normalizedEstimate;
+    const hasEstimate = normalizedEstimate > 0;
+    const enoughCredits = hasEstimate && balance >= normalizedEstimate;
     const beginButton = document.getElementById('wpil-fix-begin');
+    const processNowButton = document.getElementById('wpil-fix-process-now');
     const statusBadge = modal.querySelector('[data-role="wpil-fix-status"]');
     const bar = modal.querySelector('[data-role="wpil-fix-bar"]');
     const warning = document.getElementById('wpil-fix-warning');
@@ -5709,23 +5844,23 @@ document.addEventListener('click', function(event) {
     const actionsShort = document.getElementById('wpil-fix-actions-short');
     const creditFoot = modal.querySelector('.wpil-fix-credit-foot');
 
-    setAllInFixModal('[data-wpil-fix-estimate]', loading ? '...' : wpilFormatInt(normalizedEstimate));
+    setAllInFixModal('[data-wpil-fix-estimate]', (loading && !hasEstimate) ? '...' : wpilFormatInt(normalizedEstimate));
     setAllInFixModal('[data-wpil-fix-balance]', wpilFormatInt(balance));
 
     if(statusBadge){
-      statusBadge.textContent = loading ? 'Generating Plan' : (normalizedEstimate < 1 ? 'No eligible links' : (enoughCredits ? 'Ready' : 'Not enough credits'));
+      statusBadge.textContent = loading ? 'Generating Plan' : (!hasEstimate ? 'No eligible links' : (enoughCredits ? 'Ready' : 'Not enough credits'));
       statusBadge.classList.toggle('is-bad', !loading && normalizedEstimate > 0 && !enoughCredits);
     }
 
     if(bar){
-      const pct = loading ? 0 : ((normalizedEstimate > 0) ? Math.min(100, Math.round((balance / normalizedEstimate) * 100)) : 100);
+      const pct = hasEstimate ? Math.min(100, Math.round((balance / normalizedEstimate) * 100)) : (loading ? 0 : 100);
       bar.style.width = pct + '%';
     }
 
     if(creditFoot){
-      creditFoot.textContent = loading
+      creditFoot.textContent = (loading && !hasEstimate)
         ? 'Estimating credit cost...'
-        : (normalizedEstimate < 1 ? 'Unfortunately, we did not find eligible links for this fix.' : 'The estimated cost for this fix is ' + wpilFormatInt(normalizedEstimate) + ' credits.');
+        : (!hasEstimate ? 'Unfortunately, we did not find eligible links for this fix.' : ((loading ? 'Current estimate is ' : 'The estimated cost for this fix is ') + wpilFormatInt(normalizedEstimate) + ' credits' + (loading ? ' so far.' : '.')));
     }
 
     if(warning){ warning.classList.toggle('hidden', loading || normalizedEstimate < 1 || enoughCredits); }
@@ -5734,6 +5869,10 @@ document.addEventListener('click', function(event) {
     if(beginButton){
       beginButton.disabled = !!loading || (!loading && !enoughCredits);
       beginButton.textContent = loading ? 'Generating Plan...' : 'Fix With AI';
+    }
+    if(processNowButton){
+      processNowButton.classList.toggle('hidden', true);
+      processNowButton.disabled = true;
     }
 
     if(!loading && !enoughCredits){
@@ -5754,6 +5893,9 @@ document.addEventListener('click', function(event) {
     if(!modal){ return; }
 
     const status = data || {};
+    if(ctx && status.process_key){
+      ctx.processKey = String(status.process_key);
+    }
     const ready = !loading && !!status.preview_ready;
     const progress = Math.max(0, Math.min(100, wpilParseInt(status.progress)));
     const progressWrap = modal.querySelector('[data-wpil-fix-preview-progress]');
@@ -5762,10 +5904,16 @@ document.addEventListener('click', function(event) {
     const progressCopy = modal.querySelector('[data-wpil-fix-preview-copy]');
     const statusBadge = modal.querySelector('[data-wpil-fix-preview-status]');
     const refreshButton = modal.querySelector('[data-wpil-fix-refresh-map]');
+    const exportLink = modal.querySelector('[data-wpil-fix-export-map]');
+    const processNowButton = document.getElementById('wpil-fix-process-now');
+    const estimate = Math.max(0, wpilParseInt(status.credit_estimate || 0));
+    const balance = Math.max(0, wpilParseInt(ctx && ctx.balance !== undefined ? ctx.balance : window.WPIL_AI_CREDITS));
+    const canProcessNow = !ready && estimate > 0 && balance >= estimate;
+    const hasPreviewStats = ready || wpilParseInt(status.source_posts_exact) > 0 || wpilParseInt(status.target_posts_exact) > 0 || wpilParseInt(status.potential_links_min) > 0 || wpilParseInt(status.potential_links_max) > 0;
     const statValues = {
-      source_posts_exact: ready ? wpilFormatInt(status.source_posts_exact) : '...',
-      target_posts_exact: ready ? wpilFormatInt(status.target_posts_exact) : '...',
-      potential_links_range: ready ? formatCustomPotentialLinksRange(status.potential_links_min, status.potential_links_max) : '...'
+      source_posts_exact: hasPreviewStats ? wpilFormatInt(status.source_posts_exact) : '...',
+      target_posts_exact: hasPreviewStats ? wpilFormatInt(status.target_posts_exact) : '...',
+      potential_links_range: hasPreviewStats ? formatCustomPotentialLinksRange(status.potential_links_min, status.potential_links_max) : '...'
     };
 
     Object.keys(statValues).forEach(function(key){
@@ -5782,6 +5930,7 @@ document.addEventListener('click', function(event) {
     if(refreshButton){
       refreshButton.disabled = loading;
     }
+    updateFixMapExportLink(ctx, exportLink);
 
     if(progressWrap){
       progressWrap.classList.toggle('is-visible', !ready);
@@ -5795,8 +5944,35 @@ document.addEventListener('click', function(event) {
     if(progressCopy){
       progressCopy.textContent = status.message || 'Link Whisper is building the sitemap used for this estimate.';
     }
+    syncFixLiveCounter(ctx, status);
 
     setFixModalCreditState(ctx, status.credit_estimate || 0, !ready);
+    if(processNowButton){
+      processNowButton.classList.toggle('hidden', ready || estimate < 1);
+      processNowButton.disabled = !canProcessNow;
+    }
+  }
+
+  function updateFixMapExportLink(ctx, exportLink){
+    const link = exportLink || document.querySelector('[data-wpil-fix-export-map]');
+    if(!link){
+      return;
+    }
+
+    const type = ctx && ctx.type ? String(ctx.type) : '';
+    if(!type || typeof ajaxurl === 'undefined'){
+      link.setAttribute('href', '#');
+      link.classList.add('is-disabled');
+      return;
+    }
+
+    let url = ajaxurl + '?action=wpil_ai_fix_export_map&nonce=' + encodeURIComponent(window.WPIL_AI_FIX_NONCE || '') + '&fix_type=' + encodeURIComponent(type);
+    if(ctx.processKey){
+      url += '&process_key=' + encodeURIComponent(ctx.processKey);
+    }
+
+    link.setAttribute('href', url);
+    link.classList.remove('is-disabled');
   }
 
   function setFixSpecialOptionsDirty(dirty){
@@ -5813,7 +5989,7 @@ document.addEventListener('click', function(event) {
     button.disabled = !dirty;
   }
 
-  function requestFixPreviewMap(ctx, reset){
+  function requestFixPreviewMap(ctx, reset, forceReset){
     if(!ctx || !ctx.type || !window.jQuery || typeof ajaxurl === 'undefined'){
       return;
     }
@@ -5827,7 +6003,13 @@ document.addEventListener('click', function(event) {
     ctx.previewReady = false;
     ctx.specialOptions = readFixSpecialOptionsFromUi();
     setFixSpecialOptionsDirty(false);
-    renderFixPreviewMapStatus(ctx, { progress: 0, message: 'Link Whisper is generating the linking plan for this fix.' }, true);
+    if(reset || !ctx.previewStatus){
+      ctx.previewStatus = { progress: 0, message: 'Link Whisper is generating the linking plan for this fix.' };
+      resetFixLiveCounter(ctx);
+    }else{
+      ctx.previewStatus.message = ctx.previewStatus.message || 'Link Whisper is generating the linking plan for this fix.';
+    }
+    renderFixPreviewMapStatus(ctx, ctx.previewStatus, true);
 
     jQuery.post(ajaxurl, {
       action: 'wpil_ai_fix_preview_map',
@@ -5835,6 +6017,7 @@ document.addEventListener('click', function(event) {
       fix_type: ctx.type || '',
       item_id: ctx.itemId || '',
       reset: reset ? 1 : 0,
+      force_reset: forceReset ? 1 : 0,
       special_options: ctx.specialOptions || {}
     }).done(function(response){
       if(requestId !== fixPreviewRequestId){
@@ -5848,6 +6031,7 @@ document.addEventListener('click', function(event) {
         }
         ctx.estimate = wpilParseInt(data.credit_estimate);
         ctx.previewReady = !!data.preview_ready;
+        ctx.previewStatus = data;
         renderFixPreviewMapStatus(ctx, data, !ctx.previewReady);
 
         if(!ctx.previewReady && data.status === 'running'){
@@ -6301,7 +6485,7 @@ document.addEventListener('click', function(event) {
     if(select){
       const selected = Array.isArray(options.selected_post_types) ? options.selected_post_types : [];
       Array.prototype.slice.call(select.options).forEach(function(opt){
-        opt.selected = selected.indexOf(String(opt.value)) !== -1;
+        opt.selected = !!options.select_post_types && selected.indexOf(String(opt.value)) !== -1;
       });
     }
 
@@ -6352,7 +6536,8 @@ document.addEventListener('click', function(event) {
       if(!$select.hasClass('select2-hidden-accessible')){
         $select.select2({
           width: '100%',
-          dropdownParent: $panel
+          placeholder: 'Choose post types',
+          closeOnSelect: false
         });
       }else{
         $select.trigger('change.select2');
@@ -6656,11 +6841,17 @@ document.addEventListener('click', function(event) {
     const status = data && data.status ? String(data.status) : 'running';
     setProgressModalRunningState(status === 'running');
     const pct = Math.max(0, Math.min(100, wpilParseInt(data.progress)));
+    const analyzed = wpilParseInt(data.analyzed_count);
+    const total = wpilParseInt(data.total_posts);
     const fill = document.getElementById('wpil-v3-progress-bar-fill');
     const txt = document.getElementById('wpil-v3-progress-text');
     const per = document.getElementById('wpil-v3-progress-percent');
     if(fill){ fill.style.width = pct + '%'; }
-    if(txt){ txt.textContent = data.message || ('Fixing ' + pct + '%'); }
+    if(txt){
+      txt.textContent = (total >= 50 && analyzed > 0)
+        ? ((data.message || 'Working...') + ' Analyzed ' + wpilFormatInt(analyzed) + ' of ' + wpilFormatInt(total) + ' posts.')
+        : (data.message || ('Fixing ' + pct + '%'));
+    }
     if(per){ per.textContent = pct + '%'; }
   }
 
@@ -6757,6 +6948,22 @@ document.addEventListener('click', function(event) {
     }
 
     return runner.start(ctx);
+  }
+
+  function startFixWithCurrentMap(ctx){
+    if(!ctx || !claimFixWaiter(ctx, 'start', 4000)){
+      return;
+    }
+
+    ctx.specialOptions = readFixSpecialOptionsFromUi();
+    ctx.processCurrentMap = true;
+    window.WPIL_AI_FIX_SPECIAL_OPTIONS = ctx.specialOptions;
+    openProgressModal(ctx);
+    closeFixModal();
+    startFixProcess(ctx);
+    setTimeout(function(){
+      releaseFixWaiter(ctx, 'start');
+    }, 500);
   }
 
   function checkExistingJobStatus(ctx, callback){
@@ -6903,13 +7110,14 @@ document.addEventListener('click', function(event) {
     const message = (error && error.message) ? error.message : 'Fix failed';
 
     if(error && error.retryable){
+      const reconnecting = 'Reconnecting... Link Whisper will retry automatically.';
       setFixButtonsRunningState(ctx, true);
-      setInlineIndicator(ctx.type, true, progress, message);
+      setInlineIndicator(ctx.type, true, progress, reconnecting);
       if(isSameFixContext(currentProgressContext, ctx)){
         updateProgressModal({
           status: 'running',
           progress: progress,
-          message: message
+          message: reconnecting
         });
       }
       return;
@@ -7020,6 +7228,7 @@ document.addEventListener('click', function(event) {
 
     const modal = document.getElementById('wpil-fix-modal');
     if (!modal) { return; }
+    updateFixMapExportLink(ctx);
 
     const specialPanel = modal.querySelector('[data-wpil-fix-special-options]');
     const showSpecialOptions = canShowFixSpecialOptions(ctx.type);
@@ -7089,7 +7298,7 @@ document.addEventListener('click', function(event) {
     modal.setAttribute('aria-hidden', 'false');
     document.body.classList.add('wpil-fix-modal-open');
 
-    requestFixPreviewMap(ctx, true);
+    requestFixPreviewMap(ctx, false);
   }
 
   function closeFixModal() {
@@ -7386,6 +7595,38 @@ document.addEventListener('click', function(event) {
       }, 500);
     });
 
+  document.getElementById('wpil-fix-process-now')
+    ?.addEventListener('click', function() {
+      if(!lastFixContext || lastFixContext.previewReady){
+        return;
+      }
+
+      const startCurrentMap = function(){
+        startFixWithCurrentMap(lastFixContext);
+      };
+
+      if(typeof wpil_swal === 'function'){
+        wpil_swal({
+          title: 'Notice',
+          text: 'The mapping is not finished. Are you sure you want to begin processing with the current map?',
+          icon: 'info',
+          buttons: {
+            cancel: true,
+            confirm: true
+          }
+        }).then(function(confirmed){
+          if(confirmed){
+            startCurrentMap();
+          }
+        });
+        return;
+      }
+
+      if(window.confirm('The mapping is not finished. Are you sure you want to begin processing with the current map?')){
+        startCurrentMap();
+      }
+    });
+
   document.addEventListener('change', function(event){
     const toggle = event.target.closest('input[data-wpil-fix-option="select_post_types"]');
     if(!toggle){
@@ -7416,6 +7657,14 @@ document.addEventListener('click', function(event) {
   });
 
   document.addEventListener('click', function(event){
+    const exportLink = event.target.closest('[data-wpil-fix-export-map]');
+    if(exportLink && exportLink.classList.contains('is-disabled')){
+      event.preventDefault();
+      return;
+    }
+  });
+
+  document.addEventListener('click', function(event){
     const button = event.target.closest('[data-wpil-fix-refresh-map]');
     const modal = document.getElementById('wpil-fix-modal');
     if(!button || button.disabled || !modal || modal.classList.contains('hidden') || !lastFixContext){
@@ -7423,7 +7672,7 @@ document.addEventListener('click', function(event) {
     }
 
     event.preventDefault();
-    requestFixPreviewMap(lastFixContext, true);
+    requestFixPreviewMap(lastFixContext, true, true);
   });
 
   document.addEventListener('click', function(event){
@@ -7434,7 +7683,7 @@ document.addEventListener('click', function(event) {
     }
 
     event.preventDefault();
-    requestFixPreviewMap(lastFixContext, true);
+    requestFixPreviewMap(lastFixContext, true, true);
   });
 
   document.addEventListener('click', function(event){

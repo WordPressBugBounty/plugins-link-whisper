@@ -19,6 +19,7 @@ class Wpil_LinkMapping
     private static $post_category_cache = array();
     private static $relationship_item_filter_cache = array();
     private static $relation_map_seed_cache = array();
+    private static $redirect_hidden_post_ids = null;
     static $url_redirect_cache = array();
     static $cleaned_url_redirect_cache = array();
     static $expanded_mapping = false;
@@ -952,6 +953,12 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
                 return false;
             }
 
+            // if the post's URL is being redirected away to another post, don't put it in the map
+            if(self::is_post_hidden_by_redirect($parts['id'])){
+                self::$relationship_item_filter_cache[$cache_key] = false;
+                return false;
+            }
+
             $title = trim(wp_strip_all_tags($wp_post->post_title));
             $slug = trim(urldecode($wp_post->post_name));
         }
@@ -968,6 +975,26 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
 
         self::$relationship_item_filter_cache[$cache_key] = true;
         return true;
+    }
+
+    private static function is_post_hidden_by_redirect($post_id = 0){
+        $post_id = (int) $post_id;
+        if(empty($post_id)){
+            return false;
+        }
+
+        if(is_null(self::$redirect_hidden_post_ids)){
+            self::$redirect_hidden_post_ids = array();
+            $hidden_ids = Wpil_Settings::getPostsHiddenByRedirects(true);
+
+            if(!empty($hidden_ids)){
+                foreach($hidden_ids as $id){
+                    self::$redirect_hidden_post_ids[(int) $id] = true;
+                }
+            }
+        }
+
+        return isset(self::$redirect_hidden_post_ids[$post_id]);
     }
 
     /**
@@ -1312,6 +1339,25 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
         return array_values($normalized);
     }
 
+    private static function filter_relation_map_related_posts($map = array()){
+        if(empty($map) || !is_array($map) || !isset($map['related_posts']) || !is_array($map['related_posts'])){
+            return $map;
+        }
+
+        $related_posts = array();
+        foreach($map['related_posts'] as $pid){
+            $pid = self::normalize_pid($pid);
+            if(empty($pid) || !self::is_allowed_relationship_pid($pid)){
+                continue;
+            }
+
+            $related_posts[] = $pid;
+        }
+
+        $map['related_posts'] = array_values(array_unique($related_posts));
+        return $map;
+    }
+
     private static function get_relation_map_pillar_ids($process_key = ''){
         $pillar_ids = self::filter_source_pids_by_fix_options(Wpil_Settings::get_money_page_pid_list(true), $process_key);
         $pillar_ids = self::normalize_relation_pid_list($pillar_ids);
@@ -1398,6 +1444,10 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
                 continue;
             }
 
+            if(!self::is_allowed_relationship_pid($parts['type'] . '_' . $parts['id'])){
+                continue;
+            }
+
             $work_scope = self::normalize_relation_work_scope(isset($queue_row['work_scope']) ? $queue_row['work_scope'] : self::RELATION_SCOPE_DEFAULT);
             $is_pillar = !empty($queue_row['is_pillar']) ? 1 : 0;
             $result = $wpdb->query(
@@ -1436,6 +1486,7 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
 
         $pillar_ids = self::get_relation_map_pillar_ids($process_key);
         $normal_ids = self::get_relation_map_normal_ids($process_key, $pillar_ids);
+        shuffle($normal_ids); // mix up the regular posts so partial mapps don't always start in the same place
         $queue_rows = array();
         foreach($pillar_ids as $pid){
             $row = self::get_relation_queue_row($pid, self::RELATION_SCOPE_DEFAULT, true);
@@ -1483,6 +1534,24 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
             'queue_rows' => $queue_rows,
             'seeded' => self::seed_relation_map_queue($process_key, $queue_rows),
         );
+    }
+
+    /**
+     * Keeps the finished relation map, but lets a new AI pass work through it again.
+     **/
+    public static function reset_relation_map_ai_queue($process_key = '', $work_scope = ''){
+        global $wpdb;
+
+        if(empty($process_key)){
+            return false;
+        }
+
+        $table = self::get_relation_map_table();
+        $sql = "UPDATE {$table} SET ai_processed = 0, last_index = '' WHERE process_key = %s AND item_processed = 1 AND map_data IS NOT NULL AND map_data != ''";
+        $params = array($process_key);
+        self::append_relation_scope_filter($sql, $params, $work_scope);
+
+        return ($wpdb->query($wpdb->prepare($sql, $params)) !== false);
     }
 
     private static function sanitize_relation_map_runtime_data($map = array()){
@@ -1545,6 +1614,7 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
 
         $table = self::get_relation_map_table();
         $compressed = '';
+        $map = self::filter_relation_map_related_posts($map);
         if(!empty($item_processed) && isset($map['related_posts']) && empty($map['related_posts'])){
             $map = array();
             $ai_processed = 1;
@@ -1718,6 +1788,10 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
             return self::save_relation_map_item($process_key, $pid, array(), true, $work_scope);
         }
 
+        if(!self::is_allowed_relationship_pid($pid)){
+            return self::save_relation_map_item($process_key, $pid, array(), true, $work_scope);
+        }
+
         $sibling_row = self::get_processed_relation_map_sibling_row($process_key, $pid, $work_scope);
         if(!empty($sibling_row)){
             return self::save_relation_map_item($process_key, $pid, is_array($sibling_row->map_data) ? $sibling_row->map_data : array(), true, $work_scope);
@@ -1875,6 +1949,11 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
         }
 
         $normalized = self::normalize_relation_map_row($row, false);
+        if(!self::is_allowed_relationship_pid($normalized->pid)){
+            return $return_map ? array() : array();
+        }
+
+        $normalized->map_data = self::filter_relation_map_related_posts($normalized->map_data);
         if(!empty($normalized->map_data) && !self::relation_map_item_has_related_posts($normalized->map_data)){
             self::complete_empty_relation_map_item($process_key, $normalized->pid, $normalized->work_scope);
             return $return_map ? array() : array();
@@ -1927,10 +2006,11 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
             $map = array();
             foreach($rows as $row){
                 $normalized = self::normalize_relation_map_row($row, false);
-                if(empty($normalized->pid) || empty($normalized->map_data)){
+                if(empty($normalized->pid) || empty($normalized->map_data) || !self::is_allowed_relationship_pid($normalized->pid)){
                     continue;
                 }
 
+                $normalized->map_data = self::filter_relation_map_related_posts($normalized->map_data);
                 if(!self::relation_map_item_has_related_posts($normalized->map_data)){
                     self::complete_empty_relation_map_item($process_key, $normalized->pid, $normalized->work_scope);
                     continue;
@@ -1944,7 +2024,16 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
 
         $normalized_rows = array();
         foreach($rows as $row){
-            $normalized_rows[] = self::normalize_relation_map_row($row, false);
+            $normalized = self::normalize_relation_map_row($row, false);
+            if(empty($normalized->pid) || !self::is_allowed_relationship_pid($normalized->pid)){
+                continue;
+            }
+
+            if(!empty($normalized->map_data)){
+                $normalized->map_data = self::filter_relation_map_related_posts($normalized->map_data);
+            }
+
+            $normalized_rows[] = $normalized;
         }
 
         return $normalized_rows;
@@ -2089,6 +2178,36 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
 
         $table = self::get_relation_map_table();
         $sql = "SELECT COUNT(*) FROM {$table} WHERE process_key = %s AND post_id > 0 AND ai_processed = 1";
+        $params = array($process_key);
+        if(self::is_relation_work_scope_arg($scope_pids)){
+            self::append_relation_scope_filter($sql, $params, $scope_pids);
+            return (int) $wpdb->get_var($wpdb->prepare($sql, $params));
+        }
+
+        $scope = self::build_relation_pid_where_clause($scope_pids);
+        if(!empty($scope['sql'])){
+            $sql .= $scope['sql'];
+            $params = array_merge($params, $scope['params']);
+        }
+
+        $exclude = self::build_relation_pid_where_clause($exclude_pids, 'post_id', 'post_type', true);
+        if(!empty($exclude['sql'])){
+            $sql .= $exclude['sql'];
+            $params = array_merge($params, $exclude['params']);
+        }
+
+        return (int) $wpdb->get_var($wpdb->prepare($sql, $params));
+    }
+
+    public static function get_relation_map_available_ai_processed_item_count($process_key = '', $scope_pids = array(), $exclude_pids = array()){
+        global $wpdb;
+
+        if(empty($process_key)){
+            return 0;
+        }
+
+        $table = self::get_relation_map_table();
+        $sql = "SELECT COUNT(*) FROM {$table} WHERE process_key = %s AND post_id > 0 AND item_processed = 1 AND ai_processed = 1 AND map_data IS NOT NULL AND map_data != ''";
         $params = array($process_key);
         if(self::is_relation_work_scope_arg($scope_pids)){
             self::append_relation_scope_filter($sql, $params, $scope_pids);
@@ -2259,6 +2378,15 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
         $sql .= " ORDER BY is_pillar DESC, id ASC LIMIT 1";
         $row = $wpdb->get_row($wpdb->prepare($sql, $params));
         $normalized = !empty($row) ? self::normalize_relation_map_row($row, false) : array();
+        if(!empty($normalized) && !self::is_allowed_relationship_pid($normalized->pid)){
+            self::complete_empty_relation_map_item($process_key, $normalized->pid, $normalized->work_scope);
+            return array();
+        }
+
+        if(!empty($normalized) && !empty($normalized->map_data)){
+            $normalized->map_data = self::filter_relation_map_related_posts($normalized->map_data);
+        }
+
         if(!empty($normalized) && !empty($normalized->map_data) && !self::relation_map_item_has_related_posts($normalized->map_data)){
             self::complete_empty_relation_map_item($process_key, $normalized->pid, $normalized->work_scope);
             return array();
@@ -2312,7 +2440,13 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
             $map = array();
             foreach($rows as $row){
                 $normalized = self::normalize_relation_map_row($row, false);
-                if(empty($normalized->pid) || empty($normalized->map_data)){
+                if(empty($normalized->pid) || empty($normalized->map_data) || !self::is_allowed_relationship_pid($normalized->pid)){
+                    continue;
+                }
+
+                $normalized->map_data = self::filter_relation_map_related_posts($normalized->map_data);
+                if(!self::relation_map_item_has_related_posts($normalized->map_data)){
+                    self::complete_empty_relation_map_item($process_key, $normalized->pid, $normalized->work_scope);
                     continue;
                 }
 
@@ -2325,6 +2459,17 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
         $normalized_rows = array();
         foreach($rows as $row){
             $normalized = self::normalize_relation_map_row($row, false);
+            if(empty($normalized->pid) || !self::is_allowed_relationship_pid($normalized->pid)){
+                if(!empty($normalized->pid)){
+                    self::complete_empty_relation_map_item($process_key, $normalized->pid, $normalized->work_scope);
+                }
+                continue;
+            }
+
+            if(!empty($normalized->map_data)){
+                $normalized->map_data = self::filter_relation_map_related_posts($normalized->map_data);
+            }
+
             if(!empty($normalized->map_data) && !self::relation_map_item_has_related_posts($normalized->map_data)){
                 self::complete_empty_relation_map_item($process_key, $normalized->pid, $normalized->work_scope);
                 continue;

@@ -89,13 +89,15 @@ class Wpil_Export
         $filters = self::get_ai_credit_history_filters($_GET);
         $from_ts = isset($filters['from_ts']) ? (int) $filters['from_ts'] : 0;
         $to_ts = isset($filters['to_ts']) ? (int) $filters['to_ts'] : 0;
-        $events = isset($filters['events']) ? $filters['events'] : array();
-        $view = isset($filters['view']) ? (string) $filters['view'] : 'individual';
 
         $format = isset($_GET['format']) ? sanitize_text_field(wp_unslash($_GET['format'])) : 'json';
         $format = strtolower($format);
 
-        $payload = self::get_ai_token_use_export_data($from_ts, $to_ts, $events, $view);
+        if('csv' === $format && isset($_GET['view'])){
+            $payload = self::get_ai_credit_history_data($from_ts, $to_ts, $filters['events'], $filters['view']);
+        }else{
+            $payload = self::get_ai_token_use_export_data($from_ts, $to_ts);
+        }
         $host = !empty($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : '';
         $base_filename = 'ai-token-use-export' . '-' . $host . '-' . date('Ymd', $from_ts) . '-to-' . date('Ymd', $to_ts);
 
@@ -155,7 +157,8 @@ class Wpil_Export
         foreach($rows as $row){
             $credit_change = self::format_ai_credit_history_change($row, false);
             $task_name = '';
-            if(isset($payload['view']) && 'task' === $payload['view']){
+            $view = isset($payload['view']) ? $payload['view'] : 'individual';
+            if('task' === $view){
                 $task_name = self::get_ai_credit_history_event_name($row, 'task');
             }elseif(!empty($row['process_key']) && !empty($row['process_id'])){
                 $task_name = Wpil_AI::get_credit_tracking_task_pretty_name($row['process_key'], $row['process_id'], true);
@@ -164,7 +167,7 @@ class Wpil_Export
                 isset($row['token_index']) ? $row['token_index'] : '',
                 isset($row['process_time_utc']) ? $row['process_time_utc'] : '',
                 isset($row['process_time']) ? $row['process_time'] : '',
-                isset($payload['view']) ? $payload['view'] : 'individual',
+                $view,
                 isset($row['transaction_type']) ? $row['transaction_type'] : '',
                 isset($row['transaction_ref']) ? $row['transaction_ref'] : '',
                 isset($row['transaction_note']) ? $row['transaction_note'] : '',
@@ -303,7 +306,7 @@ class Wpil_Export
 
     public static function get_ai_credit_history_panel_data($source = array(), $per_page = 10){
         $filters = self::get_ai_credit_history_filters($source, $per_page);
-        $history = self::get_ai_token_use_export_data_paginated($filters['from_ts'], $filters['to_ts'], $filters['page'], $filters['per_page'], $filters['events'], $filters['view']);
+        $history = self::get_ai_credit_history_data_paginated($filters['from_ts'], $filters['to_ts'], $filters['page'], $filters['per_page'], $filters['events'], $filters['view']);
 
         return array(
             'filters' => $filters,
@@ -627,8 +630,26 @@ class Wpil_Export
         return $data;
     }
 
-    public static function get_ai_token_use_export_data($from_ts = 0, $to_ts = 0, $events = array(), $view = 'individual'){
-        $normalized_rows = self::normalize_ai_token_rows(self::get_ai_token_use_raw_rows($from_ts, $to_ts), $events, $view);
+    public static function get_ai_token_use_export_data($from_ts = 0, $to_ts = 0){
+        $rows = self::format_ai_token_rows(self::get_ai_token_use_raw_rows($from_ts, $to_ts), 'individual', false);
+
+        return array(
+            'generated_at_utc' => gmdate('c'),
+            'site_url' => get_site_url(),
+            'range' => array(
+                'from_date' => gmdate('Y-m-d', (int) $from_ts),
+                'to_date' => gmdate('Y-m-d', (int) $to_ts),
+                'from_timestamp' => (int) $from_ts,
+                'to_timestamp' => (int) $to_ts
+            ),
+            'view' => 'individual',
+            'count' => count($rows),
+            'rows' => $rows
+        );
+    }
+
+    public static function get_ai_credit_history_data($from_ts = 0, $to_ts = 0, $events = array(), $view = 'individual'){
+        $rows = self::get_ai_credit_history_rows($from_ts, $to_ts, $events, $view);
 
         return array(
             'generated_at_utc' => gmdate('c'),
@@ -640,15 +661,15 @@ class Wpil_Export
                 'to_timestamp' => (int) $to_ts
             ),
             'view' => $view,
-            'count' => count($normalized_rows),
-            'rows' => $normalized_rows
+            'count' => count($rows),
+            'rows' => $rows
         );
     }
 
-    public static function get_ai_token_use_export_data_paginated($from_ts = 0, $to_ts = 0, $page = 1, $per_page = 25, $events = array(), $view = 'individual'){
+    public static function get_ai_credit_history_data_paginated($from_ts = 0, $to_ts = 0, $page = 1, $per_page = 25, $events = array(), $view = 'individual'){
         $page = max(1, (int) $page);
         $per_page = max(1, min(200, (int) $per_page));
-        $rows = self::normalize_ai_token_rows(self::get_ai_token_use_raw_rows($from_ts, $to_ts), $events, $view);
+        $rows = self::get_ai_credit_history_rows($from_ts, $to_ts, $events, $view);
         $total_count = count($rows);
         $total_pages = max(1, (int) ceil($total_count / $per_page));
         if($page > $total_pages){
@@ -691,74 +712,13 @@ class Wpil_Export
             $wpdb->prepare(
                 "SELECT *
                 FROM {$table}
-                WHERE `process_time` >= %d AND `process_time` <= %d
+                WHERE `process_time` >= %d AND `process_time` <= %d AND (`credits_used` > 0 OR `credits_added` > 0)
                 ORDER BY `process_time` DESC, `token_index` DESC",
                 (int) $from_ts,
                 (int) $to_ts
             ),
             ARRAY_A
         );
-    }
-
-    private static function normalize_ai_token_rows($rows = array(), $events = array(), $view = 'individual'){
-        if(empty($rows) || !is_array($rows)){
-            return array();
-        }
-
-        $grouped_rows = ('task' === $view)
-            ? self::group_ai_token_rows_by_task($rows, $events)
-            : self::group_ai_token_rows_individual($rows, $events);
-
-        foreach($grouped_rows as $index => $row){
-            $process_time = isset($row['process_time']) ? (int) $row['process_time'] : 0;
-            if(isset($row['transaction_type']) && $row['transaction_type'] === 'credit-deposit' && empty($grouped_rows[$index]['credits_added']) && !empty($grouped_rows[$index]['credits_used'])){
-                $grouped_rows[$index]['credits_added'] = $grouped_rows[$index]['credits_used'];
-            }
-
-            $grouped_rows[$index]['process_name'] = self::get_ai_credit_history_event_name($grouped_rows[$index], $view);
-            $grouped_rows[$index]['process_time_utc'] = !empty($process_time) ? gmdate('c', $process_time) : '';
-            $grouped_rows[$index]['grouped_view'] = $view;
-        }
-
-        usort($grouped_rows, function($a, $b){
-            $time_a = isset($a['process_time']) ? (int) $a['process_time'] : 0;
-            $time_b = isset($b['process_time']) ? (int) $b['process_time'] : 0;
-            if($time_a === $time_b){
-                return ((int) ($b['token_index'] ?? 0)) <=> ((int) ($a['token_index'] ?? 0));
-            }
-
-            return $time_b <=> $time_a;
-        });
-
-        return array_values($grouped_rows);
-    }
-
-    private static function group_ai_token_rows_individual($rows = array(), $events = array()){
-        $events = self::sanitize_ai_credit_history_events($events, array(), 'individual');
-        $grouped_rows = array();
-
-        foreach($rows as $row){
-            $row = self::prepare_ai_token_row($row);
-            if(!empty($events) && !in_array((int) $row['process_used'], $events, true)){
-                continue;
-            }
-
-            $group_key = implode('|', array(
-                (int) $row['process_time'],
-                (int) $row['process_used'],
-                (string) $row['transaction_type'],
-                ('credit-deposit' === $row['transaction_type']) ? (string) $row['transaction_ref'] : '',
-            ));
-
-            if(!isset($grouped_rows[$group_key])){
-                $grouped_rows[$group_key] = $row;
-                continue;
-            }
-
-            $grouped_rows[$group_key] = self::merge_ai_token_group_rows($grouped_rows[$group_key], $row);
-        }
-
-        return array_values($grouped_rows);
     }
 
     private static function group_ai_token_rows_by_task($rows = array(), $events = array()){
@@ -811,6 +771,66 @@ class Wpil_Export
         }
 
         return array_values($grouped_rows);
+    }
+
+    private static function get_ai_credit_history_rows($from_ts = 0, $to_ts = 0, $events = array(), $view = 'individual'){
+        $rows = self::get_ai_token_use_raw_rows($from_ts, $to_ts);
+
+        if('task' === $view){
+            $rows = self::group_ai_token_rows_by_task($rows, $events);
+        }else{
+            $rows = self::filter_ai_token_rows($rows, $events);
+        }
+
+        return self::format_ai_token_rows($rows, $view, 'task' === $view);
+    }
+
+    private static function filter_ai_token_rows($rows = array(), $events = array()){
+        $events = self::sanitize_ai_credit_history_events($events, array(), 'individual');
+        $filtered = array();
+
+        foreach($rows as $row){
+            $row = self::prepare_ai_token_row($row);
+            if(!empty($events) && !in_array((int) $row['process_used'], $events, true)){
+                continue;
+            }
+
+            $filtered[] = $row;
+        }
+
+        return $filtered;
+    }
+
+    private static function format_ai_token_rows($rows = array(), $view = 'individual', $round_credit_usage = true){
+        if(empty($rows) || !is_array($rows)){
+            return array();
+        }
+
+        foreach($rows as $index => $row){
+            $rows[$index] = self::prepare_ai_token_row($row);
+            $process_time = isset($rows[$index]['process_time']) ? (int) $rows[$index]['process_time'] : 0;
+
+            // Keep grouped dashboard totals tidy, but leave support exports with the raw stored value.
+            if($round_credit_usage && $rows[$index]['credits_used'] > 1){
+                $rows[$index]['credits_used'] = round($rows[$index]['credits_used']);
+            }
+
+            $rows[$index]['process_name'] = self::get_ai_credit_history_event_name($rows[$index], $view);
+            $rows[$index]['process_time_utc'] = !empty($process_time) ? gmdate('c', $process_time) : '';
+            $rows[$index]['grouped_view'] = $view;
+        }
+
+        usort($rows, function($a, $b){
+            $time_a = isset($a['process_time']) ? (int) $a['process_time'] : 0;
+            $time_b = isset($b['process_time']) ? (int) $b['process_time'] : 0;
+            if($time_a === $time_b){
+                return ((int) ($b['token_index'] ?? 0)) <=> ((int) ($a['token_index'] ?? 0));
+            }
+
+            return $time_b <=> $time_a;
+        });
+
+        return array_values($rows);
     }
 
     private static function prepare_ai_token_row($row = array()){

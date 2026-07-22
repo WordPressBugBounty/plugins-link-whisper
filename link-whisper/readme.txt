@@ -2,8 +2,8 @@ Link Whisper Free
 Contributors: sreenathlw, mattbissett, linkwhspr
 Tags: links, SEO, internal linking, link building, orphan content
 Requires at least: 4.6
-Tested up to: 7.0.0
-Stable Tag: 0.9.5
+Tested up to: 7.0.2
+Stable Tag: 0.9.6
 Requires PHP: 5.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -200,6 +200,18 @@ Please report security bugs found in the source code of the Link Whisper Free pl
 15. [Premium] The URL Changer allows you to update old links to point to new URLs.
 
 == Changelog ==
+= 0.9.6 =
+* [NEW DEBUG SETTING] Adding a "Clear OP Cache" tool to the settings so you can flush PHP's OPcache when the site is still serving older cached plugin files or reports aren't showing updates.
+* [NEW DEBUG SETTING] Adding a "Repair Empty AI Embeddings" tool that rescans posts which were incorrectly saved as empty AI embeddings and refreshes their AI Relation calculations.
+* [IMPROVEMENT] Making the Dashboard's Basic AI Scan more resilient — it now detects stalled scans, surfaces errors, and lets you retry.
+* [IMPROVEMENT] Estimating the AI credit cost of a linking or relation run before it starts.
+* [IMPROVEMENT] Improving the AI fix workflow with live item counts, a fix preview, and the ability to export the generated fix map.
+* [IMPROVEMENT] Excluding posts hidden behind redirects from AI relation maps so suggestions stay relevant.
+* [SECURITY] Fixing minor issue with search filtering in report.
+* [BUGFIX] Fixing an issue that could keep the Site Health dashboard widget from loading.
+* [BUGFIX] Fixing the error message display when an empty AI embedding rescan fails.
+* [BUGFIX] Fixing an issue that could keep the Site Health dashboard widget from loading.
+
 = 0.9.5 =
 * [SECURITY] Improving filter sanitization.
 * [BUGFIX] Fixing error when processing Elementor-based content.

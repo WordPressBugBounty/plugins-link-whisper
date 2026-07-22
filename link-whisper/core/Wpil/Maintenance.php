@@ -15,6 +15,7 @@ class Wpil_Maintenance
         add_action('wp_ajax_wpil_get_maintenance_timers', array(__CLASS__, 'ajax_get_maintenance_timers'));
         add_action('wp_ajax_wpil_ai_fix_process', array(__CLASS__, 'ajax_ai_fix_process'));
         add_action('wp_ajax_wpil_ai_fix_preview_map', array(__CLASS__, 'ajax_ai_fix_preview_map'));
+        add_action('wp_ajax_wpil_ai_fix_export_map', array(__CLASS__, 'ajax_ai_fix_export_map'));
     }
 
     /**
@@ -136,6 +137,10 @@ class Wpil_Maintenance
             'link_mode' => $link_mode,
         ];
 
+        $counts = self::get_ai_fix_live_counter_counts($fix_type, $process_key, self::should_count_available_ai_fix_items($fix_type));
+        $response['analyzed_count'] = $counts['analyzed_count'];
+        $response['total_posts'] = $counts['total_posts'];
+
         if($fix_type === 'broken_links'){
             $broken_metrics = self::get_broken_link_queue_metrics($process_key);
             $response['fixes_remaining'] = $broken_metrics['remaining'];
@@ -146,6 +151,40 @@ class Wpil_Maintenance
         $response['dashboard_metrics'] = self::get_ai_fix_dashboard_metrics_snapshot();
 
         return $response;
+    }
+
+    private static function get_ai_fix_scan_complete_user_meta_key($fix_type = '', $item_id = ''){
+        $fix_type = is_string($fix_type) ? sanitize_key($fix_type) : '';
+        $item_id = is_string($item_id) ? sanitize_text_field($item_id) : '';
+
+        return 'wpil_fix_scan_complete_' . md5($fix_type . ':' . $item_id);
+    }
+
+    private static function should_count_available_ai_fix_items($fix_type = ''){
+        return in_array($fix_type, array('orphaned_posts', 'link_coverage', 'link_quality', 'custom_link_map'), true);
+    }
+
+    private static function get_ai_fix_live_counter_counts($fix_type = '', $process_key = '', $available_only = false){
+        $counts = array(
+            'analyzed_count' => 0,
+            'total_posts' => 0,
+        );
+
+        if(empty($process_key)){
+            return $counts;
+        }
+
+        foreach(self::get_ai_fix_preview_scopes($fix_type) as $scope){
+            if(!empty($available_only)){
+                $counts['total_posts'] += Wpil_LinkMapping::get_relation_map_available_item_count($process_key, $scope);
+                $counts['analyzed_count'] += Wpil_LinkMapping::get_relation_map_available_ai_processed_item_count($process_key, $scope);
+            }else{
+                $counts['total_posts'] += Wpil_LinkMapping::get_relation_map_total_item_count($process_key, $scope);
+                $counts['analyzed_count'] += Wpil_LinkMapping::get_relation_map_completed_item_count($process_key, $scope);
+            }
+        }
+
+        return $counts;
     }
 
     private static function get_ai_fix_dashboard_metrics_snapshot(){
@@ -286,7 +325,7 @@ class Wpil_Maintenance
         $link_mode = isset($_POST['link_mode']) ? sanitize_text_field(wp_unslash($_POST['link_mode'])) : 'auto';
         $link_mode = ('review' === $link_mode) ? 'review' : 'auto';
         if($estimate < 1 && $fix_type === 'custom_link_map'){
-            $estimate = (int) Wpil_CsvLinkMap::estimate_credit_cost();
+            $estimate = (int) Wpil_AI::estimate_ai_linking_credit_cost(Wpil_CsvLinkMap::get_process_key(), true, count(Wpil_CsvLinkMap::get_queue_rows()));
         }
 
         if (empty($fix_type)) {
@@ -396,8 +435,18 @@ class Wpil_Maintenance
                 self::send_ai_fix_process_response($response, true, 200, true, $lock_key);
             }
 
-            $queue_setup = self::get_ai_fix_queue_setup($fix_type, $item_id, $process_key);
+            $queue_setup = self::get_ai_fix_queue_setup($fix_type, $item_id, $process_key, $process_current_map);
             $reuse_existing_queue = !empty($queue_setup['reuse_existing_queue']);
+
+            if($process_current_map && !$reuse_existing_queue){
+                $response = self::build_ai_fix_process_response($fix_type, $item_id, array(
+                    'process_key' => $process_key,
+                    'link_mode' => $link_mode,
+                ), 'idle');
+                $response['message'] = 'The preview map does not have enough processed data to start yet.';
+                $response['skip_reason'] = 'preview_map_not_started';
+                self::send_ai_fix_process_response($response, true, 200, true, $lock_key);
+            }
 
             if($fix_type === 'custom_link_map' && !$reuse_existing_queue && !Wpil_CsvLinkMap::has_ready_preview_map()){
                 $response = self::build_ai_fix_process_response($fix_type, $item_id, array(
@@ -427,6 +476,8 @@ class Wpil_Maintenance
             if(!empty($process_key)){
                 if(!$reuse_existing_queue){
                     Wpil_LinkMapping::reset_relation_map_queue($process_key, $queue_setup['queue_rows']);
+                }else{
+                    Wpil_LinkMapping::reset_relation_map_ai_queue($process_key);
                 }
             }
 
@@ -449,6 +500,7 @@ class Wpil_Maintenance
                 'broken_total' => !empty($queue_setup['broken_total']) ? (int) $queue_setup['broken_total'] : 0,
                 'link_mode' => $link_mode,
                 'specified_populated' => !empty($queue_setup['reuse_existing_queue']),
+                'process_current_map' => !empty($process_current_map),
             ];
         }elseif(!isset($registry[$key]) || !is_array($registry[$key])){
             self::send_ai_fix_process_response(self::build_ai_fix_process_response($fix_type, $item_id, array(), 'idle'), true, 200, false, $lock_key);
@@ -475,6 +527,18 @@ class Wpil_Maintenance
                         $job['progress'] = (int) $latest_registry[$key]['progress'];
                     }
                 }
+            }
+        }
+
+        if($job['status'] !== 'cancelled' && (!isset($job['link_mode']) || $job['link_mode'] !== 'review') && !empty($job['process_key']) && Wpil_AI::get_process_review_link_count($job['process_key']) > 100){
+            Wpil_AI::auto_create_links_from_suggestions(0, '', $job['process_key']);
+            if(Wpil_AI::get_process_review_link_count($job['process_key']) > 100){
+                $job['status'] = 'running';
+                $job['progress'] = min(99, max(1, isset($job['progress']) ? (int) $job['progress'] : 1));
+                $job['message'] = 'Inserting links into posts...';
+                $registry[$key] = $job;
+                update_option('wpil_ai_fix_registry', $registry, false);
+                self::send_ai_fix_process_response(self::build_ai_fix_process_response($fix_type, $item_id, $job), true, 200, false, $lock_key);
             }
         }
 
@@ -515,6 +579,16 @@ class Wpil_Maintenance
                     }
                     $final_status = 'cancelled';
                 }
+            }
+        }
+
+        if($final_status === 'complete' && (!isset($job['link_mode']) || $job['link_mode'] !== 'review') && !empty($job['process_key'])){
+            Wpil_AI::auto_create_links_from_suggestions(0, '', $job['process_key']);
+            if(Wpil_AI::get_process_review_link_count($job['process_key']) > 0){
+                $job['status'] = 'running';
+                $job['progress'] = 99;
+                $job['message'] = 'Inserting links into posts...';
+                $final_status = 'running';
             }
         }
 
@@ -563,6 +637,7 @@ class Wpil_Maintenance
         $fix_type = isset($_POST['fix_type']) ? sanitize_text_field(wp_unslash($_POST['fix_type'])) : '';
         $item_id = isset($_POST['item_id']) ? sanitize_text_field(wp_unslash($_POST['item_id'])) : '';
         $reset = isset($_POST['reset']) && !empty($_POST['reset']);
+        $force_reset = isset($_POST['force_reset']) && !empty($_POST['force_reset']);
         $special_options = isset($_POST['special_options']) ? wp_unslash($_POST['special_options']) : array();
         $allowed_types = array('orphaned_posts', 'link_coverage', 'link_quality', 'broken_links', 'external_focus');
         $fix_special_types = array('orphaned_posts', 'link_coverage', 'link_quality');
@@ -574,6 +649,11 @@ class Wpil_Maintenance
         $process_key = self::get_ai_fix_process_key($fix_type);
         if(empty($process_key)){
             wp_send_json_error(array('message' => 'Unable to prepare the preview map.'), 400);
+        }
+
+        $scan_complete_key = self::get_ai_fix_scan_complete_user_meta_key($fix_type, $item_id);
+        if($reset && !$force_reset && get_user_meta(get_current_user_id(), $scan_complete_key, true) && self::is_ai_fix_preview_map_ready($fix_type, $process_key)){
+            $reset = false;
         }
 
         $total_items = Wpil_LinkMapping::get_relation_map_total_item_count($process_key);
@@ -599,7 +679,104 @@ class Wpil_Maintenance
 
         $ready = self::is_ai_fix_preview_map_ready($fix_type, $process_key);
         $message = $ready ? 'Linking plan ready.' : 'Generating the linking plan for this fix...';
+        if($ready){
+            update_user_meta(get_current_user_id(), $scan_complete_key, time());
+        }
         wp_send_json_success(self::build_ai_fix_preview_response($fix_type, $process_key, ($ready ? 'complete' : 'running'), $message));
+    }
+
+    /**
+     * Exports the current relation mapp that the AI fix popup is working with.
+     **/
+    public static function ajax_ai_fix_export_map(){
+        if(!current_user_can('manage_options')){
+            wp_die('Forbidden', '', array('response' => 403));
+        }
+
+        if(!isset($_REQUEST['nonce']) || !wp_verify_nonce($_REQUEST['nonce'], 'wpil_ai_fix_nonce')){
+            wp_die('Invalid nonce', '', array('response' => 403));
+        }
+
+        $fix_type = isset($_REQUEST['fix_type']) ? sanitize_text_field(wp_unslash($_REQUEST['fix_type'])) : '';
+        $process_key = isset($_REQUEST['process_key']) ? sanitize_text_field(wp_unslash($_REQUEST['process_key'])) : '';
+        $allowed_types = array('orphaned_posts', 'link_coverage', 'link_quality', 'broken_links', 'external_focus', 'custom_link_map');
+
+        if(empty($fix_type) || !in_array($fix_type, $allowed_types, true)){
+            wp_die('Missing fix_type', '', array('response' => 400));
+        }
+
+        if(empty($process_key)){
+            $process_key = self::get_ai_fix_process_key($fix_type);
+        }
+
+        if(empty($process_key)){
+            wp_die('Unable to find the AI fix mapp.', '', array('response' => 400));
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'wpil_relation_mapping';
+        $rows = array();
+        $offset = 0;
+        $limit = 250;
+
+        while(true){
+            $results = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, map_date, process_key, work_scope, post_id, post_type, is_pillar, item_processed, ai_processed, pillar_processed, map_processed, item_count, last_index, map_data FROM {$table} WHERE process_key = %s ORDER BY id ASC LIMIT %d OFFSET %d",
+                    $process_key,
+                    $limit,
+                    $offset
+                )
+            );
+
+            if(empty($results)){
+                break;
+            }
+
+            foreach($results as $row){
+                $map_data = Wpil_Toolbox::json_decompress(isset($row->map_data) ? $row->map_data : '', true);
+                $rows[] = array(
+                    'id' => (int) $row->id,
+                    'pid' => $row->post_type . '_' . (int) $row->post_id,
+                    'post_id' => (int) $row->post_id,
+                    'post_type' => $row->post_type,
+                    'work_scope' => Wpil_LinkMapping::normalize_relation_work_scope(isset($row->work_scope) ? $row->work_scope : ''),
+                    'map_date' => (int) $row->map_date,
+                    'map_date_utc' => !empty($row->map_date) ? gmdate('Y-m-d H:i:s', (int) $row->map_date) : '',
+                    'is_pillar' => (int) $row->is_pillar,
+                    'item_processed' => (int) $row->item_processed,
+                    'ai_processed' => (int) $row->ai_processed,
+                    'pillar_processed' => (int) $row->pillar_processed,
+                    'map_processed' => (int) $row->map_processed,
+                    'item_count' => (int) $row->item_count,
+                    'last_index' => isset($row->last_index) ? $row->last_index : '',
+                    'map_data' => is_array($map_data) ? $map_data : array(),
+                );
+            }
+
+            if(count($results) < $limit){
+                break;
+            }
+
+            $offset += $limit;
+        }
+
+        $payload = array(
+            'exported_at_utc' => gmdate('Y-m-d H:i:s'),
+            'fix_type' => $fix_type,
+            'process_key' => $process_key,
+            'summary' => self::get_ai_fix_preview_summary_from_relation_map($process_key),
+            'row_count' => count($rows),
+            'rows' => $rows,
+        );
+
+        $host = !empty($_SERVER['HTTP_HOST']) ? sanitize_file_name(wp_unslash($_SERVER['HTTP_HOST'])) : 'site';
+        $filename = 'ai-fix-map-' . sanitize_file_name($fix_type) . '-' . $host . '-' . time() . '.json';
+
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-type: application/json; charset=utf-8');
+        echo wp_json_encode($payload, JSON_PRETTY_PRINT);
+        exit;
     }
 
     /**
@@ -1298,7 +1475,7 @@ class Wpil_Maintenance
             'progress' => $progress,
             'status' => 'running',
             'started' => time(),
-            'estimate' => (int) Wpil_CsvLinkMap::estimate_credit_cost(),
+            'estimate' => (int) Wpil_AI::estimate_ai_linking_credit_cost(Wpil_CsvLinkMap::get_process_key(), true, count(Wpil_CsvLinkMap::get_queue_rows())),
             'last_tick' => time(),
             'stage' => $stage,
             'process_key' => $process_key,
@@ -1386,18 +1563,9 @@ class Wpil_Maintenance
     }
 
     private static function get_ai_fix_preview_progress($fix_type = '', $process_key = ''){
-        $total = 0;
-        $complete = 0;
-
-        foreach(self::get_ai_fix_preview_scopes($fix_type) as $scope){
-            $scope_total = Wpil_LinkMapping::get_relation_map_total_item_count($process_key, $scope);
-            if($scope_total < 1){
-                continue;
-            }
-
-            $total += $scope_total;
-            $complete += Wpil_LinkMapping::get_relation_map_completed_item_count($process_key, $scope);
-        }
+        $counts = self::get_ai_fix_live_counter_counts($fix_type, $process_key);
+        $total = $counts['total_posts'];
+        $complete = $counts['analyzed_count'];
 
         if($total < 1){
             return 100;
@@ -1543,7 +1711,8 @@ class Wpil_Maintenance
     private static function build_ai_fix_preview_response($fix_type = '', $process_key = '', $status = 'running', $message = ''){
         $summary = self::get_ai_fix_preview_summary_from_relation_map($process_key);
         $source_posts = (int) $summary['source_posts_exact'];
-        $estimate = !empty($source_posts) ? ($source_posts * 4) : 0;
+        $counts = self::get_ai_fix_live_counter_counts($fix_type, $process_key, ($status === 'complete' && self::should_count_available_ai_fix_items($fix_type)));
+        $estimate = Wpil_AI::estimate_ai_linking_credit_cost($process_key, true);
 
         return array(
             'status' => $status,
@@ -1552,6 +1721,8 @@ class Wpil_Maintenance
             'progress' => ($status === 'complete') ? 100 : self::get_ai_fix_preview_progress($fix_type, $process_key),
             'preview_ready' => ($status === 'complete'),
             'credit_estimate' => $estimate,
+            'analyzed_count' => $counts['analyzed_count'],
+            'total_posts' => $counts['total_posts'],
             'source_posts_exact' => $source_posts,
             'target_posts_exact' => (int) $summary['target_posts_exact'],
             'potential_links_min' => (int) $summary['potential_links_min'],
@@ -1559,7 +1730,7 @@ class Wpil_Maintenance
         );
     }
 
-    private static function get_ai_fix_queue_setup($fix_type = '', $item_id = '', $process_key = ''){
+    private static function get_ai_fix_queue_setup($fix_type = '', $item_id = '', $process_key = '', $process_current_map = false){
         $setup = array(
             'queue_rows' => array(),
             'stage' => '',
@@ -1607,11 +1778,25 @@ class Wpil_Maintenance
                 break;
         }
 
-        if($fix_type !== 'custom_link_map' && !empty($process_key) && self::is_ai_fix_preview_map_ready($fix_type, $process_key)){
+        if($fix_type !== 'custom_link_map' && !empty($process_key) && (self::is_ai_fix_preview_map_ready($fix_type, $process_key) || (!empty($process_current_map) && self::has_ai_fix_preview_map_data($fix_type, $process_key)))){
             $setup['reuse_existing_queue'] = true;
         }
 
         return $setup;
+    }
+
+    private static function has_ai_fix_preview_map_data($fix_type = '', $process_key = ''){
+        if(empty($process_key)){
+            return false;
+        }
+
+        foreach(self::get_ai_fix_preview_scopes($fix_type) as $scope){
+            if(Wpil_LinkMapping::get_relation_map_completed_item_count($process_key, $scope) > 0){
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static function get_broken_link_queue_metrics($process_key = ''){
@@ -1670,20 +1855,22 @@ class Wpil_Maintenance
         $ready_count = $gate_state['ready_count'];
         $scope_complete = $gate_state['scope_complete'];
         if(!$gate_state['can_process_ai']){
-            $job['progress'] = self::get_relation_map_gate_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
-            return $job;
+            if(self::should_wait_for_relation_map_gate($job, $job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT)){
+                $job['progress'] = self::get_relation_map_gate_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
+                return $job;
+            }
         }
 
         $next_pid = !empty($source_status['next_pending']) ? $source_status['next_pending'] : '';
 
         if(empty($next_pid)){
-            if(!$scope_complete){
+            if(!$scope_complete && !self::should_use_available_ai_progress($job)){
                 $job['progress'] = self::get_relation_map_gate_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
                 return $job;
             }
 
             if($ready_count > 0){
-                $job['progress'] = self::get_relation_map_ai_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
+                $job['progress'] = self::get_relation_map_ai_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT, 0, 100, self::should_use_available_ai_progress($job));
                 return $job;
             }
 
@@ -1727,7 +1914,7 @@ class Wpil_Maintenance
             }
         }
 
-        $job['progress'] = self::get_relation_map_ai_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
+        $job['progress'] = self::get_relation_map_ai_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT, 0, 100, self::should_use_available_ai_progress($job));
 
         // apply any suggested replacements in small batches if auto-apply is enabled
         if(!empty(get_option('wpil_auto_apply_broken_link_recommendations', false))){
@@ -1764,8 +1951,10 @@ class Wpil_Maintenance
         $scope_state = $gate_state['status'];
         $scope_complete = $gate_state['scope_complete'];
         if(!$gate_state['can_process_ai']){
-            $job['progress'] = self::get_relation_map_gate_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
-            return $job;
+            if(self::should_wait_for_relation_map_gate($job, $job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT)){
+                $job['progress'] = self::get_relation_map_gate_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
+                return $job;
+            }
         }
 
         $next_pid = '';
@@ -1792,13 +1981,14 @@ class Wpil_Maintenance
             $scope_state = Wpil_LinkMapping::get_relation_map_scope_status($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
             $pending_ai_count = $scope_state['pending_count'];
             $scope_complete = $scope_state['scope_complete'];
-            if(!$scope_complete){
+            if(!$scope_complete && !self::should_use_available_ai_progress($job)){
                 $job['progress'] = self::get_relation_map_gate_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
                 return $job;
             }
 
-            $total = max(1, $scope_state['total']);
-            $done = $scope_state['done_count'];
+            $counts = self::get_relation_map_ai_progress_counts($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT, self::should_use_available_ai_progress($job));
+            $total = max(1, $counts['total']);
+            $done = $counts['done'];
             $job['progress'] = ($total > 0) ? min(100, (int) round(($done / max($total, 1)) * 100)) : 100;
             if($pending_ai_count > 0){
                 return $job;
@@ -1812,8 +2002,9 @@ class Wpil_Maintenance
         self::process_orphaned_fix_pid($next_pid, $job['process_key'], $auto_insert);
 
         $scope_state = Wpil_LinkMapping::get_relation_map_scope_status($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
-        $total = max(1, $scope_state['total']);
-        $done = $scope_state['done_count'];
+        $counts = self::get_relation_map_ai_progress_counts($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT, self::should_use_available_ai_progress($job));
+        $total = max(1, $counts['total']);
+        $done = $counts['done'];
         $job['progress'] = ($total > 0) ? min(100, (int) round(($done / max($total, 1)) * 100)) : 100;
 
         return $job;
@@ -2202,19 +2393,21 @@ class Wpil_Maintenance
         $ready_count = isset($scope_status['pending_count']) ? (int) $scope_status['pending_count'] : 0;
         $scope_complete = !empty($scope_status['scope_complete']);
         if(!$gate_state['can_process_ai']){
-            $job['progress'] = self::get_relation_map_gate_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
-            return $job;
+            if(self::should_wait_for_relation_map_gate($job, $job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT)){
+                $job['progress'] = self::get_relation_map_gate_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
+                return $job;
+            }
         }
 
         $next_pid = !empty($scope_status['next_pending']) ? $scope_status['next_pending'] : '';
         if(empty($next_pid)){
-            if(!$scope_complete){
+            if(!$scope_complete && !self::should_use_available_ai_progress($job)){
                 $job['progress'] = self::get_relation_map_gate_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
                 return $job;
             }
 
             if($ready_count > 0){
-                $job['progress'] = self::get_relation_map_ai_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
+                $job['progress'] = self::get_relation_map_ai_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT, 0, 100, self::should_use_available_ai_progress($job));
                 return $job;
             }
 
@@ -2234,7 +2427,7 @@ class Wpil_Maintenance
             Wpil_LinkMapping::mark_relation_map_ai_processed($job['process_key'], $next_pid, true, Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
         }
 
-        $job['progress'] = self::get_relation_map_ai_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT);
+        $job['progress'] = self::get_relation_map_ai_progress($job['process_key'], Wpil_LinkMapping::RELATION_SCOPE_DEFAULT, 0, 100, self::should_use_available_ai_progress($job));
 
         return $job;
     }
@@ -2848,38 +3041,72 @@ class Wpil_Maintenance
         return array_values($normalized);
     }
 
-    private static function get_relation_map_ai_progress($process_key = '', $scope_pids = array(), $min = 0, $max = 100){
+    private static function get_relation_map_ai_progress($process_key = '', $scope_pids = array(), $min = 0, $max = 100, $available_only = false){
         $max = (int) $max;
         $min = (int) $min;
         if($max <= $min){
             return $max;
         }
 
-        if(!is_array($scope_pids) && $scope_pids !== ''){
-            $total = Wpil_LinkMapping::get_relation_map_total_item_count($process_key, $scope_pids);
-            if($total < 1){
-                return $max;
-            }
-
-            $scope_status = Wpil_LinkMapping::get_relation_map_scope_status($process_key, $scope_pids);
-            $done = isset($scope_status['done_count']) ? (int) $scope_status['done_count'] : 0;
-            $ratio = min(1, max(0, ($done / max($total, 1))));
-
-            return min($max, max($min, (int) round($min + (($max - $min) * $ratio))));
-        }
-
-        $scope_pids = self::normalize_pid_scope($scope_pids);
-
-        $total = count($scope_pids);
-        if($total < 1){
+        $counts = self::get_relation_map_ai_progress_counts($process_key, $scope_pids, $available_only);
+        if($counts['total'] < 1){
             return $max;
         }
 
-        $scope_status = Wpil_LinkMapping::get_relation_map_scope_status($process_key, $scope_pids);
-        $done = isset($scope_status['done_count']) ? (int) $scope_status['done_count'] : 0;
-        $ratio = min(1, max(0, ($done / max($total, 1))));
+        $ratio = min(1, max(0, ($counts['done'] / max($counts['total'], 1))));
 
         return min($max, max($min, (int) round($min + (($max - $min) * $ratio))));
+    }
+
+    private static function get_relation_map_ai_progress_counts($process_key = '', $scope_pids = array(), $available_only = false){
+        if(!is_array($scope_pids) && $scope_pids !== ''){
+            if(!empty($available_only)){
+                return array(
+                    'total' => Wpil_LinkMapping::get_relation_map_available_item_count($process_key, $scope_pids),
+                    'done' => Wpil_LinkMapping::get_relation_map_available_ai_processed_item_count($process_key, $scope_pids),
+                );
+            }
+
+            $scope_status = Wpil_LinkMapping::get_relation_map_scope_status($process_key, $scope_pids);
+            return array(
+                'total' => Wpil_LinkMapping::get_relation_map_total_item_count($process_key, $scope_pids),
+                'done' => isset($scope_status['done_count']) ? (int) $scope_status['done_count'] : 0,
+            );
+        }
+
+        $scope_pids = self::normalize_pid_scope($scope_pids);
+        if(!empty($available_only)){
+            return array(
+                'total' => Wpil_LinkMapping::get_relation_map_available_item_count($process_key, $scope_pids),
+                'done' => Wpil_LinkMapping::get_relation_map_available_ai_processed_item_count($process_key, $scope_pids),
+            );
+        }
+
+        $scope_status = Wpil_LinkMapping::get_relation_map_scope_status($process_key, $scope_pids);
+        return array(
+            'total' => count($scope_pids),
+            'done' => isset($scope_status['done_count']) ? (int) $scope_status['done_count'] : 0,
+        );
+    }
+
+    private static function should_use_available_ai_progress($job = array()){
+        if(empty($job) || !is_array($job)){
+            return false;
+        }
+
+        if(!empty($job['fix_type']) && $job['fix_type'] === 'custom_link_map'){
+            return false;
+        }
+
+        return (!empty($job['process_current_map']) || !empty($job['specified_populated']));
+    }
+
+    private static function should_wait_for_relation_map_gate($job = array(), $process_key = '', $scope_pids = array()){
+        if(!self::should_use_available_ai_progress($job)){
+            return true;
+        }
+
+        return (Wpil_LinkMapping::get_relation_map_available_item_count($process_key, $scope_pids) < 1);
     }
 
     private static function get_relation_scope_state($process_key = '', $scope_pids = array()){
@@ -3512,26 +3739,32 @@ class Wpil_Maintenance
                 $ready_count = isset($outbound_status['pending_count']) ? (int) $outbound_status['pending_count'] : 0;
                 $scope_complete = !empty($outbound_status['scope_complete']);
                 if(!$outbound_gate['can_process_ai']){
-                    $job['progress'] = self::get_relation_map_gate_progress($job['process_key'], $outbound_scope);
-                    return $job;
-                }
-
-                $next = !empty($outbound_status['next_pending']) ? $outbound_status['next_pending'] : '';
-                if(empty($next)){
-                    if(!$scope_complete){
+                    if(self::should_use_available_ai_progress($job) && Wpil_LinkMapping::get_relation_map_available_item_count($job['process_key'], $outbound_scope) < 1){
+                        $job['stage'] = 'inbound';
+                    }elseif(self::should_wait_for_relation_map_gate($job, $job['process_key'], $outbound_scope)){
                         $job['progress'] = self::get_relation_map_gate_progress($job['process_key'], $outbound_scope);
                         return $job;
                     }
+                }
 
-                    if($ready_count > 0){
-                        $job['progress'] = self::get_relation_map_ai_progress($job['process_key'], $outbound_scope, 0, 50);
-                        return $job;
+                if($job['stage'] === 'outbound'){
+                    $next = !empty($outbound_status['next_pending']) ? $outbound_status['next_pending'] : '';
+                    if(empty($next)){
+                        if(!$scope_complete && !self::should_use_available_ai_progress($job)){
+                            $job['progress'] = self::get_relation_map_gate_progress($job['process_key'], $outbound_scope);
+                            return $job;
+                        }
+
+                        if($ready_count > 0){
+                            $job['progress'] = self::get_relation_map_ai_progress($job['process_key'], $outbound_scope, 0, 50, self::should_use_available_ai_progress($job));
+                            return $job;
+                        }
+
+                        $job['stage'] = 'inbound';
+                    }else{
+                        Wpil_LinkMapping::claim_relation_map_ai_item($job['process_key'], $next, Wpil_LinkMapping::RELATION_SCOPE_OUTBOUND);
+                        self::process_link_coverage_outbound_post($next, $job['process_key'], $auto_insert);
                     }
-
-                    $job['stage'] = 'inbound';
-                }else{
-                    Wpil_LinkMapping::claim_relation_map_ai_item($job['process_key'], $next, Wpil_LinkMapping::RELATION_SCOPE_OUTBOUND);
-                    self::process_link_coverage_outbound_post($next, $job['process_key'], $auto_insert);
                 }
             }
         }
@@ -3549,8 +3782,14 @@ class Wpil_Maintenance
             $ready_count = isset($inbound_status['pending_count']) ? (int) $inbound_status['pending_count'] : 0;
             $scope_complete = !empty($inbound_status['scope_complete']);
             if(!$inbound_gate['can_process_ai']){
-                $job['progress'] = min(99, max(50, 50 + (int) round(self::get_relation_map_gate_progress($job['process_key'], $inbound_scope) / 2)));
-                return $job;
+                if(self::should_use_available_ai_progress($job) && Wpil_LinkMapping::get_relation_map_available_item_count($job['process_key'], $inbound_scope) < 1){
+                    $job['status'] = 'complete';
+                    $job['progress'] = 100;
+                    return $job;
+                }elseif(self::should_wait_for_relation_map_gate($job, $job['process_key'], $inbound_scope)){
+                    $job['progress'] = min(99, max(50, 50 + (int) round(self::get_relation_map_gate_progress($job['process_key'], $inbound_scope) / 2)));
+                    return $job;
+                }
             }
 
             $next = !empty($inbound_status['next_pending']) ? $inbound_status['next_pending'] : '';
@@ -3558,13 +3797,13 @@ class Wpil_Maintenance
                 Wpil_LinkMapping::claim_relation_map_ai_item($job['process_key'], $next, Wpil_LinkMapping::RELATION_SCOPE_INBOUND);
                 self::process_link_coverage_inbound_post($next, $job['process_key'], $auto_insert);
             }else{
-                if(!$scope_complete){
+                if(!$scope_complete && !self::should_use_available_ai_progress($job)){
                     $job['progress'] = min(99, max(50, 50 + (int) round(self::get_relation_map_gate_progress($job['process_key'], $inbound_scope) / 2)));
                     return $job;
                 }
 
                 if($ready_count > 0){
-                    $job['progress'] = self::get_relation_map_ai_progress($job['process_key'], $inbound_scope, 50, 100);
+                    $job['progress'] = self::get_relation_map_ai_progress($job['process_key'], $inbound_scope, 50, 100, self::should_use_available_ai_progress($job));
                     return $job;
                 }
 
@@ -3576,10 +3815,13 @@ class Wpil_Maintenance
 
         $outbound_scope = Wpil_LinkMapping::RELATION_SCOPE_OUTBOUND;
         $inbound_scope = Wpil_LinkMapping::RELATION_SCOPE_INBOUND;
-        $outbound_total = Wpil_LinkMapping::get_relation_map_total_item_count($job['process_key'], $outbound_scope);
-        $inbound_total = Wpil_LinkMapping::get_relation_map_total_item_count($job['process_key'], $inbound_scope);
-        $outbound_done = Wpil_LinkMapping::get_relation_map_ai_processed_item_count($job['process_key'], $outbound_scope);
-        $inbound_done = Wpil_LinkMapping::get_relation_map_ai_processed_item_count($job['process_key'], $inbound_scope);
+        $use_available_progress = self::should_use_available_ai_progress($job);
+        $outbound_counts = self::get_relation_map_ai_progress_counts($job['process_key'], $outbound_scope, $use_available_progress);
+        $inbound_counts = self::get_relation_map_ai_progress_counts($job['process_key'], $inbound_scope, $use_available_progress);
+        $outbound_total = $outbound_counts['total'];
+        $inbound_total = $inbound_counts['total'];
+        $outbound_done = $outbound_counts['done'];
+        $inbound_done = $inbound_counts['done'];
 
         if($job['status'] !== 'complete'){
             if($job['stage'] === 'outbound'){

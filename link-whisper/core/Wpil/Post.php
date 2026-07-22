@@ -327,6 +327,7 @@ class Wpil_Post
     /**
      * Get all Advanced Custom Fields names
      *
+     * @param int $post_id The id of the post that we're checking...
      * @return array
      */
     public static function getAdvancedCustomFieldsList($post_id)
@@ -379,6 +380,37 @@ class Wpil_Post
 
             if ($name) {
                 $fields[] = $field->name;
+            }
+        }
+
+        // Try asking ACF about the field keys saved with the post too.
+        // Some sites keep their field groups in PHP or JSON, so the field post lookup can come up short.
+        if(function_exists('acf_get_field')){
+            $include_text = !Wpil_Settings::get_ignore_acf_text_fields();
+            $field_keys = $wpdb->get_results("SELECT meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id = $post_id AND meta_key LIKE '\_%' AND meta_value LIKE 'field_%' AND SUBSTR(meta_key, 2) != ''");
+
+            if(!empty($field_keys)){
+                foreach($field_keys as $field_key){
+                    $field_data = acf_get_field($field_key->meta_value);
+                    if(empty($field_data) || empty($field_data['type'])){
+                        continue;
+                    }
+
+                    if($field_data['type'] !== 'wysiwyg' && $field_data['type'] !== 'textarea' && (!$include_text || $field_data['type'] !== 'text')){
+                        continue;
+                    }
+
+                    $name = trim(substr($field_key->meta_key, 1));
+                    if(empty($name) || in_array($name, $ignored_fields, true)){
+                        continue;
+                    }
+
+                    if(!empty($ignored_fields_wildcards) && preg_match('/' . $ignored_fields_wildcards . '/', $name)){
+                        continue;
+                    }
+
+                    $fields[] = $name;
+                }
             }
         }
 
@@ -1562,7 +1594,7 @@ class Wpil_Post
                     $name = '';
                     foreach($exploded_structure as $key => $piece){
                         $ind = $key + $offset;
-                        if( $piece === '%postname%' &&          // if we're focussed on the postname
+                        if( false !== strpos($piece, '%postname%') &&   // if we're focussed on the postname
                             isset($exploded_link[$ind]) &&      // and there's a corresponding piece in the link
                             !empty($exploded_link[$ind]) &&     // and there's something in the corresponding piece
                             is_string($exploded_link[$ind]) &&  // and the corresponding is a string

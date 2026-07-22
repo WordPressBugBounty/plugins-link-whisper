@@ -51,6 +51,7 @@ class Wpil_Base
         add_action('wp_ajax_wpil_clear_process_tracker', array(__CLASS__, 'ajax_clear_process_tracker'));
         add_action('wp_ajax_wpil_has_run_wizard', array(__CLASS__, 'ajax_has_run_wizard'));
         add_action('wp_ajax_wpil_get_dashboard_scan_loading_data', array('Wpil_Wizard', 'ajax_pull_loading_progress_for_dashboard'));
+        add_action('wp_ajax_wpil_get_link_health_widget', array(__CLASS__, 'ajax_get_link_health_widget'));
         add_action('wp_ajax_wpil_wizard_set_completion_flag', array(__CLASS__, 'ajax_set_processing_complete_flag'));
         add_action('wp_ajax_wpil_run_autolink_insert_search', array(__CLASS__, 'ajax_get_wizard_insert_count'));
         add_action('wp_ajax_wpil_prepare_ai_connection', array('Wpil_Settings', 'ajax_prepare_ai_connection'));
@@ -306,8 +307,8 @@ class Wpil_Base
 
     public static function render_link_health_widget(){
 
-        $rows = self::get_dashboard_widget_rows();
         $logo = plugin_dir_url(__DIR__).'../images/lw-icon.png';
+        $nonce = wp_create_nonce(get_current_user_id() . 'wpil_dashboard_widget_nonce');
         ?>
         <style>
             #lw-digest-widget .lw-header { display:flex; gap:16px; align-items:flex-start; margin-bottom:14px; }
@@ -334,6 +335,11 @@ class Wpil_Base
 
             #lw-digest-widget .lw-delta { font-size:11px; opacity:.75; margin-left:6px; }
 
+            #lw-digest-widget .lw-loading { display:flex; align-items:center; gap:10px; color:#6b7280; margin-top:12px; }
+            #lw-digest-widget .lw-spinner { width:18px; height:18px; border:2px solid #d1d5db; border-top-color:#3b82f6; border-radius:50%; animation:wpil-lw-spin .8s linear infinite; }
+            #lw-digest-widget .lw-error { border:1px solid #fecaca; background:#fef2f2; color:#991b1b; border-radius:10px; padding:12px 14px; margin-top:12px; }
+            @keyframes wpil-lw-spin { to { transform:rotate(360deg); } }
+
             /* Responsive tweak for narrow admin widths */
             @media (max-width: 782px) {
                 #lw-digest-widget .lw-row { padding-right:14px; }
@@ -345,25 +351,87 @@ class Wpil_Base
                 <img class="lw-logo" src="<?php echo esc_url($logo); ?>" alt="Link Whisper" />
             </header>
 
-
-            <ul class="lw-rows" role="list">
-                <?php foreach ($rows as $row): ?>
-                <li class="lw-row">
-                    <div class="lw-row-main">
-                        <div class="lw-row-label"><?php echo esc_html($row['label']); ?></div>
-                        <div class="lw-row-value"><?php echo wp_kses_post($row['value']); ?></div>
-                    </div>
-                    <?php if (!empty($row['note'])): ?>
-                    <div class="lw-row-note"><?php echo esc_html($row['note']); ?></div>
-                    <?php endif; ?>
-                    <div class="lw-row-status">
-                    <?php echo self::status_badge($row['status'], $row['status_text'], $row['url']); ?>
-                    </div>
-                </li>
-                <?php endforeach; ?>
-            </ul>
+            <div class="lw-widget-content" data-nonce="<?php echo esc_attr($nonce); ?>">
+                <div class="lw-loading">
+                    <span class="lw-spinner"></span>
+                    <span><?php esc_html_e('Loading site health data...', 'wpil'); ?></span>
+                </div>
+            </div>
         </div>
+        <script>
+            jQuery(function($){
+                var $widget = $('#lw-digest-widget');
+                var $content = $widget.find('.lw-widget-content');
+
+                if(!$content.length || $content.hasClass('lw-loading-started')){
+                    return;
+                }
+
+                $content.addClass('lw-loading-started');
+
+                $.ajax({
+                    type: 'POST',
+                    url: ajaxurl,
+                    data: {
+                        action: 'wpil_get_link_health_widget',
+                        nonce: $content.data('nonce')
+                    },
+                    success: function(response){
+                        if(response && response.success && response.data && response.data.html){
+                            $content.html(response.data.html);
+                            return;
+                        }
+
+                        $content.html('<div class="lw-error"><?php echo esc_js(__('There was an error loading the site health report. Please refresh the page and try again.', 'wpil')); ?></div>');
+                    },
+                    error: function(){
+                        $content.html('<div class="lw-error"><?php echo esc_js(__('There was an error loading the site health report. Please refresh the page and try again.', 'wpil')); ?></div>');
+                    }
+                });
+            });
+        </script>
         <?php
+    }
+
+    public static function ajax_get_link_health_widget(){
+        self::verify_nonce('wpil_dashboard_widget_nonce');
+
+        $capability = apply_filters('wpil_filter_main_permission_check', 'manage_categories', self::get_current_page());
+        if(!current_user_can($capability) || !defined('WPIL_STATUS_HAS_RUN_SCAN') || !WPIL_STATUS_HAS_RUN_SCAN){
+            wp_send_json_error(array(
+                'message' => __('You do not have permission to load this report.', 'wpil')
+            ));
+        }
+
+        wp_send_json_success(array(
+            'html' => self::get_dashboard_widget_row_html()
+        ));
+    }
+
+    private static function get_dashboard_widget_row_html(){
+        $rows = self::get_dashboard_widget_rows();
+
+        ob_start();
+        ?>
+        <ul class="lw-rows" role="list">
+            <?php foreach ($rows as $row): ?>
+            <li class="lw-row">
+                <div class="lw-row-main">
+                    <div class="lw-row-label"><?php echo esc_html($row['label']); ?></div>
+                    <div class="lw-row-value"><?php echo wp_kses_post($row['value']); ?></div>
+                </div>
+                <?php if (!empty($row['note'])): ?>
+                <div class="lw-row-note"><?php echo esc_html($row['note']); ?></div>
+                <?php endif; ?>
+                <div class="lw-row-status">
+                <?php echo self::status_badge($row['status'], $row['status_text'], $row['url']); ?>
+                </div>
+            </li>
+            <?php endforeach; ?>
+        </ul>
+        <?php
+
+        return ob_get_clean();
     }
 
     private static function get_dashboard_widget_rows(){
@@ -1766,7 +1834,7 @@ class Wpil_Base
             if(!empty($url_links_tbl_exists)) {
                 $col = $wpdb->query("SHOW COLUMNS FROM {$url_links_tbl} LIKE 'original_url'");
                 if (empty($col)) {
-                    $update_table = "ALTER TABLE {$url_links_tbl} ADD COLUMN original_url text NOT NULL AFTER `anchor`";
+                    $update_table = "ALTER TABLE {$url_links_tbl} ADD COLUMN original_url text NULL DEFAULT NULL AFTER `anchor`";
                     $wpdb->query($update_table);
                 }
             }
@@ -1775,7 +1843,7 @@ class Wpil_Base
             if(!empty($broken_link_tbl_exists)) {
                 $col = $wpdb->query("SHOW COLUMNS FROM {$broken_link_tbl} LIKE 'anchor'");
                 if (empty($col)) {
-                    $update_table = "ALTER TABLE {$broken_link_tbl} ADD COLUMN anchor text NOT NULL AFTER `sentence`";
+                    $update_table = "ALTER TABLE {$broken_link_tbl} ADD COLUMN anchor text NULL DEFAULT NULL AFTER `sentence`";
                     $wpdb->query($update_table);
                 }
             }
@@ -2463,6 +2531,40 @@ class Wpil_Base
             update_option('wpil_site_db_version', '1.54');
         }
 
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.55 || $force_update){
+            $ai_token_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$ai_credit_tbl}'");
+            if(!empty($ai_token_tbl_exists)) {
+                $col = $wpdb->get_row("SHOW COLUMNS FROM {$ai_credit_tbl} LIKE 'credits_used'");
+                if(!empty($col) && isset($col->Type) && strtolower($col->Type) !== 'decimal(10,4) unsigned'){
+                    $wpdb->query("ALTER TABLE {$ai_credit_tbl} MODIFY credits_used DECIMAL(10,4) UNSIGNED NOT NULL DEFAULT 0.0000");
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.55');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.56 || $force_update){
+            $error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$broken_link_tbl}'");
+            if(!empty($error_tbl_exists)){
+                $updates = array();
+                $url_col = $wpdb->get_row("SHOW COLUMNS FROM {$broken_link_tbl} LIKE 'url'");
+                if(!empty($url_col) && ($url_col->Null !== 'YES' || !is_null($url_col->Default))){
+                    $updates[] = "MODIFY `url` TEXT NULL DEFAULT NULL";
+                }
+
+                $anchor_col = $wpdb->get_row("SHOW COLUMNS FROM {$broken_link_tbl} LIKE 'anchor'");
+                if(!empty($anchor_col) && ($anchor_col->Null !== 'YES' || !is_null($anchor_col->Default))){
+                    $updates[] = "MODIFY `anchor` TEXT NULL DEFAULT NULL";
+                }
+
+                if(!empty($updates)){
+                    $wpdb->query("ALTER TABLE {$broken_link_tbl} " . implode(', ', $updates));
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.56');
+        }
+
         // todo create a database index for click tracking's user_ip column if people find that it takes too long to load the user_ip view
 /*
         if((float)WPIL_STATUS_SITE_DB_VERSION < 1.23 || $force_update){
@@ -2644,7 +2746,8 @@ class Wpil_Base
     public static function verify_nonce($key)
     {
         $user = wp_get_current_user();
-        if(!isset($_REQUEST['nonce']) || !wp_verify_nonce($_REQUEST['nonce'], $user->ID . $key)){
+        $nonce = isset($_REQUEST['nonce']) ? $_REQUEST['nonce'] : (isset($_POST['nonce']) ? $_POST['nonce'] : '');
+        if(empty($nonce) || !wp_verify_nonce($nonce, $user->ID . $key)){
             wp_send_json(array(
                 'error' => array(
                     'title' => __('Data Error', 'wpil'),
@@ -2678,7 +2781,13 @@ class Wpil_Base
             foreach($wp_filter[$tag]->callbacks[$priority] as $key => $data)
             {
                 // if the current item is the callback we're looking for
-                if(isset($data['function']) && (is_a($data['function'][0], $object) || $data['function'][0] === $object) && $data['function'][1] === $function){
+                if(
+                    isset($data['function']) &&
+                    is_array($data['function']) &&
+                    isset($data['function'][0], $data['function'][1]) &&
+                    (is_a($data['function'][0], $object) || $data['function'][0] === $object) &&
+                    $data['function'][1] === $function
+                ){
                     // remove the callback
                     unset($wp_filter[$tag]->callbacks[$priority][$key]);
                 }

@@ -25,49 +25,6 @@ class Wpil_Suggestion
     }
 
     /**
-     * Prepares phrase-level AI data for a single post during a suggestion request.
-     * Returns a short status so the caller can pause and retry the same post later.
-     *
-     * @param Wpil_Model_Post $post
-     * @return array
-     */
-    private static function prepare_ai_phrase_data_for_request($post){
-        if(empty($post) || !is_a($post, 'Wpil_Model_Post')){
-            return array(
-                'status' => 'ready',
-                'message' => '',
-            );
-        }
-
-        $calculated = Wpil_AI::has_calculated_phrase_embeddings($post);
-        $embedding_data = Wpil_AI::get_single_post_embedding_data($post);
-
-        if(!$calculated && empty($embedding_data)){
-            $post_data = Wpil_AI::live_query_single_post_embedding_data($post);
-            if(!empty($post_data)){
-                Wpil_AI::save_single_post_embedding_data($post, $post_data);
-                return array(
-                    'status' => 'embeddings_created',
-                    'message' => __('Using AI to evaluate post content', 'wpil'),
-                );
-            }
-        }
-
-        if(!$calculated && !empty($embedding_data)){
-            $calculations = (int) Wpil_AI::stepped_calculate_phrase_embeddings($post, true);
-            return array(
-                'status' => 'calculating',
-                'message' => sprintf(__('Calculating post relationships... %s calculated so far', 'wpil'), $calculations),
-            );
-        }
-
-        return array(
-            'status' => 'ready',
-            'message' => '',
-        );
-    }
-
-    /**
      * Gets the suggestions for the current post/cat on ajax call.
      * Processes the suggested posts in batches to avoid timeouts on large sites.
      **/
@@ -119,6 +76,14 @@ class Wpil_Suggestion
         }
 
         $batch_size = Wpil_Settings::getProcessingBatchSize();
+        $ai_credit_fallback_message = '';
+
+        // if Link Whisper AI is out of credits, keep the suggestions moving with the keyword engine
+        if($ai_powered && Wpil_Settings::get_linkwhisper_ai_active() && Wpil_AI::get_available_ai_credits() < 1){
+            $ai_powered = false;
+            $ai_scoring_active = false;
+            $ai_credit_fallback_message = __('Not enough AI credits. Using keyword-based suggestions instead.', 'wpil');
+        }
 
         if(isset($_POST['type']) && 'outbound_suggestions' === $_POST['type']){
             // get the total number of posts that we'll be going through
@@ -259,6 +224,10 @@ class Wpil_Suggestion
                 $finish = true;
             }else{
                 $message = sprintf(__('Processing Link Suggestions: %d of %d processed', 'wpil'), $num, $post_count);
+            }
+
+            if(!empty($ai_credit_fallback_message)){
+                $message = $ai_credit_fallback_message . '<br>' . $message;
             }
 
             wp_send_json(array('status' => $status, 'post_count' => $post_count, 'batch_size' => $batch_size, 'count' => $count, 'message' => $message, 'ai_score' => $ai_scoring_active, 'finish' => $finish, 'no_suggestions_debug' => self::$last_suggestion_debug));
@@ -1346,7 +1315,7 @@ class Wpil_Suggestion
      * @param null $target_post_id
      * @return array|mixed
      */
-    public static function getAIPostSuggestions($post, $target = null, $all = false, $keyword = null, &$count = null, $process_key = 0)
+    public static function getAIPostSuggestions($post, $target = null, $all = false, $keyword = null, &$count = null, $process_key = 0, $prepared_phrase_data = null)
     {
         $ignored_words = Wpil_Settings::getIgnoreWords();
         $stemmed_ignore_words = Wpil_Settings::getStemmedIgnoreWords();
@@ -1397,8 +1366,8 @@ class Wpil_Suggestion
             return 'no_data';
         }
 
-        $post_data = (array)Wpil_AI::get_embedding_calc_phrases($post, true, true);
-        if(empty($post_data)){ //todo: Maybe fall back to the old method with a note saying something like we weren't abnle to get the AI suggestion data or something.
+        $post_data = (is_array($prepared_phrase_data)) ? $prepared_phrase_data: (array)Wpil_AI::get_embedding_calc_phrases($post, true, true);
+        if(empty($post_data) || !isset($post_data['calculation']) || empty($post_data['calculation'])){ //todo: Maybe fall back to the old method with a note saying something like we weren't abnle to get the AI suggestion data or something.
             self::$last_suggestion_debug['reason_code'] = 'no_calc_data';
             self::$last_suggestion_debug['reason'] = 'No calculated AI phrase relationship data found for the source post.';
             return 'no_data';

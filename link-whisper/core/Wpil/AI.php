@@ -56,6 +56,7 @@ class Wpil_AI
         add_action('wp_ajax_wpil_clear_ai_relation_data', [__CLASS__, 'ajax_wpil_clear_ai_relation_data']);
         add_action('wp_ajax_wpil_clear_ai_keyword_data', [__CLASS__, 'ajax_wpil_clear_ai_keyword_data']);
         add_action('wp_ajax_wpil_clear_ai_embedding_calculation_v2', [__CLASS__, 'ajax_wpil_clear_ai_embedding_calculation_v2']);
+        add_action('wp_ajax_wpil_rescan_empty_ai_embeddings', [__CLASS__, 'ajax_rescan_empty_ai_embeddings']);
         add_action('wp_ajax_wpil_clear_ai_linking_process_data', [__CLASS__, 'ajax_clear_ai_linking_process_data']);
         add_action('wp_ajax_wpil_ai_dismiss_credit_notice', [__CLASS__, 'ajax_wpil_dismiss_credit_notice']);
         add_action('wp_ajax_wpil_ai_dismiss_api_key_decoding_error', [__CLASS__, 'ajax_wpil_dismiss_api_key_decoding_error']);
@@ -214,7 +215,7 @@ class Wpil_AI
                         $content = curl_multi_getcontent($handle);
                         $info    = curl_getinfo($handle);
 
-                        $processed = apply_filters('orhanerday_openai_stream_response_data', $handle_id, $content, $info);
+                        $processed = has_filter('orhanerday_openai_stream_response_data') ? apply_filters('orhanerday_openai_stream_response_data', $handle_id, $content, $info) : false;
                         if($processed){
                             // Remove the handle once processed
                             curl_multi_remove_handle($mh, $handle);
@@ -275,7 +276,7 @@ class Wpil_AI
         return in_array($fix_type, array('orphaned_posts', 'link_coverage', 'link_quality', 'broken_links', 'external_focus'), true);
     }
 
-    private static function get_process_review_link_count($process_key = ''){
+    public static function get_process_review_link_count($process_key = ''){
         global $wpdb;
 
         $process_key = is_string($process_key) ? sanitize_text_field($process_key) : '';
@@ -301,20 +302,41 @@ class Wpil_AI
     }
 
     /**
-     * Gets the ids that have been processeed
+     * Gets the ids that have active linking suggestions waiting for review.
      **/
-    public static function get_linking_suggestion_processed_ids($process_key = '', $direction = 'outbound'){
+    public static function get_linking_suggestion_processed_ids($process_key = '', $direction = 'outbound', $pid = ''){
         global $wpdb;
         $linking_table = $wpdb->prefix . 'wpil_ai_linking';
+
+        $pid = self::normalize_pid($pid);
+        $pid_parts = !empty($pid) ? self::parse_pid($pid) : array();
 
         $search = "CONCAT(`post_type`, '_', `post_id`)";
         if($direction === 'inbound'){
             $search = "CONCAT(`target_type`, '_', `target_id`)";
         }
 
-        $sql = "SELECT DISTINCT {$search} FROM {$linking_table} WHERE 1=1";
+        $sql = "SELECT DISTINCT {$search} FROM {$linking_table} WHERE inserted = 0 AND ignored = 0";
         if(!empty($process_key)){
             $sql .= $wpdb->prepare(" AND process_key = %s", $process_key);
+        }
+
+        if(!empty($pid_parts['id'])){
+            if($direction === 'inbound'){
+                $search = "CONCAT(`post_type`, '_', `post_id`)";
+                $sql = "SELECT DISTINCT {$search} FROM {$linking_table} WHERE inserted = 0 AND ignored = 0";
+                if(!empty($process_key)){
+                    $sql .= $wpdb->prepare(" AND process_key = %s", $process_key);
+                }
+                $sql .= $wpdb->prepare(" AND target_id = %d AND target_type = %s", $pid_parts['id'], $pid_parts['type']);
+            }else{
+                $search = "CONCAT(`target_type`, '_', `target_id`)";
+                $sql = "SELECT DISTINCT {$search} FROM {$linking_table} WHERE inserted = 0 AND ignored = 0";
+                if(!empty($process_key)){
+                    $sql .= $wpdb->prepare(" AND process_key = %s", $process_key);
+                }
+                $sql .= $wpdb->prepare(" AND post_id = %d AND post_type = %s", $pid_parts['id'], $pid_parts['type']);
+            }
         }
 
         $ids = $wpdb->get_col($sql);
@@ -357,7 +379,6 @@ class Wpil_AI
         // set a flag so that we know that we're downloading data
         set_transient('wpil_doing_ai_data_download', time(), MINUTE_IN_SECONDS * 3);
         set_transient('wpil_doing_ai_data_download_mode', ($dashboard_basic_scan ? 'dashboard-basic-scan': 'default'), MINUTE_IN_SECONDS * 3);
-
         // if the batch processing is supposed to be turned on
         if(isset($_POST['activate_batch_processing']) && !empty($_POST['activate_batch_processing'])){
             // turn it on
@@ -365,7 +386,7 @@ class Wpil_AI
         }
 
         $start_time = isset($_POST['start_time']) && !empty($_POST['start_time']) ? (int)$_POST['start_time']: time();
-        $current_process = esc_html__('Sending Site Data to OpenAI be Processed', 'wpil');
+        $current_process = esc_html__('Sending Site Data to AI for Processing', 'wpil');
 
         // if the batch processing is supposed to be turned on
         if(isset($_POST['activate_batch_processing']) && !empty($_POST['activate_batch_processing'])){
@@ -513,8 +534,16 @@ class Wpil_AI
             if(self::$insufficient_quota){
                 update_option('wpil_oai_insufficient_quota_error', '1');
             }
-            $response = (self::$ai_service_connected) ? array('error' => self::get_linkwhisper_ai_error_message()): array('error' => self::get_live_oai_error_message());
+            $error = (self::$ai_service_connected) ? self::get_linkwhisper_ai_error_message(): self::get_live_oai_error_message();
+            if($dashboard_basic_scan){
+                $dashboard_scan_status = self::get_dashboard_basic_scan_status(true);
+                $error['dashboard_basic_scan'] = $dashboard_scan_status;
+            }
+            $response = array('error' => $error);
         }elseif(!$completed || !$post_saving || $processed_embeddings > 0){
+            if($dashboard_basic_scan){
+                $dashboard_scan_status = self::get_dashboard_basic_scan_status(true);
+            }
             $response = array(
                 'continue' => array(
                     'data' => $live_processed_results,
@@ -542,11 +571,15 @@ class Wpil_AI
                 )
             );
         }else{
+            if($dashboard_basic_scan){
+                $dashboard_scan_status = self::get_dashboard_basic_scan_status(true);
+            }
             $response = array(
                 'success' => array(
                     'title' => __('Processing Complete!', 'wpil'),
                     'text'  => __('All available site data has been processed!', 'wpil'),
                     'oai_completed' => $oai_completed,
+                    'estimated_cost' => self::calculate_token_cost_by_time($start_time),
                     'ai_credits' => self::get_available_ai_credits(),
                     'estimated_credit_cost' => ($dashboard_basic_scan) ? self::estimate_dashboard_basic_scan_credit_cost(): self::estimate_site_processing_credit_cost(get_option('wpil_ai_linking_process_key', null), $ai_linking_enabled),
                     'dashboard_basic_scan' => $dashboard_scan_status
@@ -703,6 +736,615 @@ class Wpil_AI
         return true;
     }
 
+    public static function ajax_rescan_empty_ai_embeddings(){
+        Wpil_Base::verify_nonce('wpil_rescan_empty_ai_embeddings');
+
+        if(!current_user_can('manage_options')){
+            wp_send_json(array(
+                'error' => array(
+                    'title' => __('Permission Error', 'wpil'),
+                    'text'  => __('You do not have permission to perform this action.', 'wpil'),
+                )
+            ));
+        }
+
+        if(empty(Wpil_Settings::getOpenAIKey()) && (!Wpil_Settings::get_linkwhisper_ai_active() || empty(Wpil_Settings::get_linkwhisper_ai_token()))){
+            wp_send_json(array(
+                'error' => array(
+                    'title' => __('AI Not Connected', 'wpil'),
+                    'text'  => __('Please connect Link Whisper AI or add an OpenAI API key before rescanning empty embedding posts.', 'wpil'),
+                )
+            ));
+        }
+
+        $repair_state = self::get_empty_embedding_relation_repair_state();
+        if(!empty($repair_state)){
+            wp_send_json(self::process_empty_embedding_relation_repair_state($repair_state));
+        }
+
+        $results = self::rescan_empty_ai_embeddings();
+
+        wp_send_json($results);
+    }
+
+    public static function get_empty_ai_embedding_count(){
+        global $wpdb;
+        $table = $wpdb->prefix . 'wpil_ai_embedding_data';
+
+        return (int)$wpdb->get_var("SELECT COUNT(*) FROM {$table} WHERE `is_empty` = 1");
+    }
+
+    private static function rescan_empty_ai_embeddings(){
+        global $wpdb;
+        $table = $wpdb->prefix . 'wpil_ai_embedding_data';
+        $cursor = self::get_empty_embedding_rescan_cursor();
+        $batch_limit = (int)Wpil_Settings::get_ai_process_limit('create-post-embeddings', true);
+        $batch_limit = !empty($batch_limit) ? max(1, min($batch_limit, 10)): 1;
+
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT `embed_index`, `post_id`, `post_type` FROM {$table} WHERE `is_empty` = 1 AND `embed_index` > %d ORDER BY `embed_index` ASC LIMIT %d", $cursor, $batch_limit));
+        $response = array(
+            'processed' => 0,
+            'repaired' => 0,
+            'skipped' => 0,
+            'failed' => 0,
+            'remaining' => self::get_empty_ai_embedding_count(),
+            'relation_processing' => false,
+            'complete' => false,
+        );
+
+        if(empty($rows)){
+            self::clear_empty_embedding_rescan_cursor();
+            $response['remaining'] = self::get_empty_ai_embedding_count();
+            $response['complete'] = true;
+            $response['message'] = empty($response['remaining']) ? __('No empty embedding posts were found.', 'wpil') : __('The rescan finished this pass. Some empty embedding rows could not be repaired and were left for review.', 'wpil');
+            return $response;
+        }
+
+        self::$purpose = 'create-post-embeddings';
+        self::$model = Wpil_Settings::getChatGPTVersion('create-post-embeddings');
+        $repaired_posts = array();
+
+        foreach($rows as $row){
+            if(Wpil_Base::overTimeLimit(5, 35)){
+                break;
+            }
+
+            $response['processed']++;
+            self::set_empty_embedding_rescan_cursor((int)$row->embed_index);
+
+            $post = new Wpil_Model_Post((int)$row->post_id, $row->post_type);
+            $content = self::get_clean_embedding_post_content($post);
+
+            if(empty($content)){
+                $response['skipped']++;
+                continue;
+            }
+
+            $embedding = self::request_single_post_embedding_for_rescan($content, $post->get_pid());
+            if(empty($embedding['embedding']) || empty($embedding['model'])){
+                $response['failed']++;
+                continue;
+            }
+
+            $updated = $wpdb->update(
+                $table,
+                array(
+                    'embed_data' => Wpil_Toolbox::json_compress($embedding['embedding'], true),
+                    'is_empty' => 0,
+                    'process_time' => time(),
+                    'model_version' => $embedding['model'],
+                ),
+                array(
+                    'embed_index' => (int)$row->embed_index,
+                ),
+                array('%s', '%d', '%d', '%s'),
+                array('%d')
+            );
+
+            if(false === $updated){
+                $response['failed']++;
+                continue;
+            }
+
+            $repaired_posts[] = array(
+                'post_id' => (int)$row->post_id,
+                'post_type' => $row->post_type,
+            );
+            $response['repaired']++;
+        }
+
+        if(!empty($repaired_posts)){
+            self::queue_empty_embedding_relation_repair($repaired_posts);
+            $response['relation_processing'] = true;
+        }
+
+        $response['remaining'] = self::get_empty_ai_embedding_count();
+        $response['complete'] = false;
+
+        return $response;
+    }
+
+    private static function get_empty_embedding_rescan_cursor(){
+        return (int)get_transient('wpil_empty_embedding_rescan_cursor');
+    }
+
+    private static function set_empty_embedding_rescan_cursor($embed_index = 0){
+        set_transient('wpil_empty_embedding_rescan_cursor', (int)$embed_index, DAY_IN_SECONDS);
+    }
+
+    private static function clear_empty_embedding_rescan_cursor(){
+        delete_transient('wpil_empty_embedding_rescan_cursor');
+    }
+
+    private static function get_clean_embedding_post_content($post = null, $token_limit = 7800){
+        if(empty($post) || !is_a($post, 'Wpil_Model_Post')){
+            return '';
+        }
+
+        $content = strip_tags($post->getContent(false), '<h1><h2><h3><h4><h5><h6><title><ul><ol><li>');
+        $content = mb_ereg_replace('(([a-zA-Z\-_0-9]+="[^"]*")+?[\s]?)', '', $content);
+        $content = mb_ereg_replace("&nbsp;", ' ', $content);
+        $content = mb_ereg_replace("[\s]+", ' ', $content);
+
+        return self::trim_text_to_token_limit($content, self::$model, $token_limit);
+    }
+
+    private static function request_single_post_embedding_for_rescan($content = '', $pid = ''){
+        $out = array(
+            'embedding' => array(),
+            'model' => '',
+        );
+
+        if(empty($content)){
+            return $out;
+        }
+
+        $dimensions = Wpil_Settings::get_ai_dimension_limit();
+
+        if(self::$ai_service_connected){
+            self::$query_ids = array($pid);
+            $stream_filter_active = has_filter('orhanerday_openai_stream_response_data', array(__CLASS__, 'process_streamed_data'));
+            if(false !== $stream_filter_active){
+                remove_filter('orhanerday_openai_stream_response_data', array(__CLASS__, 'process_streamed_data'));
+            }
+
+            try{
+                $results = self::call_linkwhisper_ai(array($content), '', '', array('dimensions' => $dimensions));
+            }finally{
+                if(false !== $stream_filter_active){
+                    add_filter('orhanerday_openai_stream_response_data', array(__CLASS__, 'process_streamed_data'), 10, 3);
+                }
+            }
+
+            $response = (!empty($results) && isset($results[0])) ? self::decode($results[0]) : null;
+        }else{
+            if(empty(self::$ai)){
+                return $out;
+            }
+
+            self::$query_ids = array($pid);
+            $results = self::$ai->embeddings(array(
+                'message_list' => array(array(
+                    'model' => self::$model,
+                    'input' => $content,
+                    'dimensions' => $dimensions
+                )),
+            ), true);
+            $response = (!empty($results) && isset($results[0])) ? self::decode($results[0]) : null;
+        }
+
+        if( empty($response) ||
+            !isset($response->data, $response->data[0], $response->data[0]->embedding, $response->model) ||
+            empty($response->data[0]->embedding)
+        ){
+            return $out;
+        }
+
+        $out['embedding'] = $response->data[0]->embedding;
+        $out['model'] = (string)$response->model;
+
+        self::save_response_tokens(json_encode($response), self::$purpose, false, $pid);
+
+        return $out;
+    }
+
+    private static function get_empty_embedding_relation_repair_state(){
+        $state = get_transient('wpil_empty_embedding_relation_repair_state');
+        return (!empty($state) && is_array($state)) ? $state: array();
+    }
+
+    private static function queue_empty_embedding_relation_repair($post_id = 0, $post_type = 'post'){
+        global $wpdb;
+
+        $posts = array();
+        if(is_array($post_id)){
+            foreach($post_id as $post){
+                if(empty($post['post_id'])){
+                    continue;
+                }
+
+                $posts[] = array(
+                    'post_id' => (int)$post['post_id'],
+                    'post_type' => (isset($post['post_type']) && $post['post_type'] === 'term') ? 'term': 'post',
+                );
+            }
+        }else{
+            $post_id = (int)$post_id;
+            $post_type = ($post_type === 'term') ? 'term' : 'post';
+            if(!empty($post_id)){
+                $posts[] = array(
+                    'post_id' => $post_id,
+                    'post_type' => $post_type,
+                );
+            }
+        }
+
+        if(empty($posts)){
+            return false;
+        }
+
+        foreach($posts as $post){
+            $wpdb->delete($wpdb->prefix . 'wpil_ai_embedding_calculation_data', array('post_id' => $post['post_id'], 'post_type' => $post['post_type']), array('%d', '%s'));
+            $wpdb->delete($wpdb->prefix . 'wpil_ai_embedding_calculation_data_v2', array('post_id' => $post['post_id'], 'post_type' => $post['post_type']), array('%d', '%s'));
+        }
+
+        set_transient('wpil_empty_embedding_relation_repair_state', array(
+            'post_id' => $posts[0]['post_id'],
+            'post_type' => $posts[0]['post_type'],
+            'posts' => $posts,
+            'phase' => 'source',
+            'offset' => 0,
+        ), DAY_IN_SECONDS);
+
+        return true;
+    }
+
+    private static function process_empty_embedding_relation_repair_state($state = array()){
+        global $wpdb;
+
+        $post_id = isset($state['post_id']) ? (int)$state['post_id']: 0;
+        $post_type = isset($state['post_type']) && $state['post_type'] === 'term' ? 'term': 'post';
+        $phase = isset($state['phase']) && $state['phase'] === 'target' ? 'target': 'source';
+        $offset = isset($state['offset']) ? (int)$state['offset']: 0;
+        $posts = array();
+
+        if(!empty($state['posts']) && is_array($state['posts'])){
+            foreach($state['posts'] as $post){
+                if(empty($post['post_id'])){
+                    continue;
+                }
+
+                $posts[] = array(
+                    'post_id' => (int)$post['post_id'],
+                    'post_type' => (isset($post['post_type']) && $post['post_type'] === 'term') ? 'term': 'post',
+                );
+            }
+        }elseif(!empty($post_id)){
+            $posts[] = array(
+                'post_id' => $post_id,
+                'post_type' => $post_type,
+            );
+        }
+
+        $response = array(
+            'processed' => 0,
+            'repaired' => 0,
+            'skipped' => 0,
+            'failed' => 0,
+            'remaining' => self::get_empty_ai_embedding_count(),
+            'relation_processing' => true,
+            'complete' => false,
+            'message' => '',
+        );
+
+        if(empty($posts)){
+            delete_transient('wpil_empty_embedding_relation_repair_state');
+            $response['complete'] = true;
+            $response['relation_processing'] = false;
+            $response['message'] = __('The relation repair state was empty, so the process was cleared.', 'wpil');
+            return $response;
+        }
+
+        $embedding_table = $wpdb->prefix . 'wpil_ai_embedding_data';
+        $sources = array();
+        foreach($posts as $post){
+            $source = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$embedding_table} WHERE `post_id` = %d AND `post_type` = %s AND `is_empty` = 0 LIMIT 1", $post['post_id'], $post['post_type']));
+            if(empty($source) || empty($source->embed_data)){
+                continue;
+            }
+
+            $source->embed_data = Wpil_Toolbox::json_decompress($source->embed_data, null, true);
+            if(empty($source->embed_data) || !is_array($source->embed_data)){
+                continue;
+            }
+
+            $sources[] = $source;
+        }
+
+        if(empty($sources)){
+            delete_transient('wpil_empty_embedding_relation_repair_state');
+            $response['complete'] = empty($response['remaining']);
+            $response['relation_processing'] = false;
+            $response['failed'] = 1;
+            $response['message'] = __('The repaired embedding could not be loaded for relation processing.', 'wpil');
+            return $response;
+        }
+
+        $page_size = (int)Wpil_Settings::get_ai_process_limit('create-post-embeddings', true);
+        if(empty($page_size)){
+            $page_size = 50;
+        }
+        $page_size = max(25, min($page_size * 10, 250));
+
+        $batch = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$embedding_table} WHERE `is_empty` = 0 ORDER BY `post_type` ASC, `post_id` ASC, `embed_index` ASC LIMIT %d OFFSET %d", $page_size, $offset));
+        if(empty($batch)){
+            if($phase === 'source'){
+                $state['phase'] = 'target';
+                $state['offset'] = 0;
+                set_transient('wpil_empty_embedding_relation_repair_state', $state, DAY_IN_SECONDS);
+                $response['message'] = __('Finished rebuilding source relation data. Starting target-side relation refresh.', 'wpil');
+                return $response;
+            }
+
+            delete_transient('wpil_empty_embedding_relation_repair_state');
+            self::$cached_embedding_data = array();
+            delete_transient('wpil_last_embedding_index_lock');
+            $response['relation_processing'] = false;
+            $response['complete'] = empty($response['remaining']);
+            $response['message'] = empty($response['remaining']) ? __('The empty AI embedding rescan has finished.', 'wpil') : __('Finished relation repair for this post. Continuing with the next empty embedding post.', 'wpil');
+            return $response;
+        }
+
+        $batch_count = count($batch);
+        foreach($batch as $key => $embedding){
+            $batch[$key]->embed_data = Wpil_Toolbox::json_decompress($embedding->embed_data, null, true);
+            if(empty($batch[$key]->embed_data) || !is_array($batch[$key]->embed_data)){
+                unset($batch[$key]);
+            }
+        }
+
+        if($phase === 'source'){
+            $response['processed'] = self::repair_empty_embedding_source_relation_chunk($sources, $batch);
+        }else{
+            $response['processed'] = self::repair_empty_embedding_target_relation_chunk($sources, $batch);
+        }
+
+        $state['offset'] = $offset + $batch_count;
+        set_transient('wpil_empty_embedding_relation_repair_state', $state, DAY_IN_SECONDS);
+        $response['message'] = sprintf(__('Refreshing %s relation scores. Processed %d rows in this pass.', 'wpil'), $phase, (int)$response['processed']);
+
+        return $response;
+    }
+
+    private static function repair_empty_embedding_source_relation_chunk($source, $embeddings){
+        global $wpdb;
+
+        $v1_table = $wpdb->prefix . 'wpil_ai_embedding_calculation_data';
+        $v2_table = $wpdb->prefix . 'wpil_ai_embedding_calculation_data_v2';
+        $sources = is_array($source) ? $source: array($source);
+        $total_processed = 0;
+
+        foreach($sources as $source){
+            if(empty($source) || empty($source->embed_data) || !is_array($source->embed_data)){
+                continue;
+            }
+
+            $source_pid = $source->post_type . '_' . $source->post_id;
+            $v1_row = $wpdb->get_row($wpdb->prepare("SELECT `embed_index`, `calculation`, `calc_index`, `calc_count` FROM {$v1_table} WHERE `post_id` = %d AND `post_type` = %s LIMIT 1", $source->post_id, $source->post_type));
+            $calculation = (!empty($v1_row) && !empty($v1_row->calculation)) ? Wpil_Toolbox::json_decompress($v1_row->calculation, true): array();
+            $calculation = (!empty($calculation) && is_array($calculation)) ? $calculation: array();
+            $calc_index = !empty($v1_row->calc_index) ? (int)$v1_row->calc_index: 0;
+            $calc_count = !empty($v1_row->calc_count) ? (int)$v1_row->calc_count: 0;
+            $pages = array();
+            $processed = 0;
+            $calculated_scores = array();
+            $stored_scores = array();
+
+            foreach($embeddings as $embedding){
+                if(empty($embedding->embed_data) || !is_array($embedding->embed_data)){
+                    continue;
+                }
+
+                $target_pid = $embedding->post_type . '_' . $embedding->post_id;
+                $target_type = $embedding->post_type;
+                if(!isset($pages[$target_type])){
+                    $pages[$target_type] = array(
+                        'post_id' => $source->post_id,
+                        'post_type' => $source->post_type,
+                        'target_post_type' => $target_type,
+                        'starting_id' => $embedding->post_id,
+                        'ending_id' => $embedding->post_id,
+                        'calculation' => array(),
+                        'calc_index' => 0,
+                        'calc_count' => 0,
+                        'model_version' => $source->model_version,
+                    );
+                }
+
+                if((int)$pages[$target_type]['starting_id'] > (int)$embedding->post_id){
+                    $pages[$target_type]['starting_id'] = (int)$embedding->post_id;
+                }
+
+                if((int)$pages[$target_type]['ending_id'] < (int)$embedding->post_id){
+                    $pages[$target_type]['ending_id'] = (int)$embedding->post_id;
+                }
+
+                if((int)$pages[$target_type]['calc_index'] < (int)$embedding->embed_index){
+                    $pages[$target_type]['calc_index'] = (int)$embedding->embed_index;
+                }
+
+                $pages[$target_type]['calc_count'] += 1;
+                if((int)$calc_index < (int)$embedding->embed_index){
+                    $calc_index = (int)$embedding->embed_index;
+                }
+
+                if($source_pid === $target_pid){
+                    continue;
+                }
+
+                $processed++;
+                $calc_count++;
+                $score = self::compare_post_embeddings(
+                    (object)array('post_id' => $source->post_id, 'post_type' => $source->post_type, 'embed_data' => $source->embed_data),
+                    (object)array('post_id' => $embedding->post_id, 'post_type' => $embedding->post_type, 'embed_data' => $embedding->embed_data),
+                    true
+                );
+                $calculated_scores[$target_pid] = $score;
+
+                if($score > 0.40){
+                    $calculation[$target_pid] = $score;
+                    $pages[$target_type]['calculation'][$target_pid] = $score;
+                    $stored_scores[$target_pid] = $score;
+                }
+            }
+
+            if(!empty($v1_row)){
+                $wpdb->update(
+                    $v1_table,
+                    array(
+                        'calculation' => Wpil_Toolbox::json_compress($calculation),
+                        'calc_index' => $calc_index,
+                        'calc_count' => $calc_count,
+                        'process_time' => time(),
+                        'model_version' => $source->model_version,
+                    ),
+                    array('embed_index' => (int)$v1_row->embed_index),
+                    array('%s', '%d', '%d', '%d', '%s'),
+                    array('%d')
+                );
+            }else{
+                $wpdb->insert($v1_table, array(
+                    'post_id' => (int)$source->post_id,
+                    'post_type' => $source->post_type,
+                    'data_type' => (($source->post_type === 'post') ? 1: 0),
+                    'calculation' => Wpil_Toolbox::json_compress($calculation),
+                    'calc_index' => $calc_index,
+                    'calc_count' => $calc_count,
+                    'process_time' => time(),
+                    'model_version' => $source->model_version,
+                ));
+            }
+
+            if(!empty($pages)){
+                self::save_calculated_embedding_data_v2($pages);
+            }
+
+            $total_processed += $processed;
+        }
+
+        return $total_processed;
+    }
+
+    private static function repair_empty_embedding_target_relation_chunk($target, $embeddings){
+        global $wpdb;
+
+        $v1_table = $wpdb->prefix . 'wpil_ai_embedding_calculation_data';
+        $v2_table = $wpdb->prefix . 'wpil_ai_embedding_calculation_data_v2';
+        $targets = is_array($target) ? $target: array($target);
+        $processed = 0;
+        $calculated_scores = array();
+
+        foreach($embeddings as $embedding){
+            if(empty($embedding->embed_data) || !is_array($embedding->embed_data)){
+                continue;
+            }
+
+            $source_pid = $embedding->post_type . '_' . $embedding->post_id;
+            $target_scores = array();
+            foreach($targets as $target){
+                if(empty($target) || empty($target->embed_data) || !is_array($target->embed_data)){
+                    continue;
+                }
+
+                $target_pid = $target->post_type . '_' . $target->post_id;
+                if($source_pid === $target_pid){
+                    continue;
+                }
+
+                $processed++;
+                $score = self::compare_post_embeddings(
+                    (object)array('post_id' => $embedding->post_id, 'post_type' => $embedding->post_type, 'embed_data' => $embedding->embed_data),
+                    (object)array('post_id' => $target->post_id, 'post_type' => $target->post_type, 'embed_data' => $target->embed_data),
+                    true
+                );
+                $calculated_scores[$target_pid][$source_pid] = $score;
+                $target_scores[$target_pid] = $score;
+
+                $v2_rows = $wpdb->get_results($wpdb->prepare(
+                    "SELECT `embed_index`, `calculation` FROM {$v2_table} WHERE `post_id` = %d AND `post_type` = %s AND `target_post_type` = %s AND `starting_id` <= %d AND `ending_id` >= %d",
+                    $embedding->post_id,
+                    $embedding->post_type,
+                    $target->post_type,
+                    $target->post_id,
+                    $target->post_id
+                ));
+
+                if(!empty($v2_rows)){
+                    foreach($v2_rows as $v2_row){
+                        self::update_embedding_relation_target_score_row($v2_table, $v2_row, $target_pid, $score, false);
+                    }
+                }
+            }
+
+            if(!empty($target_scores)){
+                self::update_embedding_relation_target_score($v1_table, $embedding->post_id, $embedding->post_type, $target_scores);
+            }
+        }
+
+        return $processed;
+    }
+
+    private static function update_embedding_relation_target_score($table, $post_id, $post_type, $target_pid, $score = null){
+        global $wpdb;
+
+        $row = $wpdb->get_row($wpdb->prepare("SELECT `embed_index`, `calculation` FROM {$table} WHERE `post_id` = %d AND `post_type` = %s LIMIT 1", $post_id, $post_type));
+        if(empty($row)){
+            return false;
+        }
+
+        return self::update_embedding_relation_target_score_row($table, $row, $target_pid, $score, true);
+    }
+
+    private static function update_embedding_relation_target_score_row($table, $row, $target_pid, $score, $update_count = true){
+        global $wpdb;
+
+        if(empty($row) || empty($row->embed_index)){
+            return false;
+        }
+
+        $calculation = Wpil_Toolbox::json_decompress($row->calculation, true);
+        $calculation = (!empty($calculation) && is_array($calculation)) ? $calculation: array();
+
+        if(is_array($target_pid)){
+            foreach($target_pid as $pid => $score){
+                if($score > 0.40){
+                    $calculation[$pid] = $score;
+                }else{
+                    unset($calculation[$pid]);
+                }
+            }
+        }else{
+            if($score > 0.40){
+                $calculation[$target_pid] = $score;
+            }else{
+                unset($calculation[$target_pid]);
+            }
+        }
+
+        $update = array(
+            'calculation' => Wpil_Toolbox::json_compress($calculation),
+            'process_time' => time(),
+        );
+        $formats = array('%s', '%d');
+
+        if($update_count){
+            $update['calc_count'] = count($calculation);
+            $formats[] = '%d';
+        }
+
+        return $wpdb->update($table, $update, array('embed_index' => (int)$row->embed_index), $formats, array('%d'));
+    }
+
     public static function ajax_clear_ai_linking_process_data(){
         Wpil_Base::verify_nonce('wpil_clear_ai_linking_process_data');
 
@@ -721,7 +1363,7 @@ class Wpil_AI
             wp_send_json(array(
                 'success' => array(
                     'title' => __('Data Cleared!', 'wpil'),
-                    'text'  => __('All AI Linking process data has been deleted.', 'wpil'),
+                    'text'  => __('AI Linking process data has been cleared.', 'wpil'),
                 )
             ));
         }
@@ -736,23 +1378,19 @@ class Wpil_AI
 
     /**
      * Clears only AI linking process artifacts used by AI linking/fix runs.
-     * Does not clear broader AI datasets or unrelated site data.
+     * Does not clear broader AI datasets, saved suggestions, or unrelated site data.
      **/
     public static function clear_ai_linking_process_data(){
         global $wpdb;
 
         $all_ok = true;
-        $ai_linking_table = $wpdb->prefix . 'wpil_ai_linking';
         $relation_map_table = $wpdb->prefix . 'wpil_relation_mapping';
 
-        $tables = array($ai_linking_table, $relation_map_table);
-        foreach($tables as $table){
-            $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
-            if($table_exists === $table){
-                $result = $wpdb->query("TRUNCATE TABLE {$table}");
-                if($result === false){
-                    $all_ok = false;
-                }
+        $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $relation_map_table));
+        if($table_exists === $relation_map_table){
+            $result = $wpdb->query("TRUNCATE TABLE {$relation_map_table}");
+            if($result === false){
+                $all_ok = false;
             }
         }
 
@@ -810,15 +1448,10 @@ class Wpil_AI
      * Clears the saved queue trail for a single AI linking run so the next pass starts fresh.
      **/
     private static function reset_ai_linking_process_runtime($process_key = '', $clear_process_key = true){
-        global $wpdb;
-
         $process_key = is_string($process_key) ? sanitize_text_field($process_key) : '';
         if(empty($process_key)){
             return;
         }
-
-        //$linking_table = $wpdb->prefix . 'wpil_ai_linking'; // TODO: Think about and possibly reenable later
-        //$wpdb->delete($linking_table, array('process_key' => $process_key), array('%s'));
 
         if($clear_process_key && get_option('wpil_ai_linking_process_key', '') === $process_key){
             delete_option('wpil_ai_linking_process_key');
@@ -1006,15 +1639,24 @@ class Wpil_AI
         $keyword_detecting_percent = ($total > 0) ? self::get_batch_status_completion_percent('keyword-detecting', $ignore_cache): 100;
         $keyword_assigning_percent = ($total > 0) ? self::get_batch_status_completion_percent('keyword-assigning', $ignore_cache): 100;
         $keyword_percent = (int) min(100, floor(($keyword_detecting_percent / 2) + ($keyword_assigning_percent / 2)));
-        $relation_complete = ($total < 1 || $relation_calculation_percent >= $threshold);
-        $keyword_complete = (!$keyword_enabled || $total < 1 || self::check_batch_status_completed('keyword-assigning', $ignore_cache));
+        // Count the work that's left so one lonely post doesn't wave the Dashboard scan flag.
+        $minimum_missing_posts = ($total > 0) ? max(2, (int) ceil($total * ((100 - $threshold) / 100))) : 0;
+        $relation_missing = max(0, ($total - $relation_embedding_processed));
+        $keyword_missing = max(
+            max(0, ($total - $keyword_detecting_processed)),
+            max(0, ($total - $keyword_assigning_processed))
+        );
+        $relation_complete = ($total < 1 || $relation_missing < $minimum_missing_posts);
+        $keyword_complete = (!$keyword_enabled || $total < 1 || $keyword_missing < $minimum_missing_posts);
         $ai_configured = Wpil_Settings::has_ai_enabled();
         $current_process = get_transient('wpil_dashboard_basic_scan_process_text');
+        $basic_scan_complete = ($ai_configured && $relation_complete && $keyword_complete);
+        $basic_scan_running = self::is_dashboard_basic_scan_running();
 
         return array(
             'ai_configured' => $ai_configured,
-            'basic_scan_complete' => ($ai_configured && $relation_complete && $keyword_complete),
-            'basic_scan_running' => self::is_dashboard_basic_scan_running(),
+            'basic_scan_complete' => $basic_scan_complete,
+            'basic_scan_running' => $basic_scan_running,
             'basic_scan_threshold' => $threshold,
             'current_process' => (!empty($current_process) ? $current_process : __('Preparing basic AI scan...', 'wpil')),
             'relation_percent' => $relation_percent,
@@ -1044,10 +1686,15 @@ class Wpil_AI
     public static function estimate_dashboard_basic_scan_credit_cost(){
         $estimate = 0;
         $selected_processes = self::get_dashboard_basic_scan_processes();
+        $credit_processes = array('create-post-embeddings', 'keyword-detecting', 'product-detecting', 'post-summarizing');
         $total_posts = self::get_total_processable_posts();
         $processed_posts = self::get_completed_post_stats(true);
 
         foreach($selected_processes as $process){
+            if(!in_array($process, $credit_processes, true)){
+                continue;
+            }
+
             if(isset($processed_posts[$process])){
                 $estimate += max(0, ($total_posts - (int) $processed_posts[$process]));
             }else{
@@ -2305,8 +2952,8 @@ class Wpil_AI
 
                         if(empty($dat)){
                             $stati[$state][$process] = 0;
-                        }elseif(is_array($dat)){
-                            $stati[$state][$process] = count($dat);
+                        }elseif(is_array($dat) || is_object($dat)){
+                            $stati[$state][$process] = count((array)$dat);
                         }
                     }
                 }
@@ -2383,8 +3030,8 @@ class Wpil_AI
                 foreach($data as $process => $dat){
                     if(empty($dat)){
                         $stati[$state][$process] = 0;
-                    }elseif(is_array($dat)){
-                        $stati[$state][$process] = count($dat);
+                    }elseif(is_array($dat) || is_object($dat)){
+                        $stati[$state][$process] = count((array)$dat);
                     }
                 }
             }
@@ -2587,12 +3234,23 @@ class Wpil_AI
                 $query_id = self::$query_ids[$index];
             }
 
+            $credit_sources = array();
+            if(is_object($dat)){
+                $credit_sources[] = $dat;
+            }
+
             if(isset($dat->response) && !empty($dat->response)){
+                if(is_object($dat->response)){
+                    $credit_sources[] = $dat->response;
+                }
                 $dat = $dat->response;
             }
 
             if(isset($dat->body) && !empty($dat->body)){
                 $body = is_string($dat->body) ? self::decode($dat->body) : $dat->body;
+                if(is_object($body)){
+                    $credit_sources[] = $body;
+                }
                 if(is_object($body) && isset($body->usage)){
                     $dat = $body;
                 }
@@ -2639,6 +3297,34 @@ class Wpil_AI
                     $credits_used = (float) $usage->credit_used;
                 }elseif(isset($usage->credits_used)){
                     $credits_used = (float) $usage->credits_used;
+                }else{
+                    foreach($credit_sources as $credit_source){
+                        if(isset($credit_source->credit_used)){
+                            $credits_used = (float) $credit_source->credit_used;
+                            break;
+                        }elseif(isset($credit_source->credits_used)){
+                            $credits_used = (float) $credit_source->credits_used;
+                            break;
+                        }elseif(isset($credit_source->results) && (is_array($credit_source->results) || is_object($credit_source->results))){
+                            $result_credits = 0;
+                            foreach($credit_source->results as $result){
+                                if(is_object($result) && isset($result->credit_used)){
+                                    $result_credits += (float) $result->credit_used;
+                                }elseif(is_object($result) && isset($result->credits_used)){
+                                    $result_credits += (float) $result->credits_used;
+                                }elseif(is_array($result) && isset($result['credit_used'])){
+                                    $result_credits += (float) $result['credit_used'];
+                                }elseif(is_array($result) && isset($result['credits_used'])){
+                                    $result_credits += (float) $result['credits_used'];
+                                }
+                            }
+
+                            if(!empty($result_credits)){
+                                $credits_used = $result_credits;
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 // Some provider responses only report cached token details.
@@ -2657,6 +3343,60 @@ class Wpil_AI
                 }
 
                 if(!empty($credits_used)){
+                    self::subtract_ai_credits($credits_used);
+                }
+            }elseif(self::$ai_service_connected){
+                $credits_used = 0;
+                $model = '';
+
+                foreach($credit_sources as $credit_source){
+                    if(empty($model)){
+                        if(isset($credit_source->model) && !empty($credit_source->model)){
+                            $model = (string) $credit_source->model;
+                        }elseif(isset($credit_source->model_version) && !empty($credit_source->model_version)){
+                            $model = (string) $credit_source->model_version;
+                        }
+                    }
+
+                    if(isset($credit_source->credit_used)){
+                        $credits_used = (float) $credit_source->credit_used;
+                        break;
+                    }elseif(isset($credit_source->credits_used)){
+                        $credits_used = (float) $credit_source->credits_used;
+                        break;
+                    }elseif(isset($credit_source->results) && (is_array($credit_source->results) || is_object($credit_source->results))){
+                        $result_credits = 0;
+                        foreach($credit_source->results as $result){
+                            if(is_object($result) && isset($result->credit_used)){
+                                $result_credits += (float) $result->credit_used;
+                            }elseif(is_object($result) && isset($result->credits_used)){
+                                $result_credits += (float) $result->credits_used;
+                            }elseif(is_array($result) && isset($result['credit_used'])){
+                                $result_credits += (float) $result['credit_used'];
+                            }elseif(is_array($result) && isset($result['credits_used'])){
+                                $result_credits += (float) $result['credits_used'];
+                            }
+                        }
+
+                        if(!empty($result_credits)){
+                            $credits_used = $result_credits;
+                            break;
+                        }
+                    }
+                }
+
+                // If the LW AI service only sends the credit count back, log that too.
+                if(!empty($credits_used)){
+                    if(empty($model)){
+                        $model = ($process_used === 'compare-sentences-to-content') ? 'gpt-5-nano': (!empty(self::$model) ? self::$model: 'linkwhisper-ai');
+                    }
+
+                    $status = self::save_token_reference($model, $is_batch, $process_code, 0, 0, 0, 0, 0, $credits_used, $query_id, 'usage', '', '', 0, 0, $process_key, $process_id);
+
+                    if(!$saved && $status){
+                        $saved = true;
+                    }
+
                     self::subtract_ai_credits($credits_used);
                 }
             }
@@ -3043,6 +3783,7 @@ class Wpil_AI
             'assess-sentence-anchors' => 'assess-sentence-anchors',
             'assess-outbound-links' => 'assess-outbound-links',
             'assess-inbound-links' => 'assess-inbound-links',
+            'compare-sentences-to-content' => 'sentence-relatedness-check',
             'broken-link-replacement' => 'broken-link-replacement',
             'get-available-credits' => 'credit-balance-check',
         );
@@ -3076,6 +3817,7 @@ class Wpil_AI
             'assess-sentence-anchors' => 'Assess Sentence Anchors',
             'assess-outbound-links' => 'Assess Outbound Links',
             'assess-inbound-links' => 'Assess Inbound Links',
+            'sentence-relatedness-check' => 'Sentence Relatedness Check',
             'broken-link-replacement' => 'Broken Link Replacement',
             'credit-balance-check' => 'Credit Balance Check',
         );
@@ -3194,6 +3936,9 @@ class Wpil_AI
             case 'credit-deposit': // beseeching forgiveness of future selves is in order...
                 $code = 16;
                 break;
+            case 'compare-sentences-to-content':
+                $code = 17;
+                break;
         }
 
         return $code;
@@ -3218,6 +3963,7 @@ class Wpil_AI
             14 => 'broken-link-replacement',
             15 => 'get-available-credits',
             16 => 'credit-deposit', // further beseeching forgiveness is in order...
+            17 => 'compare-sentences-to-content',
         );
 
         return (isset($process_list[$code])) ? $process_list[$code]: 'unknown';
@@ -3242,6 +3988,7 @@ class Wpil_AI
             14 => 'Broken Link Replacement',
             15 => 'Credit Balance Check',
             16 => 'Credits Added',
+            17 => 'Sentence Relatedness Check',
         );
 
         $label = isset($process_list[$code]) ? $process_list[$code] : 'Unknown';
@@ -3254,7 +4001,7 @@ class Wpil_AI
 
     public static function get_credit_history_filter_processes(){
         $processes = array();
-        for($i = 1; $i <= 16; $i++){
+        for($i = 1; $i <= 17; $i++){
             $processes[$i] = self::get_process_pretty_name_from_code($i);
         }
 
@@ -3429,7 +4176,7 @@ class Wpil_AI
             }
 
             $id = ($post->type . '_' . $post->id);
-            $content = self::trim_text_to_token_limit(mb_ereg_replace("\n", '', mb_ereg_replace('(([a-zA-Z\-_0-9]+="[^"]*")+?[\s]?)', '', strip_tags($post->getContent(false), '<h1><h2><h3><h4><h5><h6><title><ul><ol><li>'))), self::$model, 7800);
+            $content = self::get_clean_embedding_post_content($post);
             
             // if there's no content to process
             if(empty($content)){
@@ -3456,6 +4203,8 @@ class Wpil_AI
 
     /**
      * Analyzes a list of sentences that we're confident are related to their target posts to find the best anchors
+     * TODO: Refactor this so the sentence processing indexes words and builds sentences more naturally instead of leaning so hard on delimiters.
+     * Soooo much better idea on how to fix this! Just need more time to do it!
      **/
     public static function assess_post_sentence_anchors($phrase_data, $origin_post_id = ''){
         $time = microtime(true);
@@ -3850,12 +4599,26 @@ class Wpil_AI
 
         $bits = explode('_', $id);
 
-        if(empty($bits)){
+        if(empty($bits) || !isset($bits[0], $bits[1])){
             return 0;
         }
 
         $post_id = $bits[1];
         $post_type = $bits[0];
+        $post = new Wpil_Model_Post((int)$post_id, $post_type);
+        $current_model = self::$model;
+
+        // If the post still has usable content, don't save the empty marker. Let it come around for another try.
+        if(empty(self::$model)){
+            self::$model = !empty($model) ? $model: Wpil_Settings::getChatGPTVersion('create-post-embeddings');
+        }
+
+        $content = self::get_clean_embedding_post_content($post);
+        self::$model = $current_model;
+
+        if(!empty($content)){
+            return 0;
+        }
 
         // check to make sure that the post isn't already saved
         if(!empty($wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $embedding_table WHERE `post_id` = %d AND `post_type` = %s LIMIT 1", $post_id, $post_type)))){
@@ -5733,6 +6496,7 @@ class Wpil_AI
 
         $model = Wpil_Settings::getChatGPTVersion('create-post-embeddings');
         $dimensions = Wpil_Settings::get_ai_dimension_limit();
+        add_filter('wpil_filter_ignore_linking_tags', function($tags){ return array_merge($tags, ['pre', 'code']);});
         self::$purpose = 'create-post-sentence-embeddings'; // TODO: create link cleanup that will check to see if the links have changed between the processed and new text and will tell the stupid AI if it should reprocessed the posit content.
         $phrases = Wpil_Suggestion::getPhrases($post->getContent(), false, array(), false, array(), ('sentence_text' === Wpil_Suggestion::get_phrase_text_prop()));
         //$phrases = Wpil_Suggestion::getPhrases($post->getContent()); // TODO: Review and see if we need to id text instead of sentence_text
@@ -5741,7 +6505,7 @@ class Wpil_AI
         $phrase_list = array();
         foreach($phrases as $phrase){
             $text = Wpil_Suggestion::get_ai_phrase_text($phrase);
-            if(empty($text) || strlen($text) < 3 || Wpil_Word::getWordCount($text) < 4){ // only process sentences that are long enough to matter
+            if(empty($text) || strlen($text) < 3 || Wpil_Word::getWordCount($text, true) < 4){ // only process sentences that are long enough to matter
                 continue;
             }
             
@@ -6678,8 +7442,21 @@ class Wpil_AI
             return ($return_calculations) ? 0: false;
         }
 
+        // if there are no sentences in the embedding data, there's nothing to calculate
+        if(empty($phrase_embeddings->embed_data) || (!is_array($phrase_embeddings->embed_data) && !is_object($phrase_embeddings->embed_data))){
+            return ($return_calculations) ? 0: false;
+        }
+
+        if(is_object($phrase_embeddings->embed_data)){
+            $phrase_embeddings->embed_data = get_object_vars($phrase_embeddings->embed_data);
+        }
+
         if(empty($calculated_phrase_data)){
             $first_sentence = reset($phrase_embeddings->embed_data);
+            if(empty($first_sentence) || !is_array($first_sentence)){
+                return ($return_calculations) ? 0: false;
+            }
+
             $calculated_phrase_data = (object) array(
                 'post_id' => $target_post->id,
                 'post_type' => $target_post->type,
@@ -6855,7 +7632,7 @@ class Wpil_AI
 
         $index = Wpil_Toolbox::json_decompress($calculated_phrase_data->calc_index);
 
-        if(empty($index)){
+        if(empty($index) || (!is_array($index) && !is_object($index))){
             return false;
         }
 
@@ -7175,7 +7952,7 @@ class Wpil_AI
     /**
      * Gets the embedding data for a post that has had all of it's sentences processed
      **/
-    public static function get_single_post_embedding_data($post, $decode_embeddings = false){
+    public static function get_single_post_embedding_data($post, $decode_embeddings = false, $decode_assoc = false){
         global $wpdb;
         $table = $wpdb->prefix . 'wpil_ai_embedding_phrase_data';
 
@@ -7187,7 +7964,7 @@ class Wpil_AI
 
         if(!empty($embedding_data) && $decode_embeddings){
             foreach($embedding_data as $key => $data){
-                $embedding_data[$key]->embed_data = Wpil_Toolbox::json_decompress($data->embed_data);
+                $embedding_data[$key]->embed_data = Wpil_Toolbox::json_decompress($data->embed_data, $decode_assoc);
             }
         }
 
@@ -7288,6 +8065,10 @@ class Wpil_AI
             $total_count++;
             $ids = explode('_', $key);
             if($partial){
+                if (is_object($dat->calculation)) {
+                    $dat->calculation = get_object_vars($dat->calculation);
+                }
+
                 if (! is_array($dat->calculation)) {
                     $dat->calculation = array();
                 }
@@ -8011,7 +8792,7 @@ class Wpil_AI
     }
 
     /**
-     * Estimates the cost required to process a specific piece of content.
+     * Estimates the cost required to process a specific piece of content directly throught the OpenAI API.
      * Only an estimate because the output depends on ChatGPT and can't be predicted
      **/
     public static function estimate_processing_cost($content = '', $model = ''){
@@ -8044,6 +8825,71 @@ class Wpil_AI
     }
 
     /**
+     * Estimates the number of credits needed to process an AI linking queue
+     **/
+    public static function estimate_ai_linking_credit_cost($ai_linking_process_key = '', $fallback_to_total_queue = false, $fallback_count = null){
+        $total_posts = self::get_total_processable_posts();
+        $remaining = $total_posts;
+
+        if(!empty($ai_linking_process_key)){
+            $remaining = Wpil_LinkMapping::get_relation_map_pending_ai_item_count($ai_linking_process_key, array(), array(), true);
+            $total_queued = Wpil_LinkMapping::get_relation_map_total_item_count($ai_linking_process_key);
+
+            if($remaining < 1){
+                if(!empty($fallback_to_total_queue) && $total_queued > 0){
+                    $remaining = $total_queued;
+                }elseif(null !== $fallback_count){
+                    $remaining = max(0, (int) $fallback_count);
+                }elseif($total_queued < 1){
+                    $remaining = $total_posts;
+                }
+            }
+        }elseif(null !== $fallback_count){
+            $remaining = max(0, (int) $fallback_count);
+        }
+
+        // base linking cost, plus a budget for the AI sentence relatedness checks that run during linking
+        $estimate = ($remaining * 4) + self::estimate_sentence_relatedness_credit_cost($remaining);
+
+        return (int) ceil($estimate);
+    }
+
+    /**
+     * Estimates the credits the AI sentence relatedness checker will burn while linking a set of posts.
+     *
+     * The checker runs once per post on outbound passes (every target is bundled into a single call),
+     * but fans out to one call per candidate target on inbound passes (pillar / money pages), up to the
+     * inbound candidate cap. So we weight the per-post call count by the share of posts that are pillars.
+     * In testing we're running about 0.5 credits per checker call.
+     *
+     * @param int $remaining_posts The number of posts still due for AI linking.
+     * @return float The estimated credit cost of the sentence checks for those posts.
+     **/
+    public static function estimate_sentence_relatedness_credit_cost($remaining_posts = 0){
+        $remaining_posts = max(0, (int) $remaining_posts);
+        if($remaining_posts < 1){
+            return 0;
+        }
+
+        // roughly half a credit per checker call in testing
+        $credits_per_call = (float) apply_filters('wpil_sentence_relatedness_credits_per_call', 0.5);
+        // outbound linking bundles every target into a single checker call
+        $outbound_calls = (float) apply_filters('wpil_sentence_relatedness_outbound_calls', 1);
+        // inbound linking (pillar / money pages) runs one call per candidate target, capped at 6
+        $inbound_calls = (float) apply_filters('wpil_sentence_relatedness_inbound_calls', 6);
+
+        // work out what share of the posts get the pricier inbound treatment
+        $total_posts = self::get_total_processable_posts();
+        $pillar_posts = count(Wpil_Settings::get_money_page_pid_list());
+        $pillar_fraction = ($total_posts > 0) ? min(1, ($pillar_posts / $total_posts)) : 0;
+
+        // blend the per-post call counts by direction, then price them out
+        $calls_per_post = ($inbound_calls * $pillar_fraction) + ($outbound_calls * (1 - $pillar_fraction));
+
+        return ($remaining_posts * $calls_per_post * $credits_per_call);
+    }
+
+    /**
      * Estimates the number of credits needed to process the site
      **/
     public static function estimate_site_processing_credit_cost($ai_linking_process_key = '', $include_ai_linking = true){
@@ -8051,6 +8897,7 @@ class Wpil_AI
 
         // get the active processes
         $selected_processes = Wpil_Settings::get_selected_ai_batch_processes(true);
+        $credit_processes = array('create-post-embeddings', 'keyword-detecting', 'product-detecting', 'post-summarizing');
 
         // the total number of posts that need processing
         $total_posts = self::get_total_processable_posts();
@@ -8060,6 +8907,10 @@ class Wpil_AI
 
         // go over the processes
         foreach($selected_processes as $process){
+            if(!in_array($process, $credit_processes, true)){
+                continue;
+            }
+
             if(isset($processed_posts[$process])){
                 $estimate += ($total_posts - $processed_posts[$process]);
             }else{
@@ -8069,17 +8920,8 @@ class Wpil_AI
 
         // if we're going to be doing post linking too
         if($include_ai_linking && (!empty($ai_linking_process_key) || null === $ai_linking_process_key)){
-            if(!empty($ai_linking_process_key)){
-                $remaining = Wpil_LinkMapping::get_relation_map_pending_ai_item_count($ai_linking_process_key, array(), array(), true);
-                if($remaining < 1 && Wpil_LinkMapping::get_relation_map_total_item_count($ai_linking_process_key) < 1){
-                    $remaining = $total_posts;
-                }
-            }else{
-                $remaining = $total_posts;
-            }
-
             // throw it on the stack of posts
-            $estimate += ($remaining * 4);
+            $estimate += self::estimate_ai_linking_credit_cost($ai_linking_process_key);
         }
 
         // the result is our estimate!
@@ -8103,6 +8945,11 @@ class Wpil_AI
                 $credits = round((float) $credits, 4);
                 set_transient('wpil_ai_credit_balance', $credits, 60 * MINUTE_IN_SECONDS);
                 self::set_stored_ai_credit_balance($credits);
+
+                if($refresh && $credits > 10){
+                    // If the refreshed balance is healthy again, clear the old low-credit warning.
+                    update_option('wpil_oai_insufficient_quota_error', '0');
+                }
 
                 if(null !== $stored_credits && $credits > ($stored_credits + 0.00009)){
                     self::refresh_ai_credit_purchase_data();
@@ -8827,7 +9674,26 @@ class Wpil_AI
             return false;
         }
 
-        $relations = $map_item['related_posts'];
+        // make sure that we're not processing content that's unlikely to be linked
+        add_filter('wpil_filter_ignore_linking_tags', function($tags){ return array_merge($tags, ['pre', 'code']);});
+
+        $relations = self::normalize_pid_list($map_item['related_posts']);
+        // If this relationship already has a live suggestion, leave it alone until review/autocheck handles it.
+        $active_suggestion_pids = self::get_linking_suggestion_processed_ids('', $direction, $pid);
+        if(!empty($active_suggestion_pids)){
+            $active_suggestion_lookup = array_flip(self::normalize_pid_list($active_suggestion_pids));
+            foreach($relations as $key => $relation_pid){
+                if(isset($active_suggestion_lookup[$relation_pid])){
+                    unset($relations[$key]);
+                }
+            }
+
+            $relations = array_values($relations);
+            if(empty($relations)){
+                return false;
+            }
+        }
+
         $data = [];
         $input = [];
 
@@ -8898,10 +9764,10 @@ class Wpil_AI
                 return false;
             }
 
-            // assemble the data object
-            $input['source'] = ['content' => self::trim_text_to_token_limit($content, $local_model, 20000), 'keywords' => $post_keywords];
             $input['targets'] = [];
-            $token_size = 300 + self::count_tokens($input['source']['content'] . implode(',', $input['source']['keywords']), $local_model);
+            $target_posts = array();
+            $source_content = self::trim_text_to_token_limit($content, $local_model, 20000);
+            $token_size = 300 + self::count_tokens($source_content . implode(',', $post_keywords), $local_model);
             $limit = 100000;
             $target_limit = 15;
             foreach($target_data as $target_pid => $target){
@@ -8920,6 +9786,11 @@ class Wpil_AI
                     continue;
                 }
 
+                // if there are no distantly related sentences
+                if(empty(Wpil_Phrase::filter_unrelated_phrases($phrases, '', $tp))){
+                    continue; // skip to the next
+                }
+
                 $dat = [
                     'title' => $title,
                     'keywords' => !empty($target['keywords']) ? $target['keywords']: [],
@@ -8931,6 +9802,7 @@ class Wpil_AI
                 if($token_size + $query < $limit){
                     $token_size += $query;
                     $input['targets'][] = $dat;
+                    $target_posts[] = $tp;
                 }else{
                     break;
                 }
@@ -8940,6 +9812,14 @@ class Wpil_AI
             if(empty($input['targets'])){
                 return false; // exist
             }
+
+            $source_content = self::filter_ai_source_content_by_sentence_relatedness($source_content, $target_posts);
+            if(empty($source_content)){
+                return false;
+            }
+
+            // assemble the data object
+            $input['source'] = ['content' => self::trim_text_to_token_limit($source_content, $local_model, 20000), 'keywords' => $post_keywords];
 
             // json encode the whole thinkg
             $input = json_encode($input, JSON_UNESCAPED_UNICODE);
@@ -9008,10 +9888,16 @@ class Wpil_AI
                 // check to make sure that we're reasonably sure that we can create links in the post
                 $phrases = Wpil_Suggestion::getPhrases($tp->getContent(), false, array(), false, array(), true);
                 $phrases = self::filter_ai_source_phrases_for_keyword_cannibalization($phrases, $tp, array($post->get_pid()));
+                $phrases = Wpil_Phrase::filter_unrelated_phrases($phrases, '', $post);
                 $content = self::get_ai_source_content_from_phrases($phrases);
 
                 if(empty($content)){
                     continue; // if we can't, skip to the next
+                }
+
+                $content = self::filter_ai_source_content_by_sentence_relatedness($content, array($post));
+                if(empty($content)){
+                    continue; // if none of the sentences fit, skip to the next
                 }
 
                 $kwords = Wpil_TargetKeyword::get_active_keyword_list($tp->id, $tp->type);
@@ -9110,12 +9996,112 @@ class Wpil_AI
         self::$active_linking_process_key = (string) $process_key;
         try{
             $results = self::call_linkwhisper_ai($data, 'gpt-5-mini', '', ['rewrite_sentences' => $rewrite_sentences, 'max_outbound_links' => $max_outbound, 'max_inbound_links' => $max_inbound]);
+            self::save_response_tokens($results, self::$purpose);
         }finally{
             self::$active_linking_process_key = $prev_process_key;
         }
 
         // return the fruits of our labours!
         return $results;
+    }
+
+    /**
+     * Filters source sentences with the quick relatedness check before we spend the bigger AI call on them.
+     **/
+    private static function filter_ai_source_content_by_sentence_relatedness($source_content = '', $target_posts = array()){
+        if(!Wpil_Settings::get_linkwhisper_ai_active() || !Wpil_Settings::get_linkwhisper_ai_token()){
+            return $source_content;
+        }
+
+        if(empty($source_content) || empty($target_posts)){
+            return $source_content;
+        }
+
+        if(!is_array($target_posts)){
+            $target_posts = array($target_posts);
+        }
+        $sentences = self::get_ai_sentence_relatedness_items_from_content($source_content);
+        if(empty($sentences)){
+            return $source_content;
+        }
+
+        // Quick word-overlap relatedness check that skips the AI call entirely.
+        // A sentence sharing 2 or fewer words with every target is unrelated (dropped);
+        // sharing 5 or more with any target is related (kept). Anything in between is kept too.
+        $target_contents = array();
+        foreach($target_posts as $target_post){
+            if(empty($target_post) || !is_object($target_post) || !method_exists($target_post, 'getContent')){
+                continue;
+            }
+
+            $content = self::get_ai_relatedness_content_from_post($target_post);
+            if(!empty($content)){
+                $target_contents[] = $content;
+            }
+        }
+
+        if(!empty($target_contents)){
+            $kept = array();
+            foreach($sentences as $sentence){
+                foreach($target_contents as $target_content){
+                    // more than 2 shared words with any target and we keep the sentence (5+ is a sure thing)
+                    if(Wpil_Word::content_contains($sentence['compare'], $target_content, 3)){
+                        $kept[] = $sentence['compare'];
+                        break;
+                    }
+                }
+            }
+
+            return !empty($kept) ? implode('|||', $kept) : '';
+        }else{
+            return $source_content;
+        }
+    }
+
+    /**
+     * Cleans up a post's content for the relatedness check.
+     **/
+    private static function get_ai_relatedness_content_from_post($post = null){
+        if(empty($post) || !is_object($post) || !method_exists($post, 'getContent')){
+            return '';
+        }
+
+        $content = $post->getContent(false);
+        $content = strip_tags($content, '<h1><h2><h3><h4><h5><h6><title><ul><ol><li>');
+        $content = mb_ereg_replace('(([a-zA-Z\-_0-9]+="[^"]*")+?[\s]?)', ' ', $content);
+        $content = mb_ereg_replace("&nbsp;", ' ', $content);
+        $content = mb_ereg_replace("[\s]+", ' ', $content);
+
+        return self::trim_text_to_token_limit($content, 'gpt-5-nano', 8000);
+    }
+
+    /**
+     * Splits the source content back into clean sentence packets.
+     **/
+    private static function get_ai_sentence_relatedness_items_from_content($content = ''){
+        if(empty($content) || !is_string($content)){
+            return array();
+        }
+
+        $items = array();
+        $sentences = explode('|||', $content);
+        $min_anchor_length = Wpil_Settings::getSuggestionMinAnchorSize(3);
+        foreach($sentences as $sentence){
+            if(!is_scalar($sentence) || empty(trim((string)$sentence))){
+                continue;
+            }
+
+            $sentence = trim(preg_replace('/[\s]+/', ' ', strip_tags((string)$sentence)));
+            if(empty($sentence) || Wpil_Word::getWordCount($sentence, true) < $min_anchor_length){
+                continue;
+            }
+
+            $items[] = array(
+                'compare' => $sentence,
+            );
+        }
+
+        return $items;
     }
 
     private static function normalize_pid($pid){
@@ -9284,20 +10270,22 @@ class Wpil_AI
         }
 
         $sentences = array();
+        $searched = [];
         foreach($phrases as $phrase){
             if(!is_object($phrase)){
                 continue;
             }
 
             $sentence = '';
-            if(isset($phrase->sentence_src) && !empty($phrase->sentence_src)){
-                $sentence = $phrase->sentence_src;
+            if(isset($phrase->sentence_text) && !empty($phrase->sentence_text)){
+                $sentence = $phrase->sentence_text;
             }elseif(isset($phrase->text) && !empty($phrase->text)){
                 $sentence = $phrase->text;
             }
 
-            if(!empty($sentence)){
+            if(!empty($sentence) && !in_array(md5($sentence), $searched)){ // make sure that we only scan the searchable content once
                 $sentences[] = $sentence;
+                $searched[] = md5($sentence);
             }
         }
 
@@ -9332,21 +10320,24 @@ class Wpil_AI
         }
 
         $filtered = array();
+        $searched = [];
         foreach($phrases as $phrase){
             if(!is_object($phrase)){
                 continue;
             }
 
             $sentence = '';
-            if(isset($phrase->sentence_src) && !empty($phrase->sentence_src)){
-                $sentence = $phrase->sentence_src;
+            if(isset($phrase->sentence_text) && !empty($phrase->sentence_text)){
+                $sentence = $phrase->sentence_text;
             }elseif(isset($phrase->text) && !empty($phrase->text)){
                 $sentence = $phrase->text;
             }
 
-            if(empty($sentence)){
+            if(empty($sentence) || in_array(md5($sentence), $searched)){ // make sure that we only scan the searchable content once
                 continue;
             }
+
+            $searched[] = md5($sentence);
 
             $matched_owner_pids = self::get_ai_sentence_keyword_owner_pids($sentence, $keyword_data['keywords'], $keyword_data['more_specific_keywords']);
             if(empty($matched_owner_pids)){

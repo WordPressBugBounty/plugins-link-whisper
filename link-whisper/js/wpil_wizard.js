@@ -3,6 +3,11 @@
 (function ($) {
     // we're going to do this via Ajax, sliding from page to page wihtout reloading
 
+    // NOTE: Decoupling AI from One Click Scan
+    // AI scanning + linking are disabled inside One Click Setup by default. They're
+    // re-enabled for this run when the wizard is loaded with the ?doLinking=1 param.
+    var aiLinkingRequested = (new URLSearchParams(window.location.search)).get('doLinking') === '1';
+
     // link handler
     $(document).on('click', '.wpil-wizard-link', handleLinkClick);
     function handleLinkClick(e){
@@ -771,6 +776,35 @@ console.log('.wizard-' + pageId);
     }
     hasRunWizard();
 
+    function runWizardTippy(){
+        if(typeof tippy !== 'function'){
+            return;
+        }
+
+        $('.wpil-tippy-tooltipped').not('.wpil-tippy-loaded').each(function(index, element){
+            var el = $(element);
+            if(!el.data('wpilTooltipContent')){
+                return;
+            }
+
+            var args = {
+                content: el.data('wpilTooltipContent')
+            };
+
+            if(el.data('wpilTooltipPlacement')){
+                args['placement'] = el.data('wpilTooltipPlacement');
+            }
+
+            if(el.data('wpilTooltipMaxwidth')){
+                args['maxWidth'] = parseInt(el.data('wpilTooltipMaxwidth'));
+            }
+
+            tippy(element, args);
+            el.addClass('wpil-tippy-loaded');
+        });
+    }
+    runWizardTippy();
+
     var dashboardTooltip = null;
     function runInstallation(){
         var aiConnectionActive = isWizardAiServiceConnected();
@@ -1240,6 +1274,7 @@ console.log('.wizard-' + pageId);
             aiScannPaused = false;
             if(!processingStatus.runAIScan){
                 setStepState('ai_scan', 'running', { desc: 'Scanning site content and generating keywords…' });
+                // NOTE: Decoupling AI from One Click Scan (gated inside ajaxliveDownloadAIData)
                 ajaxliveDownloadAIData(Math.floor(Date.now())); // restart the scan!
             }
             if(!processingStatus.runAILinking){
@@ -1525,6 +1560,7 @@ console.log('.wizard-' + pageId);
                         // check if we're doing ai linking
                         if(isAiLinkingEnabled()){
                             // fire off the AI linking!
+                            // NOTE: Decoupling AI from One Click Scan (gated inside ajaxAILinkingRun)
                             ajaxAILinkingRun();
                             setStepState('ai_linking', 'running', { desc: 'Searching for linking opportunities…' });
                         }else{
@@ -2018,6 +2054,7 @@ console.log('.wizard-' + pageId);
         if(processingStatus['runAIScan'] && processingStatus['runKeywordScan'] && processingStatus.runLinkScan){
             if(isAiLinkingEnabled()){
                 setWizardReviewProcessState(true, false);
+                // NOTE: Decoupling AI from One Click Scan (gated inside ajaxAILinkingRun)
                 ajaxAILinkingRun();
                 setStepState('ai_linking', 'running', { desc: 'Searching for linking opportunities…' });
                 setManualReviewVisible(true);
@@ -2037,7 +2074,10 @@ console.log('.wizard-' + pageId);
 
     $(document).on('change', '#wpil-ai-linking-toggle', function(){
         syncAiLinkingEnabledState();
-        refreshWizardCreditEstimate();
+        // NOTE: Decoupling AI from One Click Scan — only estimate credits when AI is requested
+        if(aiLinkingRequested){
+            refreshWizardCreditEstimate();
+        }
         // If user turns OFF: treat linking as “complete” so wizard can finish without it.
         if(!isAiLinkingEnabled()){
             processingStatus['runAILinking'] = true;
@@ -2301,6 +2341,7 @@ console.log('.wizard-' + pageId);
                         // check if we're doing ai linking
                         if(isAiLinkingEnabled()){
                             // fire off the AI linking!
+                            // NOTE: Decoupling AI from One Click Scan (gated inside ajaxAILinkingRun)
                             ajaxAILinkingRun();
                             setStepState('ai_linking', 'running', { desc: 'Searching for linking opportunities…' });
                         }else{
@@ -2490,6 +2531,7 @@ console.log('.wizard-' + pageId);
                         // check if we're doing ai linking
                         if(isAiLinkingEnabled()){
                             // fire off the AI linking!
+                            // NOTE: Decoupling AI from One Click Scan (gated inside ajaxAILinkingRun)
                             ajaxAILinkingRun();
                             setStepState('ai_linking', 'running', { desc: 'Searching for linking opportunities…' });
                         }else{

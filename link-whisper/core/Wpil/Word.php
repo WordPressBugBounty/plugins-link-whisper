@@ -52,13 +52,18 @@ class Wpil_Word
     /**
      * Gets the number of words in a given sentence
      **/
-    public static function getWordCount($sentence = ''){
+    public static function getWordCount($sentence = '', $skip_ignore = false){
         if(empty($sentence) || !is_string($sentence)){
             return 0;
         }
 
         $sentence = mb_ereg_replace('[\s-]', '{{wpil-replace}}', $sentence);
         $sentence = array_filter(explode('{{wpil-replace}}', $sentence));
+
+        // are we supposed to skip ovber the ignore words?
+        if($skip_ignore){
+            $sentence = self::cleanIgnoreWords($sentence);
+        }
 
         return count($sentence);
     }
@@ -168,10 +173,16 @@ class Wpil_Word
     public static function cleanIgnoreWords($words)
     {
         $ignore_words = Wpil_Settings::getIgnoreWords();
+        $stemmed_ignore_words = Wpil_Settings::getStemmedIgnoreWords();
         $ignore_numbers = get_option(WPIL_OPTION_IGNORE_NUMBERS, 1);
 
         foreach ($words as $key => $word) {
-            if (($ignore_numbers && is_numeric(str_replace(['.', ',', '$'], '', $word))) || in_array($word, $ignore_words)) {
+            if (
+                // ignore if
+                ($ignore_numbers && is_numeric(str_replace(['.', ',', '$'], '', $word))) || // it's a number and we're supposed to do that
+                in_array($word, $ignore_words) ||                                           // it's a normal ignore word (simple check, faster because it doesn't need to be stemmed)
+                in_array(Wpil_Stemmer::Stem($word), $stemmed_ignore_words)                  // it's the stemmed version of an ignore word
+            ) {
                 unset($words[$key]);
             }
         }
@@ -200,7 +211,7 @@ class Wpil_Word
     /**
      * Takes a string of words and lowercases and stemms the words.
      * Will strip out punctuation, so should only be used on single sentences
-     * 
+     *
      * @param string $text The input string to be set to lower case and stemmed
      * @return string $words The stemmed and lower cased string of words.
      **/
@@ -254,7 +265,7 @@ class Wpil_Word
 
     /**
      * A strtolower function for use on languages that are accented, or non latin.
-     * 
+     *
      * @param string $string (The text to be lowered)
      * @return string (The string that's been put into lower case)
      */
@@ -486,5 +497,48 @@ class Wpil_Word
         }
 
         return mb_strrpos($haystack, $needle, $offset);
+    }
+
+    /**
+     * Checks to see if a sentence shares a number of words with a target piece of content.
+     * Skips ignored words because those don't count.
+     * Also checks for unique instances of words, not pure word count. So we don't hit the threshold just because 1 word shows up 3 times
+     *
+     * @param array|string $words The words we're looking for
+     * @param string $content The content that we're searching
+     * @param int $unique_word_threshold The number of words that we're checking for in the body content
+     * @return bool Does the target content contain the number of words taht we're looking for?
+     **/
+    public static function content_contains($words = [], $content = '', $unique_word_threshold = 1){
+        if(empty($words) || empty($content)){
+            return false;
+        }
+
+        if(is_string($words)){
+            $words = self::getWords($words);
+        }
+
+        if(!is_array($words)){
+            return false;
+        }
+
+        if(!empty($words)){
+            $words = self::cleanIgnoreWords($words);
+        }
+
+        if(empty($words)){
+            return false;
+        }
+
+        $words = array_unique($words);
+
+        $found = 0;
+        foreach($words as $word){
+            if(false !== strpos($content, $word) && false !== self::mb_strpos($content, $word)){
+                $found++;
+            }
+        }
+
+        return ($found >= $unique_word_threshold);
     }
 }

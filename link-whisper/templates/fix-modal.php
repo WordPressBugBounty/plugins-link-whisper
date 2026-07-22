@@ -233,7 +233,8 @@
     color: #166534;
   }
 
-  #wpil-fix-modal .wpil-fix-preview-refresh {
+  #wpil-fix-modal .wpil-fix-preview-refresh,
+  #wpil-fix-modal .wpil-fix-preview-export {
     min-height: 26px;
     border: 1px solid #cbd5e1;
     border-radius: 8px;
@@ -245,12 +246,19 @@
     cursor: pointer;
   }
 
-  #wpil-fix-modal .wpil-fix-preview-refresh:hover:not(:disabled) {
+  #wpil-fix-modal .wpil-fix-preview-export {
+    text-decoration: none;
+    line-height: 16px;
+  }
+
+  #wpil-fix-modal .wpil-fix-preview-refresh:hover:not(:disabled),
+  #wpil-fix-modal .wpil-fix-preview-export:hover {
     border-color: #94a3b8;
     background: #f8fafc;
   }
 
-  #wpil-fix-modal .wpil-fix-preview-refresh:disabled {
+  #wpil-fix-modal .wpil-fix-preview-refresh:disabled,
+  #wpil-fix-modal .wpil-fix-preview-export.is-disabled {
     cursor: not-allowed;
     opacity: 0.6;
   }
@@ -259,6 +267,27 @@
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 12px;
+  }
+
+  #wpil-fix-modal .wpil-fix-live-counter {
+    display: none;
+    margin: 12px 0 0;
+    padding: 10px 12px;
+    background: #fff;
+    border: 1px solid #dbeafe;
+    border-radius: 10px;
+  }
+
+  #wpil-fix-modal .wpil-fix-counter-text {
+    margin: 0;
+    color: #1e3a8a;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  #wpil-fix-modal .wpil-fix-eta {
+    color: #64748b;
+    margin-left: 6px;
   }
 
   #wpil-fix-modal .wpil-fix-preview-stat {
@@ -448,6 +477,35 @@
     padding: 2px 4px !important;
   }
 
+  #wpil-fix-modal .wpil-fix-special-post-type-wrap .select2-selection__rendered {
+    min-height: 30px;
+  }
+
+  #wpil-fix-modal .wpil-fix-special-post-type-wrap .select2-search--inline {
+    min-width: 180px;
+  }
+
+  #wpil-fix-modal .wpil-fix-special-post-type-wrap .select2-search__field {
+    min-width: 180px;
+    width: auto !important;
+  }
+
+  body.wpil-fix-modal-open .select2-container--open {
+    z-index: 100002 !important;
+  }
+
+  body.wpil-fix-modal-open .select2-dropdown {
+    z-index: 100002 !important;
+  }
+
+  #wpil-fix-modal .wpil-fix-special-post-type-wrap .select2-selection__choice {
+    margin-top: 4px;
+    border-radius: 6px;
+    border-color: #cbd5e1;
+    background: #f8fafc;
+    color: #334155;
+  }
+
   #wpil-fix-modal .wpil-fix-special-actions {
     display: flex;
     justify-content: flex-end;
@@ -522,14 +580,23 @@
     box-shadow: 0 0 0 3px rgba(44, 107, 255, 0.25);
   }
 
+  #wpil-fix-modal .wpil-fix-process-now.hidden {
+    display: none;
+  }
+
+  #wpil-fix-modal .wpil-fix-process-now:disabled {
+    cursor: not-allowed;
+    opacity: .6;
+  }
+
   #wpil-fix-modal .wpil-fix-secondary {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     min-height: 36px;
-    background: #e5e7eb;
-    color: #374151;
-    border: 1px solid #d1d5db;
+    background: #fff;
+    color: #2c6bff;
+    border: 1px solid #2c6bff;
     padding: 8px 14px;
     border-radius: 8px;
     font-size: 13px;
@@ -539,8 +606,8 @@
   }
 
   #wpil-fix-modal .wpil-fix-secondary:hover {
-    background: #d1d5db;
-    color: #1f2937;
+    background: #eff6ff;
+    color: #1d4ed8;
   }
 
   #wpil-fix-modal .wpil-fix-secondary:focus-visible {
@@ -637,6 +704,11 @@
 
   body.wpil-fix-modal-open {
     overflow: hidden;
+  }
+
+  body.wpil-fix-modal-open .swal-overlay,
+  .swal-overlay.swal-overlay--show-modal {
+    z-index: 100001 !important;
   }
 
   @media (max-width: 680px) {
@@ -751,6 +823,7 @@
       <div class="wpil-fix-preview-title-row">
         <div class="wpil-fix-preview-title">Estimated Number of Links Created</div>
         <div class="wpil-fix-preview-actions">
+          <a class="wpil-fix-preview-export is-disabled" href="#" data-wpil-fix-export-map>Export Map</a>
           <button class="wpil-fix-preview-refresh" type="button" data-wpil-fix-refresh-map>Refresh Map</button>
           <span class="wpil-fix-preview-badge" data-wpil-fix-preview-status>Generating</span>
         </div>
@@ -768,6 +841,12 @@
           <strong data-wpil-fix-preview-stat="potential_links_range">...</strong>
           <span>Estimated links this fix will create.</span>
         </div>
+      </div>
+      <div class="wpil-fix-live-counter" data-wpil-fix-live-counter>
+        <p class="wpil-fix-counter-text">
+          Analyzed <strong data-wpil-fix-analyzed>0</strong> of <strong data-wpil-fix-total>0</strong> posts
+          <span class="wpil-fix-eta" data-wpil-fix-eta></span>
+        </p>
       </div>
       <div class="wpil-fix-preview-progress" data-wpil-fix-preview-progress>
         <div class="wpil-fix-preview-progress-label">
@@ -814,6 +893,7 @@
 
     <div id="wpil-fix-actions-enough" class="wpil-fix-actions">
       <button class="wpil-fix-secondary" type="button" data-wpil-fix-cancel>Not Now</button>
+      <button class="wpil-fix-secondary wpil-fix-process-now hidden" id="wpil-fix-process-now" type="button" disabled>Process Now</button>
       <button class="wpil-fix-primary" id="wpil-fix-begin" type="button">Fix With AI</button>
     </div>
 

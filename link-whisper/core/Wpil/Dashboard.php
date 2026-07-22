@@ -930,12 +930,13 @@ class Wpil_Dashboard
                 }
 
                 $cleaned_hosts = [];
+                $placeholders = [];
                 foreach($domains as $domain){
+                    $placeholders[] = '%s';
                     $cleaned_hosts[] = wp_parse_url(esc_url_raw($domain), PHP_URL_HOST);
                 }
 
-                $host = "AND host IN ('" . implode("', '", $cleaned_hosts) . "')";
-
+                $host = $wpdb->prepare("AND host IN ('" . implode("', '", $placeholders) . "')", $cleaned_hosts);
                 $ignored = Wpil_Query::getReportLinksIgnoreQueryStrings();
                 $post_check = "GROUP BY post_id ORDER BY link_id ASC";
                 $result = $wpdb->get_results("SELECT *, COUNT(*) as 'link_count' FROM {$links_table} WHERE host IS NOT NULL {$host} {$search} {$ignored} {$untargeted} {$post_check}");

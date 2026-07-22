@@ -45,7 +45,8 @@ if(!$ai_service_connected){
     <input type="hidden" id="wpil-setup-wizard-ai-data" data-nonce="<?php echo wp_create_nonce(wp_get_current_user()->ID . 'wpil_download_ai_data'); ?>">
     <input type="hidden" class="wpil-wizard-reset-report-nonce" name="reset_data_nonce" value="<?php echo wp_create_nonce(get_current_user_id() . 'wpil_reset_report_data'); ?>">
     <input type="hidden" class="wpil-wizard-reset-target-keyword-nonce" value="<?php echo wp_create_nonce(get_current_user_id() . 'wpil_target_keyword'); ?>">
-    <input type="hidden" id="wpil-setup-wizard-total-ai-processable-post-count" value="<?php echo (int) Wpil_AI::get_total_processable_posts(); ?>">
+    <?php // NOTE: Decoupling AI from One Click Scan ?>
+    <input type="hidden" id="wpil-setup-wizard-total-ai-processable-post-count" value="<?php echo $do_linking ? (int) Wpil_AI::get_total_processable_posts() : 0; ?>">
     <input type="hidden" id="wpil-wizard-approve-all" name="wpil_wizard_approve_all" value="0">
     <input type="hidden" id="wpil-wizard-enough-credits" value="">
     <input type="hidden" id="wpil-wizard-ai-service-connected" value="<?php echo $ai_service_connected ? '1' : '0'; ?>">
@@ -204,7 +205,6 @@ if(!$ai_service_connected){
                 margin-bottom:0;
             }
 
-
             /* Animations */
             @keyframes pulse-ring {
                 0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(127, 90, 240, 0.7); }
@@ -240,6 +240,12 @@ if(!$ai_service_connected){
             }
             .toggle-checkbox:checked + .toggle-label {
                 background-color: #7F5AF0;
+            }
+
+            /* Keep the wizard tooltip above the full-screen setup wrapper. */
+            body > [data-tippy-root],
+            .tippy-popper {
+                z-index: 1000000 !important;
             }
         </style>
     </div>
@@ -279,8 +285,10 @@ if(!$ai_service_connected){
 
             <div class="p-8 md:p-12">
                 
+                <?php // NOTE: Decoupling AI from One Click Scan — restore AI credits + scan/link steps when ?doLinking=1 ?>
+                <?php if($do_linking): ?>
                 <div class="grid grid-cols-1 lg:grid-cols-12 gap-12">
-                    
+
                     <div class="lg:col-span-5 flex flex-col justify-between h-full">
                         <div>
                             <div class="flex items-center space-x-3 mb-4">
@@ -448,6 +456,99 @@ if(!$ai_service_connected){
                         </div>
                     </div>
                 </div>
+                <?php else: ?>
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
+
+                    <div class="lg:col-span-5">
+                        <div>
+                            <div class="flex items-center space-x-3 mb-4">
+                                <svg data-role="processing-status-spinner" class="animate-spin h-6 w-6 text-[#7F5AF0]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <svg data-role="processing-status-check" class="hidden h-6 w-6 text-green-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                                </svg>
+                                <span data-role="processing-status-label" class="text-[#7F5AF0] font-semibold tracking-wide uppercase text-xs">Processing Data</span>
+                            </div>
+
+                            <h1 class="text-3xl font-bold text-gray-900 mb-4">Scanning your site</h1>
+                            <p class="text-gray-600 leading-relaxed mb-8 text-base">
+                                Link Whisper is crawling your content, reading the links it can find, and importing keyword data so your reports are ready to use.
+                            </p>
+
+                            <div class="bg-gray-50 border border-gray-100 rounded-xl p-6 mt-10 mb-8" style="margin-right:20px;">
+                                <div class="flex items-center justify-between gap-3 mb-3">
+                                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">What's happening now:</div>
+                                    <div class="relative">
+                                        <button type="button" style="padding: 4px 6px;" class="wpil-tippy-tooltipped text-[11px] font-semibold text-[#7F5AF0] bg-white border border-purple-100 rounded-full px-2.5 py-1 hover:border-purple-200 hover:bg-purple-50 focus:outline-none focus:ring-2 focus:ring-purple-200" data-wpil-tooltip-placement="right" data-wpil-tooltip-maxwidth="280" data-wpil-tooltip-content="<?php echo esc_attr__('We\'re tuning the AI linking experience so it is easier to use and focus on specific tasks. It now lives in the Dashboard area, and bigger upgrades are on the way soon!', 'wpil'); ?>">
+                                            Where's the AI?
+                                        </button>
+                                    </div>
+                                </div>
+                                <ul class="space-y-4 text-sm text-gray-600 leading-relaxed">
+                                    <li class="flex gap-3">
+                                        <span class="mt-1 h-2 w-2 rounded-full bg-[#7F5AF0] flex-shrink-0"></span>
+                                        <span>Scanning posts, pages, and terms for existing internal links.</span>
+                                    </li>
+                                    <li class="flex gap-3">
+                                        <span class="mt-1 h-2 w-2 rounded-full bg-[#7F5AF0] flex-shrink-0"></span>
+                                        <span>Importing target keyword data for reporting and suggestions.</span>
+                                    </li>
+                                    <li class="flex gap-3">
+                                        <span class="mt-1 h-2 w-2 rounded-full bg-[#7F5AF0] flex-shrink-0"></span>
+                                        <span>Link Whisper will send you to the dashboard when the site scan is complete.</span>
+                                    </li>
+                                </ul>
+                            </div>
+
+
+                        </div>
+
+                    </div>
+
+                    <div class="lg:col-span-7 bg-gray-50 rounded-2xl p-8 border border-gray-100">
+                        <div class="space-y-8">
+                            <div class="flex group" data-step="links">
+                                <div class="flex flex-col items-center mr-6" data-role="icon">
+                                    <!-- icon gets injected by JS -->
+                                </div>
+                                <div class="flex-1 pb-8 border-b border-gray-200 border-dashed">
+                                    <div class="flex justify-between items-center mb-1">
+                                    <h4 class="text-lg font-bold text-gray-800" data-role="title">Scanning Internal Links</h4>
+                                    <span class="text-sm font-bold text-gray-400" data-role="pct">Pending</span>
+                                    </div>
+                                    <p class="text-sm text-gray-500" data-role="desc">Waiting for scan to start.</p>
+                                    <div class="mt-3 hidden" data-role="bar">
+                                    <div class="w-full bg-white rounded-full h-2.5 border border-gray-100 overflow-hidden">
+                                        <div class="lw-gradient-bg h-2.5 rounded-full" data-role="bar-fill" style="width:0%"></div>
+                                    </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="flex group" data-step="keywords">
+                                <div class="flex flex-col items-center mr-6" data-role="icon">
+                                    <!-- icon gets injected by JS -->
+                                </div>
+                                <div class="flex-1">
+                                    <div class="flex justify-between items-center mb-1">
+                                    <h4 class="text-lg font-bold text-gray-800" data-role="title">Importing Target Keywords</h4>
+                                    <span class="text-sm font-bold text-gray-400" data-role="pct">Pending</span>
+                                    </div>
+                                    <p class="text-sm text-gray-500" data-role="desc">Waiting for scan to start.</p>
+                                    <div class="mt-3 hidden" data-role="bar">
+                                    <div class="w-full bg-white rounded-full h-2.5 border border-gray-100 overflow-hidden">
+                                        <div class="lw-gradient-bg h-2.5 rounded-full" data-role="bar-fill" style="width:0%"></div>
+                                    </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
 
                 <div class="flex items-center justify-between pt-6 mt-6" style="display:none">
                     <a href="#" class="text-gray-400 hover:text-gray-600 font-medium text-sm transition-colors flex items-center" style="display:none">

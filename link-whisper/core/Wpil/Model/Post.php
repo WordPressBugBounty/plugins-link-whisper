@@ -1238,6 +1238,7 @@ class Wpil_Model_Post
                         if(!empty($dat->target_id) && (int)$dat->target_id === (int)$this->id && $dat->target_type === $this->type){
                             $meta['wpil_links_inbound_internal_count']++;
                             $meta['wpil_links_inbound_internal_count_data'][] = new Wpil_Model_Link([
+                                'link_id' => $dat->link_id,
                                 'url' => $dat->raw_url,
                                 'host' => $dat->host,
                                 'internal' => false,
@@ -1259,6 +1260,7 @@ class Wpil_Model_Post
                         }else{
                             $meta['wpil_links_outbound_internal_count']++;
                             $meta['wpil_links_outbound_internal_count_data'][] = new Wpil_Model_Link([
+                                'link_id' => $dat->link_id,
                                 'url' => $dat->raw_url,
                                 'host' => $dat->host,
                                 'internal' => false,
@@ -1281,6 +1283,7 @@ class Wpil_Model_Post
                     }else{
                         $meta['wpil_links_outbound_external_count']++;
                         $meta['wpil_links_outbound_external_count_data'][] = new Wpil_Model_Link([
+                            'link_id' => $dat->link_id,
                             'url' => $dat->raw_url,
                             'host' => $dat->host,
                             'internal' => false,

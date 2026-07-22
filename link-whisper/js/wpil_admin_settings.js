@@ -219,6 +219,166 @@
             });
     }
 
+    var emptyEmbeddingRescan = {
+        error_count: 0,
+        waiter: null
+    };
+
+    $(document).on('click', '.wpil-rescan-empty-ai-embeddings', function(e){
+        e.preventDefault();
+
+        var button = $(this);
+        if(button.hasClass('button-disabled') || button.hasClass('wpil_button_is_active')){
+            return;
+        }
+
+        if(!confirm('Rescan the posts marked as empty AI embeddings? This will use AI credits and rebuild relation scores for the repaired posts.')){
+            return;
+        }
+
+        button.addClass('wpil_button_is_active');
+        button.data('button-text', button.text());
+        button.text('Rescanning...');
+        emptyEmbeddingRescan.error_count = 0;
+        clearTimeout(emptyEmbeddingRescan.waiter);
+        rescanEmptyAiEmbeddings(button);
+    });
+
+    function rescanEmptyAiEmbeddings(button){
+        var status = $('.wpil-empty-ai-embedding-status');
+        clearTimeout(emptyEmbeddingRescan.waiter);
+
+        $.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            dataType: 'json',
+            data: {
+                action: 'wpil_rescan_empty_ai_embeddings',
+                nonce: button.data('nonce')
+            },
+            error: function(jqXHR, textStatus, errorThrown){
+                emptyEmbeddingRescan.error_count += 1;
+
+                if(emptyEmbeddingRescan.error_count < 5){
+                    status.text('Rescan request failed. Trying again...');
+                    emptyEmbeddingRescan.waiter = setTimeout(function(){
+                        rescanEmptyAiEmbeddings(button);
+                    }, 5000);
+                    return;
+                }
+
+                finishEmptyEmbeddingRescan(button);
+                showEmptyEmbeddingRescanError(jqXHR, textStatus);
+            },
+            success: function(response){
+                if(typeof response === 'string' && !isJSON(response)){
+                    response = extractAndValidateJSON(response, ['error', 'complete', 'processed', 'repaired', 'skipped', 'failed', 'remaining', 'message', 'relation_processing']);
+                }
+
+                if(response.error){
+                    wpil_swal(response.error.title, response.error.text, 'error');
+                    finishEmptyEmbeddingRescan(button);
+                    return;
+                }
+
+                emptyEmbeddingRescan.error_count = 0;
+
+                var message = 'Processed: ' + (response.processed || 0) + ', repaired: ' + (response.repaired || 0) + ', skipped: ' + (response.skipped || 0) + ', failed: ' + (response.failed || 0) + ', remaining: ' + (response.remaining || 0) + '.';
+                if(response.relation_processing){
+                    message += ' Refreshing relation scores...';
+                }
+                status.text(message);
+
+                if(response.complete){
+                    finishEmptyEmbeddingRescan(button);
+                    if(parseInt(response.remaining) < 1){
+                        button.addClass('button-disabled');
+                    }
+                    wpil_swal('All Done!', response.message || 'The empty AI embedding rescan has finished.', 'success');
+                    return;
+                }
+
+                emptyEmbeddingRescan.waiter = setTimeout(function(){
+                    rescanEmptyAiEmbeddings(button);
+                }, 1000);
+            }
+        });
+    }
+
+    function finishEmptyEmbeddingRescan(button){
+        clearTimeout(emptyEmbeddingRescan.waiter);
+        button.removeClass('wpil_button_is_active');
+        button.text(button.data('button-text'));
+    }
+
+    function showEmptyEmbeddingRescanError(jqXHR, textStatus){
+        var wrapper = $('<div />');
+        wrapper.append('<strong>' + textStatus + '</strong><br>');
+        wrapper.append(jqXHR.responseText);
+        wpil_swal({"title": "Error", "content": wrapper[0], "icon": "error"});
+    }
+
+    $(document).on('click', '.wpil-flush-opcache', function(e){
+        e.preventDefault();
+
+        var button = $(this),
+            status = $('.wpil-flush-opcache-status');
+
+        if(button.hasClass('wpil_button_is_active')){
+            return;
+        }
+
+        button.addClass('wpil_button_is_active');
+        button.data('button-text', button.text());
+        button.text('Clearing...');
+        status.text('');
+
+        $.ajax({
+            type: 'POST',
+            url: ajaxurl,
+            dataType: 'json',
+            data: {
+                action: 'wpil_flush_opcache',
+                nonce: button.data('nonce')
+            },
+            error: function(jqXHR, textStatus){
+                status.text('The OPcache could not be cleared.');
+                showFlushOpcacheError(jqXHR, textStatus);
+            },
+            success: function(response){
+                if(typeof response === 'string' && !isJSON(response)){
+                    response = extractAndValidateJSON(response, ['error', 'success']);
+                }
+
+                if(response && response.error){
+                    status.text(response.error.text);
+                    wpil_swal(response.error.title, response.error.text, 'error');
+                    return;
+                }
+
+                if(response && response.success){
+                    status.text(response.success.text);
+                    wpil_swal(response.success.title, response.success.text, 'success');
+                    return;
+                }
+
+                status.text('The OPcache could not be cleared.');
+                wpil_swal('Error', 'The OPcache could not be cleared.', 'error');
+            },
+            complete: function(){
+                button.removeClass('wpil_button_is_active');
+                button.text(button.data('button-text'));
+            }
+        });
+    });
+
+    function showFlushOpcacheError(jqXHR, textStatus){
+        var wrapper = $('<div />');
+        wrapper.append('<strong>' + textStatus + '</strong><br>');
+        wrapper.append(jqXHR.responseText);
+        wpil_swal({"title": "Error", "content": wrapper[0], "icon": "error"});
+    }
+
     /** Related Posts Settings **/
     $(document).on('change', '[name^=wpil_related_post]', updateRelatedPostSettingsWait);
     $(document).on('click', '.wpil-related-posts-clear-colorpicker, .wpil-related-posts-clear-number', updateRelatedPostSettingsWait);
@@ -347,7 +507,7 @@
 
     $(document).on('change', '.wpil-ai-version-selector', toggleDownloadOnAIMethodChange);
     function toggleDownloadOnAIMethodChange(){
-        if($('[name="wpil_open_ai_api_key"]').val().length < 1){
+        if(!aiSettingsHaveProvider()){
             return;
         }
 
@@ -371,7 +531,7 @@
 
     $(document).on('change', '[name="wpil_use_ai_suggestions"]', toggleShowTopAISuggestions);
     function toggleShowTopAISuggestions(){
-        if($('[name="wpil_open_ai_api_key"]').val().length < 1){
+        if(!aiSettingsHaveProvider()){
             return;
         }
 
@@ -382,6 +542,16 @@
         }else{
             $('.wpil-show-top-ai-suggestions, .wpil-disable-ai-anchor-building, .wpil-disable-ai-suggestion-cron').addClass('hide-setting');
         }
+    }
+
+    function aiSettingsHaveProvider(){
+        return (($('[name="wpil_open_ai_api_key"]').val() || '').length > 0 || $('#wpil-disconnect-ai-subscription').is(':visible'));
+    }
+
+    function formatAiCreditCost(cost){
+        cost = parseFloat(cost);
+        cost = isNaN(cost) ? 0: Math.round(cost);
+        return cost.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') + ' Credits';
     }
 
     $(document).on('click', '.wpil-live-download-ai-data', liveDownloadAIData);
@@ -637,12 +807,13 @@
                         }
                     }
 
-                    if(response.continue.estimated_cost){
+                    if(response.continue.estimated_cost !== undefined){
                         if(!$('#wpil-disconnect-ai-subscription').is(":visible")){
-                            var cost = '$' + (response.continue.estimated_cost.toFixed(2));
+                            var rawCost = parseFloat(response.continue.estimated_cost),
+                                cost = '$' + ((rawCost > 0 && rawCost < 0.01) ? rawCost.toFixed(4): rawCost.toFixed(2));
                             $('.ai-estimated-cost-section .ai-estimated-cost').text(cost);
                         }else{
-                            var cost = (response.continue.estimated_cost) + ' Credits';
+                            var cost = formatAiCreditCost(response.continue.estimated_cost);
                             $('.ai-estimated-cost-section .ai-estimated-cost').text(cost);
                         }
                     }
@@ -682,6 +853,17 @@
                     }, offset);
 
                 }else if(response.success){
+
+                    if(response.success.estimated_cost !== undefined){
+                        if(!$('#wpil-disconnect-ai-subscription').is(":visible")){
+                            var rawCost = parseFloat(response.success.estimated_cost),
+                                cost = '$' + ((rawCost > 0 && rawCost < 0.01) ? rawCost.toFixed(4): rawCost.toFixed(2));
+                            $('.ai-estimated-cost-section .ai-estimated-cost').text(cost);
+                        }else{
+                            var cost = formatAiCreditCost(response.success.estimated_cost);
+                            $('.ai-estimated-cost-section .ai-estimated-cost').text(cost);
+                        }
+                    }
 
                     if(completionRetry < 2){
                         if(response.success.oai_completed){

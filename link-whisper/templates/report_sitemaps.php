@@ -5,7 +5,11 @@
         }
     </style>
     <?php 
-        $has_maps = (!empty($table->data) && Wpil_Sitemap::has_sitemap('link_sitemap_inbound')); 
+        $has_maps = (!empty($table->data) && Wpil_Sitemap::has_sitemap('link_sitemap_inbound'));
+        // whether ANY sitemap exists (of any type). This drives the "Generate Sitemaps" button placement:
+        // if any sitemaps exist, the upper-right button (in report_tabs.php) is shown and the center button is hidden.
+        // Keeping this in sync with report_tabs.php avoids both buttons rendering with the same DOM id.
+        $has_any_sitemaps = !empty(Wpil_Sitemap::get_sitemap_list());
         $size = ($has_maps) ? 'width: calc(100% - 60px); min-height: 800px;': 'width: calc(100% - 60px); min-height: 600px;';
     ?>
     <h1 class="wp-heading-inline wpil-is-tooltipped wpil-no-overlay wpil-no-scale" <?php echo Wpil_Toolbox::generate_tooltip_text('visual-sitemap-report-intro'); ?>><?php _e('Visual Sitemaps','wpil'); ?></h1>
@@ -149,7 +153,7 @@
                     <?php $table->display(); ?>
                     <div style="position: relative;">
                         <div id="container" style="height: 100%;background: #fff; <?php echo $size; ?> border-radius: 3px;margin-left: 30px;border: 2px solid #2c3338; position:relative;" class="wpil-is-tooltipped wpil-no-scale" data-wpil-tooltip-read-time="5500" <?php echo Wpil_Toolbox::generate_tooltip_text('visual-sitemap-table'); ?>>
-                        <?php if(!$has_maps){ ?>
+                        <?php if(!$has_any_sitemaps){ ?>
                             <div style="text-align:center; height:100%; width: 100%; min-height: 400px;">
                                 <div style="position:absolute; top: calc(50% - 40px); left: calc(50% - 100px)">
                                     <form action='' method="post" id="wpil_generate_link_sitemaps_form">

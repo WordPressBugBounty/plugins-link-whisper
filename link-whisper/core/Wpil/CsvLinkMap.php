@@ -738,13 +738,6 @@ class Wpil_CsvLinkMap
             }
         }
 
-        $linking_table = $wpdb->prefix . 'wpil_ai_linking';
-        $wpdb->query(
-            $wpdb->prepare(
-                "DELETE FROM {$linking_table} WHERE process_key = %s",
-                $process_key
-            )
-        );
 
         if (class_exists('Wpil_AI')) {
             Wpil_AI::clear_credit_tracking_task_run('linking:' . $process_key);
@@ -838,7 +831,7 @@ class Wpil_CsvLinkMap
             'outbound_specified' => count($outbound_specified),
             'outbound_auto'      => count($outbound_rows) - count($outbound_specified),
             'process_key'        => self::get_process_key(),
-            'credit_estimate'    => self::estimate_credit_cost(),
+            'credit_estimate'    => Wpil_AI::estimate_ai_linking_credit_cost(self::get_process_key(), true, count(self::get_queue_rows())),
             'manage_url'         => self::get_manage_url(),
             'template_filename'  => self::get_example_template_filename(),
             'parse_errors'       => self::get_parse_errors(),
@@ -944,16 +937,6 @@ class Wpil_CsvLinkMap
         }
 
         return $queue_rows;
-    }
-
-    public static function estimate_credit_cost()
-    {
-        $queue_rows = self::get_queue_rows();
-        if (empty($queue_rows)) {
-            return 0;
-        }
-
-        return count($queue_rows) * 4;
     }
 
     // -------------------------------------------------------------------------
@@ -1566,7 +1549,7 @@ class Wpil_CsvLinkMap
             'potential_links_min' => (int) $preview['potential_links_min'],
             'potential_links_max' => (int) $preview['potential_links_max'],
             'process_key' => self::get_process_key(),
-            'credit_estimate' => self::estimate_credit_cost(),
+            'credit_estimate' => Wpil_AI::estimate_ai_linking_credit_cost(self::get_process_key(), true, count(self::get_queue_rows())),
             'manage_url' => self::get_manage_url(),
             'template_filename' => self::get_example_template_filename(),
             'parse_status' => 'complete',
@@ -1597,7 +1580,7 @@ class Wpil_CsvLinkMap
             'target_posts_exact' => (int) $preview['target_posts_exact'],
             'potential_links_min' => (int) $preview['potential_links_min'],
             'potential_links_max' => (int) $preview['potential_links_max'],
-            'credit_estimate' => self::estimate_credit_cost(),
+            'credit_estimate' => Wpil_AI::estimate_ai_linking_credit_cost(self::get_process_key(), true, count(self::get_queue_rows())),
             'parse_status' => self::has_ready_preview_map() ? 'complete' : 'idle',
             'parse_phase' => self::has_ready_preview_map() ? 'complete' : 'idle',
             'parse_progress' => self::has_ready_preview_map() ? 100 : 0,

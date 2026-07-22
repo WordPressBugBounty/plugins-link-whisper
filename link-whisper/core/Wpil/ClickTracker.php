@@ -163,6 +163,11 @@ class Wpil_ClickTracker
         $location = isset($_POST['link_location']) ? sanitize_text_field($_POST['link_location']): 'Body Content';
         $tracking_id = isset($_POST['monitor_id']) && !empty($_POST['monitor_id']) ? (int)$_POST['monitor_id']: 0;
 
+        // if the user is logged in and can edit posts, don't track them
+        if(current_user_can('edit_posts')){
+            die();
+        }
+
         $user_ip = null;
         $user_id = 0;
 
@@ -171,11 +176,6 @@ class Wpil_ClickTracker
             // get some user data
             $user_ip = self::get_current_client_ip();
             $user_id = get_current_user_id();
-        }
-
-        // if the user is an admin, exit
-        if(!empty($user_id) && current_user_can('edit_posts')){
-            die();
         }
 
         // get the ignored click data
