@@ -1735,6 +1735,18 @@ body.wpil-review-open{ overflow:hidden; }
                     return;
                 }
 
+                if(resp.data.resume_search && window.wpilAiFixRunner && $.isFunction(window.wpilAiFixRunner.resume)){
+                    window.wpilAiFixRunner.resume({
+                        type: getReviewFixType(),
+                        itemId: resp.data.item_id || '',
+                        processKey: resp.data.process_key || getReviewProcessKey()
+                    }, {
+                        status: 'running',
+                        progress: 99,
+                        process_key: resp.data.process_key || getReviewProcessKey()
+                    });
+                }
+
                 queueSuggestionRefresh(1000);
             }).fail(function(xhr){
                 queueSuggestionRefresh(1000);

@@ -5,7 +5,7 @@
  */
 class Wpil_Dashboard
 {
-    public static $domain_relation_cache = null;
+    public static $domain_relation_cache = array();
 
     public static function ajax_link_delay_waitlist_signup(){
         Wpil_Base::verify_nonce('wpil-link-delay-waitlist-signup');
@@ -84,12 +84,15 @@ class Wpil_Dashboard
      *
      * @return string|null
      */
-    public static function getPostCount()
+    public static function getPostCount($age_limit = true)
     {
         global $wpdb;
         $report_table = $wpdb->prefix . 'wpil_report_links';
         $post_types = implode("','", Wpil_Settings::getPostTypes());
         $statuses_query = Wpil_Query::postStatuses();
+        $date_limit = ($age_limit) ? Wpil_Query::getPostDateQueryLimit(): '';
+        $report_date_limit = (!empty($date_limit)) ? " AND post_id IN (SELECT ID FROM {$wpdb->posts} WHERE 1=1 {$date_limit})": '';
+        $post_date_limit = (!empty($date_limit)) ? Wpil_Query::getPostDateQueryLimit('p'): '';
         $ignoring = Wpil_Settings::hideIgnoredPosts();
 
         // if the user is removing ignored posts from the reports
@@ -103,7 +106,8 @@ class Wpil_Dashboard
         if(Wpil_Settings::use_link_table_for_data()){
             // lets save oursevles some headaches with giant metatables by just using the report link table
             $ignored = (!empty($ignored)) ? str_replace('p.ID', 'post_id', $ignored): "";
-            $count = $wpdb->get_var("SELECT COUNT(DISTINCT post_id) FROM {$report_table} WHERE `post_type` = 'post' {$ignored}");
+            $ignored = (!empty($ignored)) ? " AND (1=1 {$ignored})": '';
+            $count = $wpdb->get_var("SELECT COUNT(DISTINCT post_id) FROM {$report_table} WHERE `post_type` = 'post' {$ignored} {$report_date_limit}");
             $taxonomies = Wpil_Settings::getTermTypes();
             if (!empty($taxonomies)) {
                 $ignored = "";
@@ -114,7 +118,7 @@ class Wpil_Dashboard
                 $count += $wpdb->get_var("SELECT COUNT(DISTINCT post_id) FROM {$report_table} WHERE `post_type` = 'term' {$ignored}");
             }
         }else{
-            $count = $wpdb->get_var("SELECT count(p.ID) FROM {$wpdb->posts} p INNER JOIN {$wpdb->postmeta} m ON p.ID = m.post_id WHERE post_type IN ('$post_types') $statuses_query {$ignored} AND meta_key = 'wpil_sync_report3' AND meta_value = '1'");
+            $count = $wpdb->get_var("SELECT count(p.ID) FROM {$wpdb->posts} p INNER JOIN {$wpdb->postmeta} m ON p.ID = m.post_id WHERE post_type IN ('$post_types') $statuses_query {$ignored} {$post_date_limit} AND meta_key = 'wpil_sync_report3' AND meta_value = '1'");
             $taxonomies = Wpil_Settings::getTermTypes();
             if (!empty($taxonomies)) {
                 $ignored = "";
@@ -133,7 +137,7 @@ class Wpil_Dashboard
      *
      * @return string|null
      */
-    public static function getLinksCount()
+    public static function getLinksCount($age_limit = true)
     {
         if (!Wpil_Report::link_table_is_created()) {
             return 0;
@@ -143,8 +147,11 @@ class Wpil_Dashboard
 
         // if the user is hiding the ignored posts, get the posts to ignore
         $ignored = Wpil_Query::getReportLinksIgnoreQueryStrings();
+        $ignored = (!empty($ignored)) ? " AND (1=1 {$ignored})": '';
+        $date_limit = ($age_limit) ? Wpil_Query::getPostDateQueryLimit(): '';
+        $date_limit = (!empty($date_limit)) ? " AND ((`post_type` = 'post' AND `post_id` IN (SELECT ID FROM {$wpdb->posts} WHERE 1=1 {$date_limit})) OR `post_type` = 'term')": '';
 
-        return $wpdb->get_var("SELECT count(*) FROM {$wpdb->prefix}wpil_report_links WHERE `has_links` = 1 {$ignored}");
+        return $wpdb->get_var("SELECT count(*) FROM {$wpdb->prefix}wpil_report_links WHERE `has_links` = 1 {$ignored} {$date_limit}");
     }
 
     /**
@@ -152,7 +159,7 @@ class Wpil_Dashboard
      *
      * @return string|null
      */
-    public static function getInternalLinksCount()
+    public static function getInternalLinksCount($age_limit = true)
     {
         if (!Wpil_Report::link_table_is_created()) {
             return 0;
@@ -162,8 +169,11 @@ class Wpil_Dashboard
 
         // if the user is hiding the ignored posts, get the posts to ignore
         $ignored = Wpil_Query::getReportLinksIgnoreQueryStrings();
+        $ignored = (!empty($ignored)) ? " AND (1=1 {$ignored})": '';
+        $date_limit = ($age_limit) ? Wpil_Query::getPostDateQueryLimit(): '';
+        $date_limit = (!empty($date_limit)) ? " AND ((`post_type` = 'post' AND `post_id` IN (SELECT ID FROM {$wpdb->posts} WHERE 1=1 {$date_limit})) OR `post_type` = 'term')": '';
 
-        return (int) $wpdb->get_var("SELECT count(*) FROM {$wpdb->prefix}wpil_report_links WHERE `has_links` = 1 AND internal = 1 {$ignored}");
+        return (int) $wpdb->get_var("SELECT count(*) FROM {$wpdb->prefix}wpil_report_links WHERE `has_links` = 1 AND internal = 1 {$ignored} {$date_limit}");
     }
 
     /**
@@ -171,7 +181,7 @@ class Wpil_Dashboard
      *
      * @return string|null
      */
-    public static function getExternalLinksCount()
+    public static function getExternalLinksCount($age_limit = true)
     {
         if (!Wpil_Report::link_table_is_created()) {
             return 0;
@@ -181,8 +191,11 @@ class Wpil_Dashboard
 
         // if the user is hiding the ignored posts, get the posts to ignore
         $ignored = Wpil_Query::getReportLinksIgnoreQueryStrings();
+        $ignored = (!empty($ignored)) ? " AND (1=1 {$ignored})": '';
+        $date_limit = ($age_limit) ? Wpil_Query::getPostDateQueryLimit(): '';
+        $date_limit = (!empty($date_limit)) ? " AND ((`post_type` = 'post' AND `post_id` IN (SELECT ID FROM {$wpdb->posts} WHERE 1=1 {$date_limit})) OR `post_type` = 'term')": '';
 
-        return (int) $wpdb->get_var("SELECT count(*) FROM {$wpdb->prefix}wpil_report_links WHERE `has_links` = 1 AND internal = 0 {$ignored}");
+        return (int) $wpdb->get_var("SELECT count(*) FROM {$wpdb->prefix}wpil_report_links WHERE `has_links` = 1 AND internal = 0 {$ignored} {$date_limit}");
     }
 
     /**
@@ -468,17 +481,18 @@ class Wpil_Dashboard
     /**
      * Gets the distribution of external links as a proportion of the overall total of external links.
      **/
-    public static function get_external_link_distribution($limit = 0, $host = ''){
+    public static function get_external_link_distribution($limit = 0, $host = '', $age_limit = true){
         global $wpdb;
         $table = $wpdb->prefix . 'wpil_report_links';
+        $cache_key = ($age_limit) ? 'limited': 'all';
 
-        if(self::$domain_relation_cache !== null){
+        if(isset(self::$domain_relation_cache[$cache_key])){
             if(!empty($limit)){
-                return array_slice(self::$domain_relation_cache, 0, $limit);
+                return array_slice(self::$domain_relation_cache[$cache_key], 0, $limit);
             }
 
             if(!empty($host)){
-                foreach(self::$domain_relation_cache as $domain){
+                foreach(self::$domain_relation_cache[$cache_key] as $domain){
                     if($domain->host === $host){
                         return $domain;
                     }
@@ -486,32 +500,34 @@ class Wpil_Dashboard
             }
         }
 
-        self::$domain_relation_cache = $wpdb->get_results("SELECT COUNT(*) AS 'link_count', host FROM {$table} WHERE `internal` = 0 GROUP BY `host` ORDER BY `link_count` DESC");
+        $date_limit = ($age_limit) ? Wpil_Query::getPostDateQueryLimit(): '';
+        $date_limit = (!empty($date_limit)) ? " AND ((`post_type` = 'post' AND `post_id` IN (SELECT ID FROM {$wpdb->posts} WHERE 1=1 {$date_limit})) OR `post_type` = 'term')": '';
+        self::$domain_relation_cache[$cache_key] = $wpdb->get_results("SELECT COUNT(*) AS 'link_count', host FROM {$table} WHERE `internal` = 0 {$date_limit} GROUP BY `host` ORDER BY `link_count` DESC");
 
         $total = 0;
-        if(!empty(self::$domain_relation_cache)){
-            foreach(self::$domain_relation_cache as $dat){
+        if(!empty(self::$domain_relation_cache[$cache_key])){
+            foreach(self::$domain_relation_cache[$cache_key] as $dat){
                 $total += $dat->link_count;
             }
 
-            foreach(self::$domain_relation_cache as &$dat){
+            foreach(self::$domain_relation_cache[$cache_key] as &$dat){
                 $dat->representation = $dat->link_count / $total;
             }
         }
 
         if(!empty($limit)){
-            return array_slice(self::$domain_relation_cache, 0, $limit);
+            return array_slice(self::$domain_relation_cache[$cache_key], 0, $limit);
         }
 
         if(!empty($host)){
-            foreach(self::$domain_relation_cache as $domain){
+            foreach(self::$domain_relation_cache[$cache_key] as $domain){
                 if($domain->host === $host){
                     return $domain;
                 }
             }
         }
 
-        return self::$domain_relation_cache;
+        return self::$domain_relation_cache[$cache_key];
     }
 
     /**
@@ -594,11 +610,16 @@ class Wpil_Dashboard
         $hosts = $wpdb->get_results("SELECT host, count(host) as 'host_count' from {$table} WHERE host IS NOT NULL {$search} GROUP BY host ORDER BY host_count DESC {$limit}");
 
         if(!empty($hosts)){
-            $host_search = array();
+            $found_hosts = array();
             foreach($hosts as $host){
-                $host_search[] = $host->host;
+                $found_hosts[] = $host->host;
             }
-            $host_search = " AND host IN ('" . implode('\', \'', array_flip(array_flip($host_search))) . "')";
+
+            $found_hosts = array_values(array_unique($found_hosts));
+            if(!empty($found_hosts)){
+                $placeholders = array_fill(0, count($found_hosts), '%s');
+                $host_search = $wpdb->prepare(" AND host IN ('" . implode("', '", $placeholders) . "')", $found_hosts);
+            }
         }
 
         $ignored = Wpil_Query::getReportLinksIgnoreQueryStrings();
@@ -1032,11 +1053,13 @@ class Wpil_Dashboard
                 }
 
                 $cleaned_hosts = [];
+                $placeholders = [];
                 foreach($domains as $domain){
+                    $placeholders[] = '%s';
                     $cleaned_hosts[] = wp_parse_url(esc_url_raw($domain), PHP_URL_HOST);
                 }
 
-                $host = "AND host IN ('" . implode("', '", $cleaned_hosts) . "')";
+                $host = $wpdb->prepare("AND host IN ('" . implode("', '", $placeholders) . "')", $cleaned_hosts);
 
                 $ignored = Wpil_Query::getReportLinksIgnoreQueryStrings();
                 $result = $wpdb->get_results("SELECT * FROM {$links_table} WHERE host IS NOT NULL {$host} {$search} {$untargeted} {$ignored}");
@@ -1161,17 +1184,19 @@ class Wpil_Dashboard
     {
         global $wpdb;
         $table = "{$wpdb->prefix}wpil_report_links";
+        $date_limit = Wpil_Query::getPostDateQueryLimit();
+        $date_limit = (!empty($date_limit)) ? " AND ((`post_type` = 'post' AND `post_id` IN (SELECT ID FROM {$wpdb->posts} WHERE 1=1 {$date_limit})) OR `post_type` = 'term')": '';
 
         // if the scan has been run since the 2.6.5 update
         if(version_compare(get_option('wpil_scan_last_plugin_version', '0.0.1'), '2.6.5', '>=')){
             // consisely query the database for data
-            $total = $wpdb->get_var("SELECT COUNT(*) FROM $table WHERE internal = 1");
-            $filtered = $wpdb->get_var("SELECT COUNT(*) FROM $table WHERE internal = 1 AND `anchor_word_count` > 2 AND `anchor_word_count` < 8");
+            $total = $wpdb->get_var("SELECT COUNT(*) FROM $table WHERE internal = 1 {$date_limit}");
+            $filtered = $wpdb->get_var("SELECT COUNT(*) FROM $table WHERE internal = 1 AND `anchor_word_count` > 2 AND `anchor_word_count` < 8 {$date_limit}");
         }else{
             // if the scan hasn't been run since the update, process the word counts out of the existing anchors
             // Get all internal anchors (fetch anchor text)
             $anchors = $wpdb->get_results(
-                "SELECT anchor FROM $table WHERE internal = 1",
+                "SELECT anchor FROM $table WHERE internal = 1 {$date_limit}",
                 ARRAY_A
             );
 
@@ -1267,7 +1292,7 @@ class Wpil_Dashboard
         $inbound_lookup = array_fill_keys(array_unique($inbound_keys), true);
         // Step 4: Get total number of posts + terms (published posts + all terms)
 
-        $post_ids = Wpil_Report::get_all_post_ids();
+        $post_ids = Wpil_Report::get_all_post_ids('suggestion');
         $term_ids = ($show_categories) ? Wpil_Report::get_all_term_ids() : 0;
 
         if(!empty($post_ids) && !empty($ignored_posts)){
@@ -1359,13 +1384,15 @@ class Wpil_Dashboard
     public static function get_related_link_percentage(){
         global $wpdb;
         $table = $wpdb->prefix . "wpil_report_links";
+        $date_limit = Wpil_Query::getPostDateQueryLimit();
+        $date_limit = (!empty($date_limit)) ? " AND ((`post_type` = 'post' AND `post_id` IN (SELECT ID FROM {$wpdb->posts} WHERE 1=1 {$date_limit})) OR `post_type` = 'term')": '';
 
         $links = $wpdb->get_row("SELECT
                 COUNT(*) AS total,
                 SUM(CASE WHEN (CASE WHEN `anchor_slug_positional_match` >= 80 THEN LEAST((`ai_relation_score` * 1.2), 1) ELSE `ai_relation_score` END) > 0.5 THEN 1 ELSE 0 END) AS related,
                 SUM(CASE WHEN (CASE WHEN `anchor_slug_positional_match` >= 80 THEN LEAST((`ai_relation_score` * 1.2), 1) ELSE `ai_relation_score` END) < 0.5 THEN 1 ElSE 0 END) AS unrelated
             FROM {$table}
-            WHERE `internal` = 1 AND `ai_relation_score` > 0");
+            WHERE `internal` = 1 AND `ai_relation_score` > 0 {$date_limit}");
 
         $percent = 0;
         if(!empty($links) && isset($links->total) && !empty($links->total)){
@@ -1476,7 +1503,10 @@ class Wpil_Dashboard
                 return max(5, min(5000, $broken * 2));
 
             case 'orphaned_posts':
-                return max(10, min(8000, $orphan * 3));
+                // Orphan linking fans out across candidate source posts, so allow for the comparisons too.
+                $candidates_per_target = max(1, (float) apply_filters('wpil_inbound_candidates_per_target', 20));
+                $candidate_cost = max(0, (float) apply_filters('wpil_inbound_candidate_credit_cost', 1));
+                return max(20, (int) ceil($orphan * $candidates_per_target * $candidate_cost));
 
             case 'link_coverage':
                 // more missing coverage => more work
@@ -1968,7 +1998,7 @@ class Wpil_Dashboard
 
 
     public static function wpil_dash_site_health_score(array $m) {
-        $posts = isset($m['posts_crawled']) ? max(1, (int) $m['posts_crawled']) : 1;
+        $posts = isset($m['site_post_count']) ? max(1, (int) $m['site_post_count']) : (isset($m['posts_crawled']) ? max(1, (int) $m['posts_crawled']) : 1);
 
         $broken = isset($m['broken_links']) ? max(0, (int) $m['broken_links']) : 0;
         $orphan = isset($m['orphaned_posts']) ? max(0, (int) $m['orphaned_posts']) : 0;

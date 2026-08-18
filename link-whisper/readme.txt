@@ -2,8 +2,8 @@ Link Whisper Free
 Contributors: sreenathlw, mattbissett, linkwhspr
 Tags: links, SEO, internal linking, link building, orphan content
 Requires at least: 4.6
-Tested up to: 7.0.2
-Stable Tag: 0.9.6
+Tested up to: 7.0.4
+Stable Tag: 0.9.7
 Requires PHP: 5.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -200,6 +200,24 @@ Please report security bugs found in the source code of the Link Whisper Free pl
 15. [Premium] The URL Changer allows you to update old links to point to new URLs.
 
 == Changelog ==
+= 0.9.7 =
+* [IMPROVEMENT] Batching the Broken Links Report's data reset so much larger sites can start a scan without timing out part way through.
+* [IMPROVEMENT] Making the Broken Links scan's progress bar report the number of posts that are actually left to process.
+* [IMPROVEMENT] Making the Dashboard stats respect the suggestion age restrictions so the counts match the posts that Link Whisper is really working with.
+* [IMPROVEMENT] Making the AI suggestions respect the "Point Suggestions to Specific Post Types" setting.
+* [IMPROVEMENT] Improving the AI credit estimates for orphan and inbound linking runs so the cost shown before a run is much closer to what the run actually uses.
+* [IMPROVEMENT] Making the orphan linking process stop as soon as a post has the inbound link it needed, instead of working through the rest of the candidates.
+* [IMPROVEMENT] Rejecting an AI link suggestion now sends the search back out to look for another source post instead of ending the run.
+* [IMPROVEMENT] Updating the Done For You links on the Dashboard to point to the new information page.
+* [UX/UI] Fixing the Dashboard's background color and the spacing above the navigation tabs.
+* [SECURITY] Hardening the Dashboard's domain queries so host names are always run through prepared statements.
+* [SECURITY] Validating the saved post type selections against the post types that actually exist on the site before they're used in queries.
+* [SECURITY] Restricting scanning and suggestions to published posts.
+* [SECURITY] Sanitizing the IDs returned by the ignored page lookup.
+* [BUGFIX] Fixing a fatal error that could occur when stemming Bulgarian words.
+* [BUGFIX] Fixing the orphaned post percentage in the Site Health widget and the email reports, which was being measured against the restricted post count instead of the site total.
+* [BUGFIX] Fixing an issue where a completed AI review run could be cleared away while suggestions were still waiting to be reviewed.
+
 = 0.9.6 =
 * [NEW DEBUG SETTING] Adding a "Clear OP Cache" tool to the settings so you can flush PHP's OPcache when the site is still serving older cached plugin files or reports aren't showing updates.
 * [NEW DEBUG SETTING] Adding a "Repair Empty AI Embeddings" tool that rescans posts which were incorrectly saved as empty AI embeddings and refreshes their AI Relation calculations.

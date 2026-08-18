@@ -216,7 +216,7 @@
             success: function(response){
 
                 if(!isJSON(response)){
-                    response = extractAndValidateJSON(response, ['error', 'finish']);
+                    response = extractAndValidateJSON(response, ['error', 'finish', 'has_more']);
                 }
 
                 // if there was an error
@@ -231,7 +231,7 @@
                 $('.progress_count:first').css('width', response.percents + '%');
                 $('.wpil-loading-status:first').text(response.status);
     
-                if(response.finish){
+                if(!response.has_more && response.finish){
                     wpil_swal('Success!', 'Synchronization has been completed.', 'success').then(function(){
                         location.reload();
                     });
@@ -250,17 +250,25 @@
         $(this).attr('disabled', true);
         $(this).find('button.button-primary').addClass('wpil_button_is_active');
 
+        wpil_error_reset_data_process(nonce);
+    }
+
+    function wpil_error_reset_data_process(nonce, resetType = '', lastId = 0){
         $.post(ajaxurl, {
             action: 'wpil_error_reset_data',
-            nonce: nonce
+            nonce: nonce,
+            reset_type: resetType,
+            last_id: lastId
         }, function(response){
             if(!isJSON(response)){
-                response = extractAndValidateJSON(response, ['error', 'template']);
+                response = extractAndValidateJSON(response, ['error', 'continue', 'template']);
             }
             
             if (typeof response.error != 'undefined') {
                 wpil_swal(response.error.title, response.error.text, 'error');
                 return;
+            } else if (response.continue) {
+                wpil_error_reset_data_process(nonce, response.reset_type, response.last_id);
             } else if (typeof response.template != 'undefined') {
                 $('#wpbody-content').html(response.template);
                 wpil_error_process();

@@ -4367,7 +4367,7 @@ class Wpil_Report
 
             $max_age = "";
             if(!empty($age_limit)){
-                if($age_limit === 'ai'){ // TODO: Create case switch if we need more limit settings
+                if($age_limit === 'ai' || $age_limit === 'suggestion'){ // TODO: Create case switch if we need more limit settings
                     $max_age = Wpil_Query::getPostDateQueryLimit('', $age_limit);
                 }
             }

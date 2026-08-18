@@ -15,7 +15,7 @@ class Wpil_LinkMapping
 
     private static $money_page_term_ids = null;
     private static $fix_special_options_cache = array();
-    private static $post_type_cache = array();
+    private static $post_type_id_cache = array();
     private static $post_category_cache = array();
     private static $relationship_item_filter_cache = array();
     private static $relation_map_seed_cache = array();
@@ -551,7 +551,7 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
     /**
      * @param $post current wpil_model_post post to judge for
      **/
-    public static function judge_map_item_relations($post, $data = [], $process_key = ''){
+    public static function judge_map_item_relations($post, $data = [], $process_key = '', $target_is_source_post = false){
         /**
          * Reference object
          * array(
@@ -629,7 +629,7 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
                 isset($seen[$pid]) ||
                 !self::is_allowed_term_pid($pid, $process_key) ||
                 !self::is_allowed_relationship_pid($pid) ||
-                !self::is_allowed_related_pid_for_fix_options($post, $pid, $data, $process_key) ||
+                !self::is_allowed_related_pid_for_fix_options($post, $pid, $data, $process_key, $target_is_source_post) ||
                 ($likely_inbound && !self::is_pid_within_ai_processing_age($pid))
             ){
                 continue;
@@ -677,7 +677,7 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
                     continue;
                 }
 
-                if(!self::is_allowed_related_pid_for_fix_options($post, $candidate_pid, $data, $process_key)){
+                if(!self::is_allowed_related_pid_for_fix_options($post, $candidate_pid, $data, $process_key, $target_is_source_post)){
                     continue;
                 }
 
@@ -890,9 +890,10 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
         }
 
         $selected_types = !empty($options['selected_post_types']) && is_array($options['selected_post_types']) ? $options['selected_post_types'] : array();
-        $selected_types_lookup = array();
-        if(!empty($options['select_post_types']) && !empty($selected_types)){
-            $selected_types_lookup = array_flip($selected_types);
+        $selected_post_ids = array();
+        $limit_post_types = (!empty($options['select_post_types']) && !empty($selected_types));
+        if($limit_post_types){
+            $selected_post_ids = self::get_post_ids_for_post_types($selected_types);
         }
 
         $filtered = array();
@@ -906,9 +907,8 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
                 continue;
             }
 
-            if(!empty($selected_types_lookup) && $parts['type'] === 'post'){
-                $post_type = self::get_cached_post_type($parts['id']);
-                if(empty($post_type) || !isset($selected_types_lookup[$post_type])){
+            if($limit_post_types && $parts['type'] === 'post'){
+                if(!isset($selected_post_ids[$parts['id']])){
                     continue;
                 }
             }
@@ -1013,9 +1013,10 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
         return ($post->getOutboundInternalLinks(true) >= $limit);
     }
 
-    private static function is_allowed_related_pid_for_fix_options($source_post, $candidate_pid = '', $data = array(), $process_key = ''){
+    private static function is_allowed_related_pid_for_fix_options($source_post, $candidate_pid = '', $data = array(), $process_key = '', $target_is_source_post = false){
         $options = self::get_fix_special_options($process_key);
-        if(empty($options)){
+        $is_dashboard_fix = self::is_dashboard_fix_process_key($process_key);
+        if(empty($options) && !$is_dashboard_fix){
             return true;
         }
 
@@ -1028,9 +1029,29 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
             return false;
         }
 
-        if(!empty($options['select_post_types']) && !empty($options['selected_post_types']) && $parts['type'] === 'post'){
-            $type = self::get_cached_post_type($parts['id']);
-            if(empty($type) || !in_array($type, $options['selected_post_types'], true)){
+        // Inbound maps point at the current post, while outbound maps point at the related post.
+        if($is_dashboard_fix && !empty(get_option('wpil_limit_suggestions_to_post_types', false))){
+            $suggestion_types = Wpil_Settings::getSuggestionPostTypes();
+            if(!empty($suggestion_types) && is_array($suggestion_types)){
+                $suggestion_post_ids = self::get_post_ids_for_post_types($suggestion_types);
+                if(
+                    $target_is_source_post &&
+                    is_a($source_post, 'Wpil_Model_Post') &&
+                    $source_post->type === 'post' &&
+                    !isset($suggestion_post_ids[$source_post->id])
+                ){
+                    return false;
+                }
+
+                if(!$target_is_source_post && $parts['type'] === 'post' && !isset($suggestion_post_ids[$parts['id']])){
+                    return false;
+                }
+            }
+        }
+
+        if(!empty($options['select_post_types']) && !empty($options['selected_post_types']) && is_array($options['selected_post_types']) && $parts['type'] === 'post'){
+            $selected_post_ids = self::get_post_ids_for_post_types($options['selected_post_types']);
+            if(!isset($selected_post_ids[$parts['id']])){
                 return false;
             }
         }
@@ -1051,19 +1072,27 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
         return true;
     }
 
-    private static function get_cached_post_type($post_id = 0){
-        $post_id = (int) $post_id;
-        if(empty($post_id)){
-            return '';
+    private static function get_post_ids_for_post_types($post_types = array()){
+        global $wpdb;
+
+        if(empty($post_types) || !is_array($post_types)){
+            return array();
         }
 
-        if(isset(self::$post_type_cache[$post_id])){
-            return self::$post_type_cache[$post_id];
+        $post_types = array_values(array_unique(array_filter(array_map('sanitize_key', $post_types))));
+        sort($post_types);
+        $cache_key = md5(implode('|', $post_types));
+        if(isset(self::$post_type_id_cache[$cache_key])){
+            return self::$post_type_id_cache[$cache_key];
         }
 
-        $type = get_post_type($post_id);
-        self::$post_type_cache[$post_id] = !empty($type) ? $type : '';
-        return self::$post_type_cache[$post_id];
+        // Pull the matching ids in one pass so we don't look up the post type for every suggestion.
+        $placeholders = implode(',', array_fill(0, count($post_types), '%s'));
+        $query = 'SELECT ID FROM ' . $wpdb->posts . ' WHERE post_type IN (' . $placeholders . ')';
+        $post_ids = $wpdb->get_col($wpdb->prepare($query, $post_types));
+        self::$post_type_id_cache[$cache_key] = !empty($post_ids) ? array_fill_keys(array_map('intval', $post_ids), true) : array();
+
+        return self::$post_type_id_cache[$cache_key];
     }
 
     private static function get_cached_post_categories($post_id = 0){
@@ -1820,7 +1849,7 @@ Ok when it comes to settings, how do we handle the create/update/delete options?
             'related_posts' => array(),
         );
 
-        $relation_candidates = self::judge_map_item_relations($post, array_merge($map_item, $signals), $process_key);
+        $relation_candidates = self::judge_map_item_relations($post, array_merge($map_item, $signals), $process_key, $likely_inbound);
         $map_item['related_posts'] = array_keys($relation_candidates);
 
         if(self::$expanded_mapping && !empty($map_item['related_posts'])){

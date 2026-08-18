@@ -3550,6 +3550,18 @@ table .wpil-collapsible:hover .wpil-right-arrow-box:before{
     opacity: 0.4;
 }
 
+.wpil-activity-panel-edit.processing.updating{
+    opacity: 0.7;
+}
+
+.wpil-activity-panel-edit.processing.updating td{
+    background-color: rgba(51, 199, 253, 0.08);
+}
+
+.wpil-activity-panel-edit.processing.updating td:first-child{
+    box-shadow: inset 4px 0 #33c7fd;
+}
+
 .wpil-activity-panel .dashicons-edit.wpil_activate_edit_link{
     position: relative;
     top: 1px;
@@ -3769,6 +3781,31 @@ table .wpil-collapsible:hover .wpil-right-arrow-box:before{
 }
 .wpil_keywords_restrict_to_cats_container{
 	display: flex;
+}
+.wpil_keywords_restrict_post_types_container{
+	display: flex;
+	align-items: center;
+}
+.wpil_keywords_restrict_post_types_container > label{
+	margin-right: 4px;
+}
+.wpil_keywords_restrict_post_types_container .wpil-keywords-restrict-cats-show{
+	margin-left: 16px;
+}
+#wpil_keywords_settings .wpil_keywords_restrict_source_post_types,
+#wpil_keywords_settings .wpil_keywords_restrict_target_post_types{
+	margin-top: 0px !important;
+}
+.wpil-autolink-rule-disabled{
+	display: inline-block;
+	margin: 4px 0 2px;
+	padding: 2px 8px;
+	border-left: 3px solid #d63638;
+	background: #fcf0f1;
+	color: #8a2424;
+	font-weight: 600;
+	font-size: 12px;
+	line-height: 1.6;
 }
 #wpil_keywords_settings .wpil_keywords_restrict_to_cats{
 	margin-top: 0px !important;

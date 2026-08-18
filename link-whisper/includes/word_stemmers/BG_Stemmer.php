@@ -213,7 +213,7 @@ class Wpil_Stemmer {
 
         // 3) -ища
         if (self::bg_ends_with($word, 'ища')) {
-            $cand = self::bg_substr($word, 0, bg_len($word) - 3);
+            $cand = self::bg_substr($word, 0, self::bg_len($word) - 3);
             if (self::bg_len($cand) >= self::$bg_min_base) return $cand;
         }
 

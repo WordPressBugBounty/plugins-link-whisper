@@ -459,7 +459,7 @@ class Wpil_Base
         $broken_link_status = 'tag-positive';
         $broken_link_subtext = __('Perfect! There aren\'t any broken links on the site.');
         if(!empty($broken_link_count)){
-            $total_links = Wpil_Dashboard::getLinksCount();
+            $total_links = Wpil_Dashboard::getLinksCount(false);
             if(!empty($total_links)){
                 $broken_link_percentage = round($broken_link_count / $total_links, 2) * 100;
             }
@@ -481,6 +481,7 @@ class Wpil_Base
 
         $posts_crawled = Wpil_Dashboard::getPostCount();
         $posts_crawled_status = (empty($posts_crawled)) ? 'tag-negative': 'tag-positive';
+        $site_post_count = Wpil_Dashboard::getPostCount(false);
 
         $links_scanned = Wpil_Dashboard::getLinksCount();
         $links_scanned_status = (empty($links_scanned)) ? 'tag-negative': 'tag-positive';
@@ -490,7 +491,7 @@ class Wpil_Base
 
         $orphaned_posts = Wpil_Dashboard::getOrphanedPostsCount();
         if(!empty($orphaned_posts)){
-            $orphaned_posts_percentage = !empty($posts_crawled) ? round($orphaned_posts / $posts_crawled, 2) * 100 : 0;
+            $orphaned_posts_percentage = !empty($site_post_count) ? round($orphaned_posts / $site_post_count, 2) * 100 : 0;
             if($orphaned_posts_percentage == 0){
                 $orphaned_posts_status = 'tag-positive';
                 $orphaned_posts_subtext = esc_html__('Awesome! There are no orphaned posts on the site.', 'wpil');
@@ -2563,6 +2564,37 @@ class Wpil_Base
             }
 
             update_option('wpil_site_db_version', '1.56');
+        }
+
+        if((float)WPIL_STATUS_SITE_DB_VERSION < 1.57 || $force_update){
+            $keywrd_url_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$autolink_rule_tbl}'");
+            if(!empty($keywrd_url_tbl_exists)) {
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'restrict_source_post_types'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN restrict_source_post_types tinyint(1) DEFAULT 0 AFTER `restricted_cats`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'restricted_source_post_types'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN restricted_source_post_types text AFTER `restrict_source_post_types`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'restrict_target_post_types'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN restrict_target_post_types tinyint(1) DEFAULT 0 AFTER `restricted_source_post_types`";
+                    $wpdb->query($update_table);
+                }
+
+                $col = $wpdb->query("SHOW COLUMNS FROM {$autolink_rule_tbl} LIKE 'restricted_target_post_types'");
+                if (empty($col)) {
+                    $update_table = "ALTER TABLE {$autolink_rule_tbl} ADD COLUMN restricted_target_post_types text AFTER `restrict_target_post_types`";
+                    $wpdb->query($update_table);
+                }
+            }
+
+            update_option('wpil_site_db_version', '1.57');
         }
 
         // todo create a database index for click tracking's user_ip column if people find that it takes too long to load the user_ip view

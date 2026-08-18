@@ -37,6 +37,7 @@ class Wpil_AI
     public static $keyword_cannibalization_keywords = null;
     public static $active_credit_tracking_context = array();
     public static $request_credit_tracking_runs = array();
+    public static $inbound_linking_result_cache = array();
 
     function __construct()
     {
@@ -8848,6 +8849,83 @@ class Wpil_AI
             $remaining = max(0, (int) $fallback_count);
         }
 
+        if(!empty($ai_linking_process_key)){
+            $active_targets = array_flip(self::normalize_pid_list(self::get_linking_suggestion_processed_ids($ai_linking_process_key, 'inbound')));
+            $inbound_candidate_count = 0;
+            $inbound_item_count = 0;
+            $outbound_item_count = 0;
+            $scopes = array(
+                Wpil_LinkMapping::RELATION_SCOPE_DEFAULT,
+                Wpil_LinkMapping::RELATION_SCOPE_OUTBOUND,
+                Wpil_LinkMapping::RELATION_SCOPE_INBOUND,
+            );
+
+            foreach($scopes as $scope){
+                $map = Wpil_LinkMapping::get_relation_map_items_pending_ai($ai_linking_process_key, 0, $scope, array(), true, true);
+                if(empty($map)){
+                    continue;
+                }
+
+                foreach($map as $pid => $map_item){
+                    $pid = self::normalize_pid($pid);
+                    if(empty($pid) || empty($map_item['related_posts'])){
+                        continue;
+                    }
+
+                    $is_inbound = (
+                        $scope === Wpil_LinkMapping::RELATION_SCOPE_INBOUND ||
+                        (
+                            $scope === Wpil_LinkMapping::RELATION_SCOPE_DEFAULT &&
+                            (
+                                self::is_orphan_fix_process_key($ai_linking_process_key) ||
+                                (!self::is_dashboard_fix_process_key($ai_linking_process_key) && !empty($map_item['pillar_content']))
+                            )
+                        )
+                    );
+                    if(!$is_inbound){
+                        $outbound_item_count++;
+                        continue;
+                    }
+
+                    $inbound_item_count++;
+                    if(isset($active_targets[$pid])){
+                        continue;
+                    }
+
+                    $relations = self::normalize_pid_list($map_item['related_posts']);
+                    $runtime = Wpil_LinkMapping::get_relation_map_runtime_state($map_item);
+                    $searched = !empty($runtime['inbound_searched_pids']) && is_array($runtime['inbound_searched_pids']) ? self::normalize_pid_list($runtime['inbound_searched_pids']) : array();
+                    $inbound_candidate_count += count(array_diff($relations, $searched));
+                }
+            }
+
+            if($inbound_item_count > 0){
+                // Inbound linking makes a separate assessment for each candidate source.
+                // Customer runs are landing at about one credit per mapped candidate after local filtering.
+                $inbound_candidate_cost = max(0, (float) apply_filters('wpil_inbound_candidate_credit_cost', 1));
+                $outbound_cost = ($outbound_item_count * 4) + self::estimate_sentence_relatedness_credit_cost($outbound_item_count);
+                return (int) ceil(($inbound_candidate_count * $inbound_candidate_cost) + $outbound_cost);
+            }
+
+            if(self::is_orphan_fix_process_key($ai_linking_process_key)){
+                // Before the map is ready, allow for the usual candidate fan-out instead of pricing one call per target.
+                $candidates_per_target = max(1, (float) apply_filters('wpil_inbound_candidates_per_target', 20));
+                $inbound_candidate_cost = max(0, (float) apply_filters('wpil_inbound_candidate_credit_cost', 1));
+                return (int) ceil($remaining * $candidates_per_target * $inbound_candidate_cost);
+            }
+
+            if($fallback_to_total_queue){
+                $inbound_total = Wpil_LinkMapping::get_relation_map_total_item_count($ai_linking_process_key, Wpil_LinkMapping::RELATION_SCOPE_INBOUND);
+                $outbound_total = Wpil_LinkMapping::get_relation_map_total_item_count($ai_linking_process_key, Wpil_LinkMapping::RELATION_SCOPE_OUTBOUND);
+                if($inbound_total > 0){
+                    $inbound_candidates_per_target = max(1, (float) apply_filters('wpil_inbound_candidates_per_target', 20));
+                    $inbound_candidate_cost = max(0, (float) apply_filters('wpil_inbound_candidate_credit_cost', 1));
+                    $outbound_cost = ($outbound_total * 4) + self::estimate_sentence_relatedness_credit_cost($outbound_total);
+                    return (int) ceil(($inbound_total * $inbound_candidates_per_target * $inbound_candidate_cost) + $outbound_cost);
+                }
+            }
+        }
+
         // base linking cost, plus a budget for the AI sentence relatedness checks that run during linking
         $estimate = ($remaining * 4) + self::estimate_sentence_relatedness_credit_cost($remaining);
 
@@ -9681,6 +9759,21 @@ class Wpil_AI
         // If this relationship already has a live suggestion, leave it alone until review/autocheck handles it.
         $active_suggestion_pids = self::get_linking_suggestion_processed_ids('', $direction, $pid);
         if(!empty($active_suggestion_pids)){
+            if(
+                $direction === 'inbound' &&
+                !empty(self::get_linking_suggestion_processed_ids($process_key, 'inbound', $pid))
+            ){
+                return array(
+                    'data' => array(),
+                    'meta' => array(
+                        'searched_pids' => array(),
+                        'remaining_pids' => array(),
+                        'relation_count' => count($relations),
+                        'paused_for_suggestion' => true,
+                    ),
+                );
+            }
+
             $active_suggestion_lookup = array_flip(self::normalize_pid_list($active_suggestion_pids));
             foreach($relations as $key => $relation_pid){
                 if(isset($active_suggestion_lookup[$relation_pid])){
@@ -10855,9 +10948,21 @@ class Wpil_AI
             }
 
             $row_process_key = !empty($dat->process_key) ? (string)$dat->process_key : $process_key;
+            $target_pid = (($dat->target_type === 'term') ? 'term_' : 'post_') . (int)$dat->target_id;
+            $track_inbound_result = isset(self::$inbound_linking_result_cache[$row_process_key][$target_pid]);
+            if($track_inbound_result && !empty(self::$inbound_linking_result_cache[$row_process_key][$target_pid]['satisfied'])){
+                $wpdb->update($linking_table, ['ignored' => 1], ['ai_index' => $dat->ai_index]);
+                self::$inbound_linking_result_cache[$row_process_key][$target_pid]['ignored']++;
+                continue;
+            }
+
             $orphan_only_targets = self::is_orphan_fix_process_key($row_process_key);
             if($orphan_only_targets && !self::is_orphaned_target_for_ai_suggestion((int)$dat->target_id, (string)$dat->target_type)){
                 $wpdb->update($linking_table, ['ignored' => 1], ['ai_index' => $dat->ai_index]);
+                if($track_inbound_result){
+                    self::$inbound_linking_result_cache[$row_process_key][$target_pid]['satisfied'] = true;
+                    self::$inbound_linking_result_cache[$row_process_key][$target_pid]['ignored']++;
+                }
                 continue;
             }
 
@@ -10876,6 +10981,9 @@ class Wpil_AI
 
                 if($ai_score === null || $ai_score < $auto_insert_threshold || $ai_score > 0.9999){
                     $wpdb->update($linking_table, ['ignored' => 1], ['ai_index' => $dat->ai_index]);
+                    if($track_inbound_result){
+                        self::$inbound_linking_result_cache[$row_process_key][$target_pid]['ignored']++;
+                    }
                     continue;
                 }
             }
@@ -10884,13 +10992,23 @@ class Wpil_AI
             $target_post = new Wpil_Model_Post($dat->target_id, $dat->target_type);
 
             // if we're at the linking limits
-            if( self::has_reached_ai_outbound_processing_limit($source_post) ||
-                ($max_outbound > 0 && $source_post->getOutboundInternalLinks(true) >= $max_outbound) ||
+            $source_limit_reached = (
+                self::has_reached_ai_outbound_processing_limit($source_post) ||
+                ($max_outbound > 0 && $source_post->getOutboundInternalLinks(true) >= $max_outbound)
+            );
+            $target_limit_reached = (
                 ($max_inbound > 0 && $target_post->getInboundInternalLinks(true) >= $max_inbound) ||
                 ($orphan_only_targets && $target_post->getInboundInternalLinks(true) > 0)
-            ){
+            );
+            if($source_limit_reached || $target_limit_reached){
                 // marke the link as processed
                 $wpdb->update($linking_table, ['ignored' => 1], ['ai_index' => $dat->ai_index]);
+                if($track_inbound_result){
+                    self::$inbound_linking_result_cache[$row_process_key][$target_pid]['ignored']++;
+                    if($target_limit_reached){
+                        self::$inbound_linking_result_cache[$row_process_key][$target_pid]['satisfied'] = true;
+                    }
+                }
                 // and skip inserting this suggestion
                 continue;
             }
@@ -10898,6 +11016,12 @@ class Wpil_AI
             $result = self::apply_linking_suggestion($dat, true);
             if(!empty($result['applied'])){
                 $links_inserted++;
+                if($track_inbound_result){
+                    self::$inbound_linking_result_cache[$row_process_key][$target_pid]['satisfied'] = true;
+                    self::$inbound_linking_result_cache[$row_process_key][$target_pid]['inserted']++;
+                }
+            }elseif($track_inbound_result){
+                self::$inbound_linking_result_cache[$row_process_key][$target_pid]['ignored']++;
             }
         }
 
@@ -11071,6 +11195,23 @@ class Wpil_AI
         }
         if(!empty($fix_special_options['link_from_category_pages'])){
             $fix_filter_sql .= " AND a.post_type = 'term'";
+        }
+        if($is_dashboard_fix_process && !empty(get_option('wpil_limit_suggestions_to_post_types', false))){
+            $suggestion_types = Wpil_Settings::getSuggestionPostTypes();
+            $suggestion_types = is_array($suggestion_types) ? array_values(array_unique(array_filter(array_map('sanitize_text_field', $suggestion_types)))) : array();
+            if(!empty($suggestion_types)){
+                $type_placeholders = implode(',', array_fill(0, count($suggestion_types), '%s'));
+                $fix_filter_sql .= ' AND (
+                    a.target_type <> \'post\'
+                    OR EXISTS (
+                        SELECT 1
+                        FROM ' . $wpdb->posts . ' suggestion_target_posts
+                        WHERE suggestion_target_posts.ID = a.target_id
+                            AND suggestion_target_posts.post_type IN (' . $type_placeholders . ')
+                    )
+                )';
+                $fix_filter_params = array_merge($fix_filter_params, $suggestion_types);
+            }
         }
         if(!empty($fix_special_options['select_post_types']) && !empty($fix_special_options['selected_post_types']) && is_array($fix_special_options['selected_post_types'])){
             $selected_types = array_values(array_unique(array_filter(array_map('sanitize_text_field', $fix_special_options['selected_post_types']))));
@@ -11533,6 +11674,23 @@ class Wpil_AI
         if(!empty($fix_special_options['link_from_category_pages'])){
             $fix_filter_sql .= " AND a.post_type = 'term'";
         }
+        if($is_dashboard_fix_process && !empty(get_option('wpil_limit_suggestions_to_post_types', false))){
+            $suggestion_types = Wpil_Settings::getSuggestionPostTypes();
+            $suggestion_types = is_array($suggestion_types) ? array_values(array_unique(array_filter(array_map('sanitize_text_field', $suggestion_types)))) : array();
+            if(!empty($suggestion_types)){
+                $type_placeholders = implode(',', array_fill(0, count($suggestion_types), '%s'));
+                $fix_filter_sql .= ' AND (
+                    a.target_type <> \'post\'
+                    OR EXISTS (
+                        SELECT 1
+                        FROM ' . $wpdb->posts . ' suggestion_target_posts
+                        WHERE suggestion_target_posts.ID = a.target_id
+                            AND suggestion_target_posts.post_type IN (' . $type_placeholders . ')
+                    )
+                )';
+                $fix_filter_params = array_merge($fix_filter_params, $suggestion_types);
+            }
+        }
         if(!empty($fix_special_options['select_post_types']) && !empty($fix_special_options['selected_post_types']) && is_array($fix_special_options['selected_post_types'])){
             $selected_types = array_values(array_unique(array_filter(array_map('sanitize_text_field', $fix_special_options['selected_post_types']))));
             if(!empty($selected_types)){
@@ -11764,6 +11922,10 @@ class Wpil_AI
             }
         }
 
+        if(($process_key === '' || $process_key === 'all') && !empty($suggestion->process_key)){
+            $process_key = (string)$suggestion->process_key;
+        }
+
         if($decision === 'approve'){
             $result = self::create_links_from_linking_suggestions([$link_id]);
             wp_send_json_success(array(
@@ -11777,6 +11939,48 @@ class Wpil_AI
             ));
         }else{
             self::ignore_linking_suggestions([$link_id]);
+
+            $resume_search = false;
+            $resume_item_id = '';
+            $target_pid = (($suggestion->target_type === 'term') ? 'term_' : 'post_') . (int)$suggestion->target_id;
+            $source_pid = (($suggestion->post_type === 'term') ? 'term_' : 'post_') . (int)$suggestion->post_id;
+            $has_other_suggestion = !empty(self::get_linking_suggestion_processed_ids($process_key, 'inbound', $target_pid));
+
+            // If this was the last proposed inbound link, put the target back in line and carry on from the next source.
+            if(!$has_other_suggestion){
+                $scoped_process_keys = array(md5('link-coverage-search'), md5('custom-link-map'));
+                $work_scope = in_array($process_key, $scoped_process_keys, true) ? Wpil_LinkMapping::RELATION_SCOPE_INBOUND : Wpil_LinkMapping::RELATION_SCOPE_DEFAULT;
+                $map_item = Wpil_LinkMapping::get_relation_map_item($process_key, (int)$suggestion->target_id, (string)$suggestion->target_type, true, true, $work_scope);
+                $runtime = Wpil_LinkMapping::get_relation_map_runtime_state(is_array($map_item) ? $map_item : array());
+                $searched_pids = !empty($runtime['inbound_searched_pids']) && is_array($runtime['inbound_searched_pids']) ? self::normalize_pid_list($runtime['inbound_searched_pids']) : array();
+                $was_inbound_suggestion = self::is_orphan_fix_process_key($process_key) || in_array($source_pid, $searched_pids, true);
+
+                if($was_inbound_suggestion){
+                    Wpil_LinkMapping::mark_relation_map_ai_processed($process_key, $target_pid, false, $work_scope);
+
+                    // A completed review run is kept on hand so a rejection can wake it back up without rebuilding the map.
+                    $registry = get_option('wpil_ai_fix_registry', array());
+                    if(is_array($registry)){
+                        foreach($registry as $registry_key => $job){
+                            if(!is_array($job) || empty($job['process_key']) || (string)$job['process_key'] !== $process_key || (!empty($job['status']) && $job['status'] === 'cancelled')){
+                                continue;
+                            }
+
+                            $registry[$registry_key]['status'] = 'running';
+                            $registry[$registry_key]['progress'] = min(99, max(1, isset($job['progress']) ? (int)$job['progress'] : 99));
+                            $registry[$registry_key]['last_tick'] = time();
+                            $resume_search = true;
+                            $resume_item_id = isset($job['item_id']) ? (string)$job['item_id'] : '';
+                            break;
+                        }
+
+                        if($resume_search){
+                            update_option('wpil_ai_fix_registry', $registry, false);
+                        }
+                    }
+                }
+            }
+
             wp_send_json_success(array(
                 'link_id' => $link_id,
                 'decision' => $decision,
@@ -11785,6 +11989,8 @@ class Wpil_AI
                 'stale' => false,
                 'message' => 'Suggestion rejected.',
                 'reason' => 'rejected',
+                'resume_search' => $resume_search,
+                'item_id' => $resume_item_id,
             ));
         }
     }

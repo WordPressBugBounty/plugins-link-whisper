@@ -36,13 +36,43 @@ class Wpil_Error
     public static function ajaxErrorResetData()
     {
         Wpil_Base::verify_nonce('wpil_error_reset_data');
-        // clear any previous post-processing retry state when the user manually resets scans
-        delete_option('wpil_error_post_process');
-        self::fillPosts();
-        self::fillTerms();
-        self::prepareIgnoreTable();
-        self::prepareSnoozeTable();
-        self::prepareTable();
+        $reset_type = !empty($_POST['reset_type']) ? sanitize_key($_POST['reset_type']) : '';
+        $last_id = !empty($_POST['last_id']) ? (int) $_POST['last_id'] : 0;
+
+        // if we're just starting, clear the old data before we begin tagging the posts
+        if(empty($reset_type)){
+            global $wpdb;
+
+            delete_option('wpil_error_post_process');
+            $wpdb->delete($wpdb->postmeta, ['meta_key' => 'wpil_sync_error']);
+            $wpdb->delete($wpdb->termmeta, ['meta_key' => 'wpil_sync_error']);
+            self::prepareIgnoreTable();
+            self::prepareSnoozeTable();
+            self::prepareTable();
+            update_option('wpil_error_reset_run', 0);
+            update_option('wpil_error_check_links_cron', 0);
+
+            wp_send_json(['continue' => true, 'reset_type' => 'posts', 'last_id' => 0]);
+        }
+
+        // tag the posts in time-limited batches so large sites don't time out before the scan starts
+        if($reset_type === 'posts'){
+            $result = self::fillPosts($last_id);
+            if(!empty($result['has_more'])){
+                wp_send_json(['continue' => true, 'reset_type' => 'posts', 'last_id' => $result['last_id']]);
+            }
+
+            wp_send_json(['continue' => true, 'reset_type' => 'terms', 'last_id' => 0]);
+        }
+
+        // and do the same for any terms that are included in the scan
+        if($reset_type === 'terms'){
+            $result = self::fillTerms($last_id);
+            if(!empty($result['has_more'])){
+                wp_send_json(['continue' => true, 'reset_type' => 'terms', 'last_id' => $result['last_id']]);
+            }
+        }
+
         update_option('wpil_error_reset_run', 1);
         update_option('wpil_error_check_links_cron', 0);
 
@@ -65,9 +95,8 @@ class Wpil_Error
         // Remove any hooks that may interfere with AJAX requests
         Wpil_Base::remove_problem_hooks();
         $total = self::getTotalPostsCount();
-        $not_ready = self::getNotReadyPosts();
+        $not_ready = self::getNotReadyPosts(100);
         $time_limit = 10;
-        $proceed = 0;
         $link_batch_size = 100;
 
         if(WPIL_DEBUG_CURL){
@@ -76,7 +105,7 @@ class Wpil_Error
 
         //send response with search status to update progress bar
         if (!empty($_POST['get_status'])) {
-            self::sendResponse(count($not_ready), $proceed, $total, current($not_ready));
+            self::sendResponse($total, current($not_ready));
         }
 
         //proceed posts
@@ -216,12 +245,11 @@ class Wpil_Error
 
                     if (Wpil_Base::overTimeLimit(20, $time_limit)) {
 //                        self::setProcessingPostSuccess();
-                        self::sendResponse(count($not_ready), $proceed, $total);
+                        self::sendResponse($total);
                     }
                 }
             }
 
-            $proceed++;
             self::markReady($post);
 
             if (Wpil_Base::overTimeLimit(20, $time_limit)) {
@@ -230,7 +258,7 @@ class Wpil_Error
         }
 
 //        self::setProcessingPostSuccess();
-        self::sendResponse(count($not_ready), $proceed, $total);
+        self::sendResponse($total);
 
         die;
     }
@@ -381,7 +409,7 @@ class Wpil_Error
 /*
                 if (Wpil_Base::overTimeLimit(20, $time_limit)) {
                     self::setProcessingPostSuccess();
-                    self::sendResponse(count($not_ready), $proceed, $total);
+                    self::sendResponse($total);
                 }*/
             }
         }
@@ -470,17 +498,16 @@ class Wpil_Error
     /**
      * Send response search status
      *
-     * @param $not_ready
-     * @param $proceed
      * @param $total
      * @param string $link
      */
-    public static function sendResponse($not_ready, $proceed, $total, $link_id = 0)
+    public static function sendResponse($total, $link_id = 0)
     {
-        $ready = $total - $not_ready + $proceed;
+        $not_ready = self::getNotReadyPostsCount();
+        $ready = max(0, $total - $not_ready);
         $percents = !empty($total) ? ceil($ready / $total * 100): 100;
         $status =  "$percents%, $ready/$total completed";
-        $finish = $total == $ready ? true : false;
+        $finish = empty($not_ready);
 
         if ($finish) {
             update_option('wpil_error_reset_run', 0);
@@ -493,6 +520,7 @@ class Wpil_Error
 
         wp_send_json([
             'finish' => $finish,
+            'has_more' => !$finish,
             'status' => $status,
             'percents' => $percents,
             'link_id' => $link_id,
@@ -518,49 +546,85 @@ class Wpil_Error
     /**
      * Reset links data about posts
      */
-    public static function fillPosts()
+    public static function fillPosts($last_id = 0)
     {
         global $wpdb;
 
-        $wpdb->delete($wpdb->postmeta, ['meta_key' => 'wpil_sync_error']);
-        $post_types = implode("','", Wpil_Settings::getPostTypes());
+        $query_limit = 500;
+        $last_id = (int) $last_id;
+        $post_types = implode("','", array_map('esc_sql', Wpil_Settings::getPostTypes()));
         $statuses_query = Wpil_Query::postStatuses();
         $ignored = Wpil_Settings::get_completely_ignored_pages();
-        $posts = $wpdb->get_results("SELECT ID FROM {$wpdb->posts} WHERE post_type IN ('$post_types') $statuses_query");
-        foreach ($posts as $post) {
-            // if the post is being ignored
-            if(!empty($ignored) && in_array('post_' . $post->ID, $ignored)){
-                // skip it
-                continue;
+
+        do{
+            $posts = $wpdb->get_results($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE ID > %d AND post_type IN ('$post_types') $statuses_query ORDER BY ID ASC LIMIT %d", $last_id, $query_limit));
+            if(empty($posts)){
+                return array('has_more' => false, 'last_id' => $last_id);
             }
 
-            $wpdb->insert($wpdb->postmeta, ['post_id' => $post->ID, 'meta_key' => 'wpil_sync_error', 'meta_value' => '0']);
-        }
+            foreach ($posts as $post) {
+                $last_id = (int) $post->ID;
+
+                // if the post isn't being ignored, tag it for the scan
+                if(empty($ignored) || !in_array('post_' . $post->ID, $ignored)){
+                    $wpdb->insert($wpdb->postmeta, ['post_id' => $post->ID, 'meta_key' => 'wpil_sync_error', 'meta_value' => '0']);
+                }
+
+                if(Wpil_Base::overTimeLimit(5, 15)){
+                    return array('has_more' => true, 'last_id' => $last_id);
+                }
+            }
+
+            if(count($posts) < $query_limit){
+                return array('has_more' => false, 'last_id' => $last_id);
+            }
+        }while(!Wpil_Base::overTimeLimit(5, 15));
+
+        return array('has_more' => true, 'last_id' => $last_id);
     }
 
     /**
      * Reset links data about terms
      */
-    public static function fillTerms()
+    public static function fillTerms($last_id = 0)
     {
         global $wpdb;
 
+        $query_limit = 500;
+        $last_id = (int) $last_id;
         $taxonomies = Wpil_Settings::getTermTypes();
         $ignored = Wpil_Settings::get_completely_ignored_pages();
 
-        $wpdb->delete($wpdb->termmeta, ['meta_key' => 'wpil_sync_error']);
-        if (!empty($taxonomies)) {
-            $terms = $wpdb->get_results("SELECT term_id FROM {$wpdb->term_taxonomy} WHERE taxonomy IN ('" . implode("', '", $taxonomies) . "')");
+        if (empty($taxonomies)) {
+            return array('has_more' => false, 'last_id' => $last_id);
+        }
+
+        $taxonomies = implode("', '", array_map('esc_sql', $taxonomies));
+        do{
+            $terms = $wpdb->get_results($wpdb->prepare("SELECT DISTINCT term_id FROM {$wpdb->term_taxonomy} WHERE term_id > %d AND taxonomy IN ('{$taxonomies}') ORDER BY term_id ASC LIMIT %d", $last_id, $query_limit));
+            if(empty($terms)){
+                return array('has_more' => false, 'last_id' => $last_id);
+            }
+
             foreach ($terms as $term) {
-                // if the term is being ignored
-                if(!empty($ignored) && in_array('term_' . $term->term_id, $ignored)){
-                    // skip it
-                    continue;
+                $last_id = (int) $term->term_id;
+
+                // if the term isn't being ignored, tag it for the scan
+                if(empty($ignored) || !in_array('term_' . $term->term_id, $ignored)){
+                    $wpdb->insert($wpdb->termmeta, ['term_id' => $term->term_id, 'meta_key' => 'wpil_sync_error', 'meta_value' => '0']);
                 }
 
-                $wpdb->insert($wpdb->termmeta, ['term_id' => $term->term_id, 'meta_key' => 'wpil_sync_error', 'meta_value' => '0']);
+                if(Wpil_Base::overTimeLimit(5, 15)){
+                    return array('has_more' => true, 'last_id' => $last_id);
+                }
             }
-        }
+
+            if(count($terms) < $query_limit){
+                return array('has_more' => false, 'last_id' => $last_id);
+            }
+        }while(!Wpil_Base::overTimeLimit(5, 15));
+
+        return array('has_more' => true, 'last_id' => $last_id);
     }
 
     /**
@@ -585,33 +649,57 @@ class Wpil_Error
      *
      * @return array
      */
-    public static function getNotReadyPosts()
+    public static function getNotReadyPosts($limit = 100)
     {
         global $wpdb;
         $posts = [];
-
+        $limit = max(1, (int) $limit);
         
         // get a list of the redirected posts
-        $redirected = Wpil_Settings::getRedirectedPosts();
+        $redirected = Wpil_Settings::getRedirectedPosts(true);
+        $redirected_ids = array();
 
-        $result = $wpdb->get_results("SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'wpil_sync_error' AND meta_value = 0 ORDER BY post_id ASC");
+        $result = $wpdb->get_results($wpdb->prepare("SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'wpil_sync_error' AND meta_value = 0 ORDER BY post_id ASC LIMIT %d", $limit));
         foreach ($result as $post) {
             // if the post has been redirected
-            if(in_array($post->post_id, $redirected)){
-                // skip it since the links aren't visible anyway
+            if(isset($redirected[$post->post_id])){
+                // mark it as ready since the links aren't visible anyway
+                $redirected_ids[] = (int) $post->post_id;
                 continue;
             }
             $posts[] = array('id' => $post->post_id, 'type' => 'post');
         }
 
-        if (!empty(Wpil_Settings::getTermTypes())) {
-            $result = $wpdb->get_results("SELECT term_id FROM {$wpdb->termmeta} WHERE meta_key = 'wpil_sync_error' AND meta_value = 0 ORDER BY term_id ASC");
+        if(!empty($redirected_ids)){
+            $wpdb->query("UPDATE {$wpdb->postmeta} SET meta_value = 1 WHERE meta_key = 'wpil_sync_error' AND post_id IN (" . implode(',', $redirected_ids) . ")");
+        }
+
+        $remaining_limit = $limit - count($posts);
+        if ($remaining_limit > 0 && !empty(Wpil_Settings::getTermTypes())) {
+            $result = $wpdb->get_results($wpdb->prepare("SELECT term_id FROM {$wpdb->termmeta} WHERE meta_key = 'wpil_sync_error' AND meta_value = 0 ORDER BY term_id ASC LIMIT %d", $remaining_limit));
             foreach ($result as $post) {
                 $posts[] = array('id' => $post->term_id, 'type' => 'term');
             }
         }
 
         return $posts;
+    }
+
+    /**
+     * Get the number of posts and terms that still need to be processed.
+     *
+     * @return int
+     */
+    public static function getNotReadyPostsCount()
+    {
+        global $wpdb;
+
+        $count = (int) $wpdb->get_var("SELECT count(`post_id`) FROM {$wpdb->postmeta} WHERE meta_key = 'wpil_sync_error' AND meta_value = 0");
+        if (!empty(Wpil_Settings::getTermTypes())) {
+            $count += (int) $wpdb->get_var("SELECT count(`term_id`) FROM {$wpdb->termmeta} WHERE meta_key = 'wpil_sync_error' AND meta_value = 0");
+        }
+
+        return $count;
     }
 
     /**

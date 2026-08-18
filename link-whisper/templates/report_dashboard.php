@@ -9,6 +9,7 @@
 
     // Stats
     $posts_crawled       = (int) Wpil_Dashboard::getPostCount();
+    $site_post_count     = (int) Wpil_Dashboard::getPostCount(false);
     $orphanedCount       = (int) Wpil_Dashboard::getOrphanedPostsCount();
     $brokenLinksCount    = (int) Wpil_Dashboard::getBrokenLinksCount();
     $notfoundLinksCount  = (int) Wpil_Dashboard::get404LinksCount(); // not used in template yet
@@ -102,6 +103,7 @@
     // Site Health Score
     $health_metrics = [
         'posts_crawled'            => $posts_crawled,
+        'site_post_count'          => $site_post_count,
         'broken_links'             => $brokenLinksCount,
         'orphaned_posts'           => $orphanedCount,
         'link_coverage_percent'    => $link_coverage_percent,

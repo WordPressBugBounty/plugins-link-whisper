@@ -437,7 +437,9 @@ class Wpil_Telemetry
                 break;
             // Error
             case 'wp_ajax_wpil_error_reset_data':
-                $event_name = 'broken_link_report_reset';
+                if(empty($_POST['reset_type'])){
+                    $event_name = 'broken_link_report_reset';
+                }
                 break;
             case 'wp_ajax_wpil_delete_error_links':
                 if(isset($_POST['links']) && !empty($_POST['links']) && is_array($_POST['links'])){

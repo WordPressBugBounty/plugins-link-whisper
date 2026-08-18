@@ -10,6 +10,7 @@ class Wpil_Settings
     public static $ignore_words = null;
     public static $stemmed_ignore_words = null;
     public static $wpml_enabled = null;
+    public static $known_post_types = null;
     public static $keys = [
         'wpil_2_ignore_numbers',
         'wpil_2_post_types',
@@ -2801,7 +2802,77 @@ function triggerConfettiExplosion() {
      */
     public static function getPostTypes()
     {
-        return get_option('wpil_2_post_types', ['post', 'page']);
+        return self::filterKnownPostTypes(get_option('wpil_2_post_types', ['post', 'page']));
+    }
+
+    /**
+     * Gets every post type that we're willing to put into a query.
+     * That's the types that are registered right now, plus any type that still has content in the posts table.
+     * The second half matters because conditionally registered types (and types belonging to plugins that are
+     * currently switched off) would otherwise silently drop out of the reports.
+     *
+     * @return array<string>
+     */
+    public static function getKnownPostTypes()
+    {
+        if(null !== self::$known_post_types){
+            return self::$known_post_types;
+        }
+
+        global $wpdb;
+
+        // read the registered types live so newly added ones are usable straight away
+        $types = array_values(get_post_types());
+
+        $stored = get_transient('wpil_stored_post_types');
+        if(false === $stored){
+            // this is a loose index scan on type_status_date, so it costs about the same no matter how big the table is
+            $stored = $wpdb->get_col("SELECT DISTINCT post_type FROM {$wpdb->posts}");
+            $stored = (!empty($stored)) ? $stored : array();
+            set_transient('wpil_stored_post_types', $stored, 15 * MINUTE_IN_SECONDS);
+        }
+
+        $types = array_merge($types, $stored);
+
+        // post_type is an unconstrained varchar, so drop anything that isn't already a safe key
+        // rather than trusting whatever managed to get written into the column
+        $types = array_filter($types, function($type){
+            return is_string($type) && !empty($type) && $type === sanitize_key($type);
+        });
+
+        self::$known_post_types = array_values(array_unique($types));
+
+        return self::$known_post_types;
+    }
+
+    /**
+     * Dumps the cached post type list so the next read rebuilds it from scratch.
+     * Worth calling any time the site's post types may have shifted under us, since the stored half of the list
+     * only refreshes on its own every 15 minutes.
+     *
+     * @return void
+     */
+    public static function flushKnownPostTypes()
+    {
+        self::$known_post_types = null;
+        delete_transient('wpil_stored_post_types');
+    }
+
+    /**
+     * Cuts any post type that we don't recognise out of the supplied list.
+     * The post type settings are saved as free text, so this keeps unknown values from reaching the queries that
+     * interpolate the type list directly.
+     *
+     * @param mixed $types
+     * @return array<string>
+     */
+    public static function filterKnownPostTypes($types)
+    {
+        if(empty($types) || !is_array($types)){
+            return array();
+        }
+
+        return array_values(array_intersect($types, self::getKnownPostTypes()));
     }
 
     /**
@@ -2850,7 +2921,7 @@ function triggerConfettiExplosion() {
      */
     public static function getSuggestionPostTypes()
     {
-        return get_option('wpil_suggestion_limited_post_types', self::getPostTypes());
+        return self::filterKnownPostTypes(get_option('wpil_suggestion_limited_post_types', self::getPostTypes()));
     }
 
     /**
@@ -2996,6 +3067,7 @@ function triggerConfettiExplosion() {
      */
     public static function getPostStatuses()
     {
+        return ['publish'];
         return get_option('wpil_2_post_statuses', ['publish']);
     }
 
@@ -3442,6 +3514,10 @@ function triggerConfettiExplosion() {
                     }
                 }
             }
+
+            // the post type selection has just moved, so drop the cached list to make sure the new
+            // selection is honoured on this request rather than whenever the transient happens to lapse
+            self::flushKnownPostTypes();
 
             // if the user pasted in a GSC code, see if we can turn it into working creds
             if(isset($_POST['wpil_gsc_access_code']) && !empty($_POST['wpil_gsc_access_code'])){
@@ -3989,7 +4065,7 @@ function triggerConfettiExplosion() {
         foreach($ids as $id){
             $dat = explode('_', $id);
             if(isset($dat[0]) && !empty($dat[0]) && isset($dat[1]) && !empty($dat[1])){
-                $data[$dat[0]][] = $dat[1];
+                $data[$dat[0]][] = (int) $dat[1];
             }
         }
 

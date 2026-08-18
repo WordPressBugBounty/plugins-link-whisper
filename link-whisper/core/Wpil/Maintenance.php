@@ -189,6 +189,7 @@ class Wpil_Maintenance
 
     private static function get_ai_fix_dashboard_metrics_snapshot(){
         $posts_crawled = (int) Wpil_Dashboard::getPostCount();
+        $site_post_count = (int) Wpil_Dashboard::getPostCount(false);
         $orphaned_count = (int) Wpil_Dashboard::getOrphanedPostsCount();
         $broken_links_count = (int) Wpil_Dashboard::getBrokenLinksCount([6,7,28,404,451,500,503,925]);
         $link_relatedness = (float) Wpil_Dashboard::get_related_link_percentage();
@@ -203,6 +204,7 @@ class Wpil_Maintenance
 
         $health_metrics = [
             'posts_crawled'            => $posts_crawled,
+            'site_post_count'          => $site_post_count,
             'broken_links'             => $broken_links_count,
             'orphaned_posts'           => $orphaned_count,
             'link_coverage_percent'    => $link_coverage_percent,
@@ -598,7 +600,14 @@ class Wpil_Maintenance
             (!isset($job['link_mode']) || $job['link_mode'] !== 'review')
         );
 
-        $should_remove = in_array($final_status, ['complete', 'cancelled'], true);
+        $keep_completed_review_job = (
+            $final_status === 'complete' &&
+            isset($job['link_mode']) &&
+            $job['link_mode'] === 'review' &&
+            !empty($job['process_key']) &&
+            Wpil_AI::get_process_review_link_count($job['process_key']) > 0
+        );
+        $should_remove = in_array($final_status, ['complete', 'cancelled'], true) && !$keep_completed_review_job;
         if($should_remove){
             if(!empty($job['process_key'])){
                 if($final_status === 'cancelled'){
@@ -2314,7 +2323,7 @@ class Wpil_Maintenance
     /**
      * Processes a single orphaned pid by creating inbound internal links for it.
      **/
-    private static function handle_inbound_ai_fix_result($pid = '', $process_key = '', $work_scope = Wpil_LinkMapping::RELATION_SCOPE_DEFAULT, $result = array(), $auto_insert = true){
+    public static function handle_inbound_ai_fix_result($pid = '', $process_key = '', $work_scope = Wpil_LinkMapping::RELATION_SCOPE_DEFAULT, $result = array(), $auto_insert = true){
         $data = $result;
         $meta = array();
         if(is_array($result) && isset($result['data']) && isset($result['meta'])){
@@ -2323,9 +2332,19 @@ class Wpil_Maintenance
         }
 
         $saved_count = !empty($data) ? Wpil_AI::save_ai_linking_suggestions($data, $process_key) : 0;
-        if($auto_insert && $saved_count > 0){
+        $has_active_suggestion = !empty(Wpil_AI::get_linking_suggestion_processed_ids($process_key, 'inbound', $pid));
+        if($auto_insert && ($saved_count > 0 || $has_active_suggestion)){
+            Wpil_AI::$inbound_linking_result_cache[$process_key][$pid] = array(
+                'satisfied' => false,
+                'inserted' => 0,
+                'ignored' => 0,
+            );
             Wpil_AI::auto_create_links_from_suggestions(0, '', $process_key);
+            $has_active_suggestion = !empty(Wpil_AI::get_linking_suggestion_processed_ids($process_key, 'inbound', $pid));
         }
+
+        $auto_result = !empty(Wpil_AI::$inbound_linking_result_cache[$process_key][$pid]) ? Wpil_AI::$inbound_linking_result_cache[$process_key][$pid] : array();
+        $target_satisfied = !empty($auto_result['satisfied']);
 
         $parts = self::parse_pid($pid);
         $map_item = !empty($parts['id']) ? Wpil_LinkMapping::get_relation_map_item($process_key, $parts['id'], $parts['type'], true, true, $work_scope) : array();
@@ -2350,7 +2369,12 @@ class Wpil_Maintenance
         Wpil_LinkMapping::update_relation_map_runtime_state($process_key, $pid, $runtime_updates, $work_scope);
 
         $remaining_pids = !empty($meta['remaining_pids']) && is_array($meta['remaining_pids']) ? self::normalize_pid_scope($meta['remaining_pids']) : array();
-        if($saved_count > 0 || empty($remaining_pids)){
+        $paused_for_suggestion = !empty($meta['paused_for_suggestion']);
+        if(
+            $target_satisfied ||
+            (!$auto_insert && $has_active_suggestion) ||
+            (!$has_active_suggestion && empty($remaining_pids) && !$paused_for_suggestion)
+        ){
             Wpil_LinkMapping::mark_relation_map_ai_processed($process_key, $pid, true, $work_scope);
         }else{
             Wpil_LinkMapping::release_relation_map_ai_claim($process_key, $pid, $work_scope);

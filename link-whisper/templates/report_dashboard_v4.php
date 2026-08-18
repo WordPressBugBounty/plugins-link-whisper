@@ -12,6 +12,7 @@
     $codes = (!empty($codes)) ? '&codes=' . implode(',', $codes) : '';
 
     $posts_crawled      = (int) Wpil_Dashboard::getPostCount();
+    $site_post_count    = (int) Wpil_Dashboard::getPostCount(false);
     $orphanedCount      = (int) Wpil_Dashboard::getOrphanedPostsCount();
     $brokenLinksCount   = (int) Wpil_Dashboard::getBrokenLinksCount([6,7,28,404,451,500,503,925]);
     $internal_links     = (int) Wpil_Dashboard::getInternalLinksCount();
@@ -51,6 +52,7 @@
 
     $health_metrics = [
         'posts_crawled'            => $posts_crawled,
+        'site_post_count'          => $site_post_count,
         'broken_links'             => $brokenLinksCount,
         'orphaned_posts'           => $orphanedCount,
         'link_coverage_percent'    => $link_coverage_percent,
@@ -667,6 +669,9 @@
   --white: #ffffff;
 }
 
+.toplevel_page_link_whisper #wpcontent{
+    background: var(--gray-50);
+}
 .wpil-dashboard-v3 {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
   background: var(--gray-50);
@@ -877,7 +882,7 @@
 /* Navigation Tabs */
 .nav-tabs {
   background: var(--white);
-  padding: 2px 24px;
+  padding: 18px 24px 2px 24px;
   margin-bottom: 16px;
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
@@ -4303,7 +4308,7 @@
     </div>
     <div style="display:flex; gap:8px; align-items:center;">
       <a class="dfy-cta" href="mailto:sarah@linkwhisper.com">Email Us</a>
-      <a class="dfy-cta" href="https://linkwhisper.com/book-dfy-call" target="_blank" rel="noopener noreferrer">Schedule a Call</a>
+      <a class="dfy-cta" href="https://linkwhisper.com/done-for-you-learn-more/" target="_blank" rel="noopener noreferrer">Learn More</a>
     </div>
   </div>
 
@@ -4313,7 +4318,7 @@
       <div class="dfy-title">Too busy to fix these yourself?</div>
       <div class="dfy-subtitle">Get it done in 48 hours &bull; Starting at $497</div>
     </div>
-    <a class="dfy-cta" href="https://linkwhisper.com/book-dfy-call" target="_blank" rel="noopener noreferrer">Get Started</a>
+    <a class="dfy-cta" href="https://linkwhisper.com/done-for-you-learn-more/" target="_blank" rel="noopener noreferrer">Get Started</a>
   </div>
 
   <!-- Key Stats Grid -->
