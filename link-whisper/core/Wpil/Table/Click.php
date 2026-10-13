@@ -51,9 +51,16 @@ class Wpil_Table_Click extends WP_List_Table
         $options = get_user_meta(get_current_user_id(), 'report_options', true);
         $per_page = !empty($options['per_page']) ? $options['per_page'] : false;
         $page = isset($_REQUEST['paged']) ? (int)$_REQUEST['paged'] : 1;
-        $search = !empty($_GET['s']) ? $_GET['s'] : '';
+        $search = !empty($_GET['s']) ? wp_unslash($_GET['s']) : '';
         $orderby = isset($_REQUEST['orderby']) ? $_REQUEST['orderby'] : '';
         $order = isset($_REQUEST['order']) ? $_REQUEST['order'] : '';
+
+        // With no order of its own the report fell through to ascending, so it opened on
+        // the oldest posts on the site. get_data() sorts on post_date when no column is
+        // asked for, so descending here means newest first.
+        if(empty($order)){
+            $order = 'desc';
+        }
 
         if(empty($per_page)){
             $options2 = get_user_meta(get_current_user_id(), 'report_options', true);
@@ -143,8 +150,10 @@ class Wpil_Table_Click extends WP_List_Table
     function get_sortable_columns()
     {
         return [
-            'post_title'        => ['post_title', true],
-            'date'              => ['date', true],
+            // The post title is text, so it reads A-Z on the first click. The date, the
+            // type and the click count open at the top of their range.
+            'post_title'        => ['post_title', false],
+            'date'              => ['date', true, '', '', 'desc'],
             'post_type'         => ['post_type', true],
             'clicks'            => ['clicks', true],
         ];

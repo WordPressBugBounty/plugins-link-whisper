@@ -747,7 +747,8 @@ console.log('.wizard-' + pageId);
             type: 'POST',
             url: ajaxurl,
             data: {
-                action: 'wpil_clear_process_tracker'
+                action: 'wpil_clear_process_tracker',
+                nonce: wpil_ajax.wizard_process_nonce
             },
             success: function(response){
                 console.log(response);
@@ -764,7 +765,8 @@ console.log('.wizard-' + pageId);
             type: 'POST',
             url: ajaxurl,
             data: {
-                action: 'wpil_has_run_wizard'
+                action: 'wpil_has_run_wizard',
+                nonce: wpil_ajax.wizard_process_nonce
             },
             success: function(response){
                 console.log(response);
@@ -2564,7 +2566,8 @@ console.log('.wizard-' + pageId);
             type: 'POST',
             url: ajaxurl,
             data: {
-                action: 'wpil_wizard_set_completion_flag'
+                action: 'wpil_wizard_set_completion_flag',
+                nonce: wpil_ajax.wizard_process_nonce
             },
             success: function(response){
                 console.log(response);

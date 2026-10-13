@@ -1235,6 +1235,9 @@ class Wpil_Report
             // if it's not empty, merge it with the post objects
             if(!empty($nav_link_objs)){
                 $post_objs = array_merge($post_objs, $nav_link_objs);
+            }else{
+                // if it's expired, start a fresh list so we can add the nav links we find
+                $nav_link_objs = array();
             }
         }
 
@@ -1980,6 +1983,12 @@ class Wpil_Report
                 $url = trim($matches[8][$key]); // if this is a src URL for an frame, include it too. // And someday create the ability to delete iframes...
                 $anchor = __('No anchor text, link is for an iframe', 'wpil');
             }else{
+                continue;
+            }
+
+            // Email, phone and app links do not point at web pages. Leave them out before the
+            // hostless-link handling below turns them into paths on the current site.
+            if(Wpil_Link::isNonWebLink($url)){
                 continue;
             }
 

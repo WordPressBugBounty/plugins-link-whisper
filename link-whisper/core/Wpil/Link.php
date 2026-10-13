@@ -323,6 +323,59 @@ class Wpil_Link
     }
 
     /**
+     * URL schemes that don't point at a web page the checker can request.
+     *
+     * Email, phone and app links have no server on the other end to answer a HEAD call, so cURL
+     * never gets a response for them and the report ends up listing every one as broken.
+     */
+    public static $non_web_schemes = array(
+        'mailto', 'tel', 'sms', 'smsto', 'callto', 'fax', 'skype', 'whatsapp',
+        'facetime', 'facetime-audio', 'viber', 'tg', 'geo', 'maps',
+        'javascript', 'data', 'file', 'about', 'wtai'
+    );
+
+    /**
+     * Checks if a URL is something other than a web address we can make a request to.
+     *
+     * @param string $url
+     * @return bool True if the link has no web destination to check.
+     */
+    public static function isNonWebLink($url)
+    {
+        if(empty($url) || !is_string($url)){
+            return false;
+        }
+
+        // strip entities and the stray quotes/whitespace that come off of malformatted markup,
+        // so "&#109;ailto:bob@example.com" and '\"mailto:bob@example.com\"' are both caught
+        $url = html_entity_decode($url, ENT_QUOTES);
+        $url = trim($url, " \t\n\r\0\x0B\"'\\");
+
+        if(empty($url)){
+            return false;
+        }
+
+        // in-page anchors never leave the page, so there's nothing to request
+        if(strpos($url, '#') === 0){
+            return true;
+        }
+
+        // the scheme is everything ahead of the first colon. If there's a slash in there we're
+        // looking at a path that happens to contain a colon, not a scheme
+        $colon = strpos($url, ':');
+        if($colon === false){
+            return false;
+        }
+
+        $scheme = strtolower(substr($url, 0, $colon));
+        if($scheme === '' || strpos($scheme, '/') !== false){
+            return false;
+        }
+
+        return in_array($scheme, self::$non_web_schemes, true);
+    }
+
+    /**
      * Check if link is broken
      *
      * @param $url
@@ -484,23 +537,42 @@ class Wpil_Link
         $site_protocol = (is_ssl()) ? 'https:': 'http:';
         $return_urls = array();
         $good_urls = array();
+        $request_url_keys = array();
         foreach($urls as $url){
-            $decoded = urldecode($url); // TODO: review and make sure that there aren't a lot of false positive results after the 2.5.8 update // remove this note when we get to 2.6.3
-            if(!empty($decoded) && $decoded !== $url){
-                $url = $decoded;
+            $request_url = $url;
+
+            // Email, phone and app links have no web destination to call. Leave them out of the
+            // results entirely rather than reporting them as malformed, since there's nothing here
+            // for the user to fix.
+            if(self::isNonWebLink($url)){
+                continue;
+            }
+
+            // Encoded path and query characters stay encoded so cURL receives a valid URL.
+            $valid_url = (!empty($request_url) && (parse_url($request_url, PHP_URL_SCHEME) || substr($request_url, 0, 2) == '//') && parse_url($request_url, PHP_URL_HOST));
+            if(!$valid_url){
+                $decoded = urldecode($request_url);
+                $decoded_is_valid = (!empty($decoded) && (parse_url($decoded, PHP_URL_SCHEME) || substr($decoded, 0, 2) == '//') && parse_url($decoded, PHP_URL_HOST));
+                if($decoded_is_valid){
+                    $request_url = $decoded;
+                    $valid_url = true;
+                }
             }
 
             // if a url was provided and it's formatted correctly, add it to the list to process
-            if(!empty($url) && (parse_url($url, PHP_URL_SCHEME) || substr($url, 0, 2) == '//') && parse_url($url, PHP_URL_HOST)){
+            if($valid_url){
                 // the current URL is using a relative protocol
-                if(strpos($url, '//') === 0){
+                if(strpos($request_url, '//') === 0){
                     // add the current site's protocol to it so cURL doesn't have a problem with it
-                    $url = $site_protocol . $url;
+                    $request_url = $site_protocol . $request_url;
                 }
-                $good_urls[] = $url;
+                $good_urls[] = $request_url;
+                $request_url_keys[$request_url][] = $url;
             }elseif(!empty($url) && strpos($url, '/') === 0){
                 // if the URL is relative, make it absolute for the so we can scan it
-                $good_urls[] = Wpil_Settings::makeLinkAbsolute($url);
+                $request_url = Wpil_Settings::makeLinkAbsolute($url);
+                $good_urls[] = $request_url;
+                $request_url_keys[$request_url][] = $url;
             }else{
                 // if it wasn't, add it to the return list as a 925
                 $return_urls[$url] = 925;
@@ -511,8 +583,14 @@ class Wpil_Link
         if(!empty($good_urls)){
             // get the curl response codes for each of them
             $codes = self::getResponseCodesCurl($good_urls, $head_call);
-            // and merge the reponses into the return links
-            $return_urls = array_merge($return_urls, $codes);
+            // and return each response under the same url key that was supplied by the caller
+            foreach($codes as $request_url => $code){
+                if(isset($request_url_keys[$request_url])){
+                    foreach($request_url_keys[$request_url] as $url){
+                        $return_urls[$url] = $code;
+                    }
+                }
+            }
         }
 
         return $return_urls;
@@ -795,6 +873,7 @@ class Wpil_Link
      */
     public static function addLinkToIgnore()
     {
+        Wpil_Base::verify_nonce('wpil_add_link_to_ignore', true);
         $error = false;
         if(!isset($_POST['multiple_links'])){
             $id = !empty($_POST['id']) ? (int)$_POST['id'] : null;
@@ -1590,6 +1669,16 @@ class Wpil_Link
             return false;
         }
 
+        // What YouTube actually answered with. Every verdict below is read out of the page body, so
+        // it's only worth reading when that body is the page we asked for. A rate limit, a consent
+        // interstitial and a bot check all answer with something that has no video in it, and calling
+        // that a dead video is how a working link ends up in the report. Hand back the real status
+        // instead and let the normal status handling deal with it.
+        $response_code = intval(curl_getinfo($handle, CURLINFO_RESPONSE_CODE));
+        if(!empty($response_code) && ($response_code < 200 || $response_code > 299)){
+            return $response_code;
+        }
+
         // if the URL points directly to youtube
         $slashed = trailingslashit($url);
         if( $slashed === 'https://www.youtube.com/' || 
@@ -1605,7 +1694,10 @@ class Wpil_Link
         // pull the url meta property to check it for the link's ID
         preg_match('/<meta property="og:url"[^>]*?>/', $content, $meta_url);
         preg_match('/<meta property="og:video:url"[^>]*?>/', $content, $meta_video_url);
-        preg_match('/\?v=([0-9a-zA-Z\-_]*)|\/embed\/([0-9a-zA-Z\-_]*)|youtu\.be\/([0-9a-zA-Z\-_]*)\?/', $url, $matches);
+        // Pull the video's ID out of the URL. The share domain carries no query string of its own, and
+        // /shorts/ and /live/ are video URLs just as much as /watch and /embed are, so all five shapes
+        // feed one capture group rather than an alternation only some of them can satisfy.
+        preg_match('#(?:\?v=|/embed/|/shorts/|/live/|youtu\.be/)([0-9a-zA-Z\-_]+)#', $url, $matches);
         preg_match('/previewPlayabilityStatus\\\":{\\\"status\\\":\\\"([a-zA-Z]*?)\\\"/', $content, $play_status);
 
         if(!empty($play_status)){
@@ -1614,21 +1706,31 @@ class Wpil_Link
             $play_status = false;
         }
 
+        // The watch page states the verdict outright, and it's the one signal that separates "this
+        // video is gone" from "we were never served the video's page". OK covers everything that
+        // plays, unlisted videos included; a removed or private video reports ERROR or UNPLAYABLE.
+        // Embed pages don't carry this key at all, they use previewPlayabilityStatus above.
+        preg_match('/"playabilityStatus":\{"status":"([A-Z_]+)"/', $content, $watch_status);
+
+        // A channel URL has no video of its own, so a playability verdict on that page belongs to
+        // whatever video the channel features and says nothing about whether the channel is still
+        // there. The two channel branches below do their own checking.
+        $channel_url = (false !== strpos($url, 'youtube.com/channel/') || false !== strpos($url, 'youtube.com/@'));
+
+        // if the page told us straight out whether the video plays, take it at its word
+        if(!$channel_url && !empty($watch_status)){
+            return ('OK' === $watch_status[1]) ? 200 : 825;
+        }
+
         // if we do have the proper info
         if(!empty($meta_video_url) && !empty($matches)){
-            $video_id = end($matches);
+            $video_id = $matches[1];
             $meta = end($meta_video_url);
 
             // and the video key is in the meta
             if(false !== strpos($meta, $video_id)){
                 // say the video is good!
                 $code = 200;
-            }
-
-            // if the video is set to be unlisted
-            if(false && false !== strpos($content, '"isUnlisted":true')){
-                // list it as unlisted in the system
-                $code = 826;
             }
         }elseif(false !== strpos($url, 'youtube.com/embed/')){
             if(!empty($play_status) && strtolower($play_status) === 'ok'){
@@ -1730,6 +1832,15 @@ class Wpil_Link
                     }
                 }
             }
+        }
+
+        // Nothing above found a video on this page, and that's the default rather than a finding:
+        // none of the three signals a video page carries were present, so we weren't looking at one.
+        // A consent interstitial, a bot check, or a URL that was never a video in the first place (a
+        // search or a playlist) all land here, and reporting any of them as a removed video is a
+        // false positive. Fall back to the status the request actually got.
+        if($code === 825 && empty($watch_status) && empty($meta_video_url) && empty($play_status)){
+            return !empty($response_code) ? $response_code : 200;
         }
 
         return $code;

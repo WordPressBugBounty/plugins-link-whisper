@@ -40,10 +40,11 @@ class Wpil_Filter
      */
     public static function linksPostType()
     {
+        // post type and taxonomy names are keys, and some of the reports put this straight into their queries
         if (!empty($_GET['post_type'])) {
-            return sanitize_text_field($_GET['post_type']);
+            return sanitize_key($_GET['post_type']);
         }elseif(!empty($_GET['keyword_post_type'])){
-            return sanitize_text_field($_GET['keyword_post_type']);
+            return sanitize_key($_GET['keyword_post_type']);
         }
 
         if(isset($_GET['page']) && 'link_whisper_target_keywords' === $_GET['page'] && false){ //TODO: Disabling pending review of persistent filtering. Check back around in version 3.0.0

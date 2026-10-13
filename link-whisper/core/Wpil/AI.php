@@ -1466,15 +1466,18 @@ class Wpil_AI
     }
 
     public static function ajax_wpil_dismiss_credit_notice(){
+        Wpil_Base::verify_nonce('wpil_ai_dismiss_notice', true);
         update_option('wpil_oai_insufficient_quota_error', '0');
     }
 
     public static function ajax_wpil_dismiss_api_key_decoding_error(){
+        Wpil_Base::verify_nonce('wpil_ai_dismiss_notice', true);
         update_option('wpil_open_ai_key_decoding_error', '0');
         update_option('wpil_ai_token_decoding_error', '0'); // also update the Link Whisper AI since the user _should_ have updated the wp encryption tokens needed to run the system
     }
 
     public static function ajax_estimate_site_processing_cost(){
+        Wpil_Base::verify_nonce('wpil_estimate_site_processing_cost', true);
         // create a list of all the posts that need to be processed
         // create a counter that will keep track of their estimated processing costs
         // create something that will loop over each one and estimate based onteh content
@@ -10764,6 +10767,14 @@ class Wpil_AI
             return $response;
         }
 
+        // the Free version doesn't insert links into category and tag descriptions, so set the suggestion aside instead of trying
+        if(!empty($suggestion->post_type) && $suggestion->post_type === 'term'){
+            $wpdb->update($linking_table, ['ignored' => 1], ['ai_index' => (int) $suggestion->ai_index]);
+            $response['message'] = 'Links can\'t be added to category or tag descriptions in Link Whisper Free.';
+            $response['reason'] = 'term_insert_unsupported';
+            return $response;
+        }
+
         $process_key = !empty($suggestion->process_key) ? (string) $suggestion->process_key : '';
         if(self::is_orphan_fix_process_key($process_key)){
             $target_state = self::get_live_target_state((int) $suggestion->target_id, (string) $suggestion->target_type);
@@ -10799,12 +10810,7 @@ class Wpil_AI
 
         Wpil_Base::clear_tracked_action('link_inserted');
 
-        if(!empty($suggestion->post_type) && $suggestion->post_type === 'term'){
-            Wpil_Toolbox::update_encoded_term_meta($suggestion->post_id, 'wpil_links', $meta);
-            Wpil_Term::addLinksToTerm($suggestion->post_id);
-        }else{
-            Wpil_Post::addLinksToContent(null, ['ID' => $suggestion->post_id], array(), false, true, $meta);
-        }
+        Wpil_Post::addLinksToContent(null, ['ID' => $suggestion->post_id], array(), false, true, $meta);
 
         $applied = Wpil_Base::action_happened('link_inserted') || self::did_suggestion_create_live_link($suggestion);
         Wpil_Base::clear_tracked_action('link_inserted');
@@ -10852,6 +10858,9 @@ class Wpil_AI
     public static function create_links_from_linking_suggestions($ids = []){
         global $wpdb;
         $linking_table = $wpdb->prefix . 'wpil_ai_linking';
+
+        // make sure we're only working with numeric ids since they go straight into the query
+        $ids = array_filter(array_map('intval', (array) $ids));
 
         if(empty($ids)){
             return array(

@@ -89,6 +89,7 @@ class Wpil_Error
      */
     public static function ajaxErrorProcess()
     {
+        Wpil_Base::verify_nonce('wpil_error_process', true);
         ini_set('default_socket_timeout', 15);
         // be sure to ignore any external object caches
         Wpil_Base::ignore_external_object_cache();
@@ -792,13 +793,27 @@ class Wpil_Error
             }
         }
 
-        $wpdb->query("TRUNCATE TABLE {$ignore_links}");
-
         // if the broken link table exists
         $error_tbl_exists = $wpdb->query("SHOW TABLES LIKE '{$wpdb->prefix}wpil_broken_links'");
         if(!empty($error_tbl_exists)){
-            // copy all the ignored links into the ignore table
-            $wpdb->query("INSERT INTO {$ignore_links} SELECT `id` AS 'id', `post_id` AS 'post_id', `post_type` AS 'post_type', `url` AS 'url', `internal` AS 'internal', `code` AS 'code', `created` AS 'created' FROM {$wpdb->prefix}wpil_broken_links WHERE `ignore_link` = 1");
+            // The ignore list stays in place between scans so a cancelled scan can't bring an ignored link back.
+            $stored_urls = array_fill_keys((array) $wpdb->get_col("SELECT `url` FROM {$ignore_links}"), true);
+            $ignored_links = $wpdb->get_results("SELECT `post_id`, `post_type`, `url`, `internal`, `code`, `created` FROM {$wpdb->prefix}wpil_broken_links WHERE `ignore_link` = 1");
+            foreach($ignored_links as $link){
+                // A row with no URL is nothing to ignore, so don't copy it over
+                if(empty($link->url) || isset($stored_urls[$link->url])){
+                    continue;
+                }
+                $wpdb->insert($ignore_links, array(
+                    'post_id' => (int) $link->post_id,
+                    'post_type' => $link->post_type,
+                    'url' => $link->url,
+                    'internal' => (int) $link->internal,
+                    'code' => (int) $link->code,
+                    'created' => $link->created,
+                ));
+                $stored_urls[$link->url] = true;
+            }
         }
     }
 
@@ -1454,10 +1469,19 @@ class Wpil_Error
         $url = ($_POST['url'] === '{{wpil-empty-url}}') ? '{{wpil-empty-url}}' : htmlentities(esc_url_raw($_POST['url']));
         $anchor = (isset($_POST['anchor']) && !empty($_POST['anchor'])) ? wp_kses(base64_decode($_POST['anchor']), 'post') : '';
 
+        // The ignore list is kept between scans now, so take the link off of it too or the next scan would ignore it again
+        $ignore_links = $wpdb->prefix . 'wpil_ignore_links';
+        if($wpdb->query("SHOW TABLES LIKE '{$ignore_links}'")){
+            $wpdb->delete($ignore_links, array('url' => $url));
+            if(false !== strpos($url, '&')){
+                $wpdb->delete($ignore_links, array('url' => str_replace('&amp;', '&', $url)));
+            }
+        }
+
         // if the supplied url is actually a url, not a empty link token, and not being ignored
         if(!empty($url) && $url !== '{{wpil-empty-url}}' && !self::check_if_ignored($url)){
             // make sure the url is in the DB and it's being ignored
-            $link = $wpdb->get_results("SELECT * FROM {$broken_links} WHERE `url` = '{$url}' && `ignore_link` = 1 LIMIT 1");
+            $link = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$broken_links} WHERE `url` = %s && `ignore_link` = 1 LIMIT 1", $url));
             if(!empty($link)){
                 // if it is, do a rescan of the link and reset it's status
                 $link = $link[0];
@@ -1569,6 +1593,12 @@ class Wpil_Error
             return false;
         }
 
+        // Email, phone and app links don't have a web page to request, so leave them out of the
+        // broken link checks entirely. Wpil_Link::isNonWebLink() owns the list of schemes.
+        if(Wpil_Link::isNonWebLink($url)){
+            return true;
+        }
+
         if(self::$broken_link_ignore === null){
             self::$broken_link_ignore = Wpil_Settings::get_broken_ignore_links();
         }
@@ -1607,20 +1637,6 @@ class Wpil_Error
                     return true;
                 }
             }
-        }
-
-
-        // check the cache to see if we've done this already
-        if(isset(self::$saved_link_cache[$url]) && !empty(self::$saved_link_cache[$url])){
-            // if it's there, return the value
-            return self::$saved_link_cache[$url]; // will always be true
-        }
-
-        $count = $wpdb->get_var($wpdb->prepare("SELECT count(*) FROM {$wpdb->prefix}wpil_broken_links WHERE url = %s", $url));
-
-        if(!empty($count)){
-            self::$saved_link_cache[$url] = true;
-            return true;
         }
 
         return false;
@@ -1826,7 +1842,8 @@ class Wpil_Error
         $option = (int) get_option('wpil_error_scan_toggle', 0);
         $snooze_where = self::get_snoozed_link_where_clause('raw_url');
 
-        $links = $wpdb->get_results("SELECT `link_id`, `post_id`, `post_type`, `clean_url`, `raw_url`, `anchor`, `raw_anchor` FROM {$links_table} WHERE `broken_link_scanned` = {$option} AND `location` = 'content' {$snooze_where} LIMIT 10");
+        // skip the placeholder rows that posts without links get, since they don't have a URL to check
+        $links = $wpdb->get_results("SELECT `link_id`, `post_id`, `post_type`, `clean_url`, `raw_url`, `anchor`, `raw_anchor` FROM {$links_table} WHERE `broken_link_scanned` = {$option} AND `location` = 'content' AND `has_links` > 0 {$snooze_where} LIMIT 10");
 
         // if we didn't find any broken links, flip the scan flag so we can re-check previously scanned links
         if(empty($links) && !empty($wpdb->get_var("SELECT count(*) FROM {$wpdb->prefix}wpil_broken_links"))){
@@ -1902,6 +1919,54 @@ class Wpil_Error
         return $return_text;
     }
 
+    /**
+     * Removes email, phone and app links, and links without a URL, from the broken link report.
+     *
+     * They're removed silently rather than logged as a fix: nothing about the site's content changed,
+     * we're just dropping rows that shouldn't have been recorded in the first place.
+     *
+     * @return int The number of rows removed.
+     */
+    public static function deleteNonWebLinks()
+    {
+        global $wpdb;
+        $broken_links = $wpdb->prefix . 'wpil_broken_links';
+
+        if(empty($wpdb->query("SHOW TABLES LIKE '{$broken_links}'"))){
+            return 0;
+        }
+
+        $home_url = trailingslashit(Wpil_Link::filter_staging_to_live_domain(get_home_url()));
+        $home_path = preg_replace('`^https?://`i', '', $home_url);
+        $site_urls = array_unique(array(
+            $home_url,
+            'http://' . $home_path,
+            'https://' . $home_path,
+        ));
+        $broken_where = array();
+
+        foreach(Wpil_Link::$non_web_schemes as $scheme){
+            // the scheme names are our own literals, but they still go through prepare so the
+            // wildcards stay escaped
+            $broken_where[] = $wpdb->prepare('`url` LIKE %s', $wpdb->esc_like($scheme . ':') . '%');
+
+            // The link report used to mistake hostless schemes for relative paths and put the home
+            // URL in front of them. Cover both protocols so an HTTPS change does not strand the old
+            // form in the broken-link report.
+            foreach($site_urls as $site_url){
+                $broken_where[] = $wpdb->prepare('`url` LIKE %s', $wpdb->esc_like($site_url . $scheme . ':') . '%');
+            }
+        }
+
+        // in-page anchors have no destination either
+        $broken_where[] = $wpdb->prepare('`url` LIKE %s', $wpdb->esc_like('#') . '%');
+
+        // and neither do the empty rows the cron scan used to make from posts without any links
+        $broken_where[] = "`url` = ''";
+
+        return (int) $wpdb->query("DELETE FROM {$broken_links} WHERE " . implode(' OR ', $broken_where));
+    }
+
     public static function cronCheckLink(){
         global $wpdb;
         $broken_links = $wpdb->prefix . "wpil_broken_links";
@@ -1917,6 +1982,10 @@ class Wpil_Error
         if(empty($col)){
             return;
         }
+
+        // Drop any email/phone/app links an older scan recorded. Rows that reached a check_count of
+        // 10 fall out of the query below, so this is the only thing that clears them.
+        self::deleteNonWebLinks();
 
         self::prepareSnoozeTable();
         $snooze_where = self::get_snoozed_link_where_clause('url');
@@ -2019,7 +2088,7 @@ class Wpil_Error
 
     public static function getLinkById($id) {
         global $wpdb;
-        return $wpdb->get_row("SELECT * FROM {$wpdb->prefix}wpil_broken_links WHERE id = " . $id);
+        return $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}wpil_broken_links WHERE id = %d", $id));
     }
 
     /**
@@ -2310,7 +2379,8 @@ class Wpil_Error
         global $wpdb;
         $table = $wpdb->prefix . 'wpil_broken_links';
 
-        $links = $wpdb->get_results("SELECT * FROM {$table} WHERE (`code` < 200 OR `code` > 399 AND `code` < 510 OR `url` = '{{wpil-empty-url}}') AND `check_count` > 9 AND `ignore_link` < 1");
+        // 429s are a site telling us to slow down, not a broken link, so they never count as high-confidence
+        $links = $wpdb->get_results("SELECT * FROM {$table} WHERE (`code` < 200 OR `code` > 399 AND `code` < 510 OR `url` = '{{wpil-empty-url}}') AND `code` != 429 AND `check_count` > 9 AND `ignore_link` < 1");
 
         return !empty($links) ? $links: [];
     }

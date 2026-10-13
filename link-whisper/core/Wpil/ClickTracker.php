@@ -403,7 +403,8 @@ class Wpil_ClickTracker
         $limit = (int)$limit;
         $start = (int)$start;
         $search = sanitize_text_field($search);
-        $orderby = sanitize_text_field($orderby);
+        // only sort by the columns that the report offers since the orderby goes straight into the query
+        $orderby = (in_array($orderby, array('post_title', 'post_type', 'post_date', 'date', 'clicks'), true)) ? $orderby: '';
         $order = (strtolower($order) === 'desc') ? 'DESC': 'ASC';
         $process_terms = !empty(Wpil_Settings::getTermTypes());
 
@@ -429,10 +430,11 @@ class Wpil_ClickTracker
                     $search = " AND p.ID = {$search_post->id} ";
                 }
             } else {
-                $term_title_search = ", IF(t.name LIKE '%$search%', 1, 0) as title_search ";
-                $title_search = ", IF(p.post_title LIKE '%$search%', 1, 0) as title_search ";
-                $term_search = " AND (t.name LIKE '%$search%' OR tt.description LIKE '%$search%') ";
-                $search = " AND (p.post_title LIKE '%$search%' OR p.post_content LIKE '%$search%') ";
+                $search_like = '%' . $wpdb->esc_like($search) . '%';
+                $term_title_search = $wpdb->prepare(", IF(t.name LIKE %s, 1, 0) as title_search ", $search_like);
+                $title_search = $wpdb->prepare(", IF(p.post_title LIKE %s, 1, 0) as title_search ", $search_like);
+                $term_search = $wpdb->prepare(" AND (t.name LIKE %s OR tt.description LIKE %s) ", $search_like, $search_like);
+                $search = $wpdb->prepare(" AND (p.post_title LIKE %s OR p.post_content LIKE %s) ", $search_like, $search_like);
             }
         }
 
@@ -452,8 +454,8 @@ class Wpil_ClickTracker
         }
 
         if ($post_type = Wpil_Filter::linksPostType()) {
-            $term_search .= " AND tt.taxonomy = '$post_type' ";
-            $search .= " AND p.post_type = '$post_type' ";
+            $term_search .= $wpdb->prepare(" AND tt.taxonomy = %s ", $post_type);
+            $search .= $wpdb->prepare(" AND p.post_type = %s ", $post_type);
         }
 
         //sorting
@@ -543,10 +545,20 @@ class Wpil_ClickTracker
         $options = get_user_meta(get_current_user_id(), 'report_options', true);
         $limit = (isset($options['per_page'])) ? $options['per_page'] : 20;
         $show_click_traffic = (isset($options['show_click_traffic']) && $options['show_click_traffic'] === 'on') ? true : false;
-        $search = (isset($_POST['keywords']) && !empty($_POST['keywords'])) ? sanitize_text_field($_POST['keywords']): '';
+        $search = (isset($_POST['keywords']) && !empty($_POST['keywords'])) ? sanitize_text_field(wp_unslash($_POST['keywords'])): '';
+        $search_like = '%' . $wpdb->esc_like($search) . '%';
         $orderby = (in_array($orderby, array('post_id', 'link_url', 'link_anchor', 'click_date', 'user_ip', 'total_clicks'), true)) ? $orderby: '';
         $order = ($order === 'desc') ? 'desc': 'asc';
-        $start = (isset($range['start']) && !empty($range['start'])) ? date('Y-m-d H:i:s', intval($range['start'])): date('Y-m-d H:i:s', (time() - (30 * DAY_IN_SECONDS)));
+
+        // Without an ORDER BY the rows came back in insert order, which put the oldest
+        // clicks first. Open on the most clicked link instead, or on the newest click when
+        // we're listing raw click rows and there's no count in the query to sort on.
+        if(empty($orderby)){
+            $orderby = (!$show_click_traffic) ? 'total_clicks': 'click_date';
+            $order = 'desc';
+        }
+
+        $start =(isset($range['start']) && !empty($range['start'])) ? date('Y-m-d H:i:s', intval($range['start'])): date('Y-m-d H:i:s', (time() - (30 * DAY_IN_SECONDS)));
         $end = (isset($range['end']) && !empty($range['end'])) ? date('Y-m-d H:i:s', intval($range['end'])): date('Y-m-d H:i:s', time());
 
         // exit if there's no id
@@ -569,17 +581,18 @@ class Wpil_ClickTracker
         $group_posts  = (!$show_click_traffic) ? (($show_create_date) ? "GROUP BY a.post_id": "GROUP BY `post_id`"): '';
 
         if($type === 'url'){
+            // esc_url_raw keeps quotes, so the url has to be prepared into the query
             $id = esc_url_raw($id);
             if(!empty($search)){
-                $query = "SELECT post_id, a.post_type AS post_type, click_date, user_ip, user_id, link_url, link_anchor, link_location {$count_clicks} FROM {$clicks_table} a LEFT JOIN {$wpdb->posts} b ON a.post_id = b.ID WHERE a.link_url = '{$id}' AND a.click_date > '{$start}' AND '{$end}' > a.click_date AND (a.link_anchor LIKE '%{$search}%' OR b.post_title LIKE '%{$search}%') {$group_posts} {$orderby} {$limit}";
+                $query = $wpdb->prepare("SELECT post_id, a.post_type AS post_type, click_date, user_ip, user_id, link_url, link_anchor, link_location {$count_clicks} FROM {$clicks_table} a LEFT JOIN {$wpdb->posts} b ON a.post_id = b.ID WHERE a.link_url = %s AND a.click_date > '{$start}' AND '{$end}' > a.click_date AND (a.link_anchor LIKE %s OR b.post_title LIKE %s) {$group_posts} {$orderby} {$limit}", $id, $search_like, $search_like);
             }else{
-                $query = "SELECT * {$count_clicks} FROM {$clicks_table} WHERE `link_url` = '{$id}' AND `click_date` > '{$start}' AND '{$end}' > `click_date` {$group_posts} {$orderby} {$limit}";
+                $query = $wpdb->prepare("SELECT * {$count_clicks} FROM {$clicks_table} WHERE `link_url` = %s AND `click_date` > '{$start}' AND '{$end}' > `click_date` {$group_posts} {$orderby} {$limit}", $id);
             }
         }elseif($type === 'user_ip'){
             $id = filter_var($id, FILTER_VALIDATE_IP);
 
             if(!empty($search)){
-                $search = "AND (`link_url` LIKE '%{$search}%' OR `link_anchor` LIKE '%{$search}%')";
+                $search = $wpdb->prepare("AND (`link_url` LIKE %s OR `link_anchor` LIKE %s)", $search_like, $search_like);
             }
 
             $query = "SELECT `post_id`, `post_type`, `link_url`, `link_anchor`, `click_date`, `user_ip`, link_location {$count_clicks} FROM {$clicks_table} WHERE `user_ip` = '{$id}' AND `click_date` > '{$start}' AND '{$end}' > `click_date` {$search} {$group_clicks} {$orderby} {$limit}";
@@ -587,7 +600,7 @@ class Wpil_ClickTracker
             $id = intval($id);
             $type = ($type === 'post') ? 'post': 'term';
             if(!empty($search)){
-                $search = ($show_create_date) ? "AND (a.link_url LIKE '%{$search}%' OR a.link_anchor LIKE '%{$search}%')": "AND (`link_url` LIKE '%{$search}%' OR `link_anchor` LIKE '%{$search}%')";
+                $search = ($show_create_date) ? $wpdb->prepare("AND (a.link_url LIKE %s OR a.link_anchor LIKE %s)", $search_like, $search_like): $wpdb->prepare("AND (`link_url` LIKE %s OR `link_anchor` LIKE %s)", $search_like, $search_like);
             }
 
             if($show_create_date){
@@ -604,7 +617,7 @@ class Wpil_ClickTracker
                         ON a.post_id = b.post_id AND a.post_type = b.post_type AND ((a.tracking_id > 0 AND a.tracking_id = b.tracking_id) OR a.link_url = b.raw_url)
                     LEFT JOIN {$links_tracking_table} c 
                         ON b.tracking_id = c.link_id
-                    WHERE `post_id` = {$id} AND `post_type` = '{$type}' AND `click_date` > '{$start}' AND '{$end}' > `click_date` {$search} {$orderby} {$limit}";
+                    WHERE a.post_id = {$id} AND a.post_type = '{$type}' AND a.click_date > '{$start}' AND '{$end}' > a.click_date {$search} {$orderby} {$limit}";
                 }
             }else{
                 $query = "SELECT `post_id`, `post_type`, `link_url`, `link_anchor`, `link_location` {$count_clicks} FROM {$clicks_table} WHERE `post_id` = {$id} AND `post_type` = '{$type}' AND `click_date` > '{$start}' AND '{$end}' > `click_date` {$search} {$group_clicks} {$orderby} {$limit}";
@@ -674,19 +687,21 @@ class Wpil_ClickTracker
         $clicks_table = $wpdb->prefix . 'wpil_click_data';
         $start = (isset($range['start']) && !empty($range['start'])) ? date('Y-m-d H:i:s', intval($range['start'])): date('Y-m-d H:i:s', (time() - (30 * DAY_IN_SECONDS)));
         $end = (isset($range['end']) && !empty($range['end'])) ? date('Y-m-d H:i:s', intval($range['end'])): date('Y-m-d H:i:s', time());
-        $search = (isset($_POST['keywords']) && !empty($_POST['keywords'])) ? sanitize_text_field($_POST['keywords']): '';
+        $search = (isset($_POST['keywords']) && !empty($_POST['keywords'])) ? sanitize_text_field(wp_unslash($_POST['keywords'])): '';
+        $search_like = '%' . $wpdb->esc_like($search) . '%';
 
         if($post_type === 'url'){
+            // esc_url_raw keeps quotes, so the url has to be prepared into the query
             $post_id = esc_url_raw($post_id);
             if(!empty($search)){
-                $query = "SELECT post_id, a.post_type AS post_type, click_date, user_ip, user_id, link_url, link_anchor FROM {$clicks_table} a LEFT JOIN {$wpdb->posts} b ON a.post_id = b.ID WHERE a.link_url = '{$post_id}' AND a.click_date > '{$start}' AND '{$end}' > a.click_date AND (a.link_anchor LIKE '%{$search}%' OR b.post_title LIKE '%{$search}%')";
+                $query = $wpdb->prepare("SELECT post_id, a.post_type AS post_type, click_date, user_ip, user_id, link_url, link_anchor FROM {$clicks_table} a LEFT JOIN {$wpdb->posts} b ON a.post_id = b.ID WHERE a.link_url = %s AND a.click_date > '{$start}' AND '{$end}' > a.click_date AND (a.link_anchor LIKE %s OR b.post_title LIKE %s)", $post_id, $search_like, $search_like);
             }else{
-                $query = "SELECT * FROM {$clicks_table} WHERE `link_url` = '{$post_id}' AND `click_date` > '{$start}' AND `click_date` < '{$end}'";
+                $query = $wpdb->prepare("SELECT * FROM {$clicks_table} WHERE `link_url` = %s AND `click_date` > '{$start}' AND `click_date` < '{$end}'", $post_id);
             }
         }elseif($post_type === 'user_ip'){
             $post_id = filter_var($post_id, FILTER_VALIDATE_IP);
             if(!empty($search)){
-                $query = "SELECT post_id, a.post_type AS post_type, click_date, user_ip, user_id, link_url, link_anchor FROM {$clicks_table} a LEFT JOIN {$wpdb->posts} b ON a.post_id = b.ID WHERE a.user_ip = '{$post_id}' AND a.click_date > '{$start}' AND '{$end}' > a.click_date AND (a.link_anchor LIKE '%{$search}%' OR b.post_title LIKE '%{$search}%')";
+                $query = $wpdb->prepare("SELECT post_id, a.post_type AS post_type, click_date, user_ip, user_id, link_url, link_anchor FROM {$clicks_table} a LEFT JOIN {$wpdb->posts} b ON a.post_id = b.ID WHERE a.user_ip = '{$post_id}' AND a.click_date > '{$start}' AND '{$end}' > a.click_date AND (a.link_anchor LIKE %s OR b.post_title LIKE %s)", $search_like, $search_like);
             }else{
                 $query = "SELECT * FROM {$clicks_table} WHERE `user_ip` = '{$post_id}' AND `click_date` > '{$start}' AND `click_date` < '{$end}'";
             }
@@ -694,7 +709,7 @@ class Wpil_ClickTracker
             $post_id = (int) $post_id;
             $post_type = ($post_type === 'post') ? 'post': 'term';
             if(!empty($search)){
-                $search = "AND (`link_url` LIKE '%{$search}%' OR `link_anchor` LIKE '%{$search}%')";
+                $search = $wpdb->prepare("AND (`link_url` LIKE %s OR `link_anchor` LIKE %s)", $search_like, $search_like);
             }
             $query = "SELECT * FROM {$clicks_table} WHERE `post_id` = {$post_id} AND `post_type` = '{$post_type}' AND `click_date` > '{$start}' AND `click_date` < '{$end}' {$search}";
         }

@@ -3,8 +3,6 @@
 (function ($) {
     $(document).on('click', '.wpil-domains-report-url-edit-confirm', wpil_domains_link_update);
     $(document).on('click', '.report_links .wpil_edit_link, .wpil-domains-report-url-edit-cancel', toggleReportLinkEditor);
-    $(document).on('click', '.wpil-domain-attribute-save', saveSelectedAttributes);
-    $(document).on('click', 'td .wpil-collapsible-wrapper', maybeAjaxDownloadData);
     $('.wpil-domain-attribute-multiselect').select2({
             // use custom abbriviations for the buttons
             templateResult: function (data) {
@@ -25,8 +23,8 @@
                 return $(data.element).data('abbr') || data.text;
             }
     });
-    $('select').on('change', checkDomainAttributes);
-    $('select').each(function () {checkDomainAttributes({ target: this });}); // trigger a change to initialize the button settings
+    $('.wpil-domain-attribute-multiselect').on('change', checkDomainAttributes);
+    $('.wpil-domain-attribute-multiselect').each(function () {checkDomainAttributes({ target: this });}); // trigger a change to initialize the button settings
 
     // edit link in domains report
     function wpil_domains_link_update() {

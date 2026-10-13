@@ -38,7 +38,7 @@ class Wpil_Editor_YooTheme
 
     public static function matchContent($content)
     {
-        return str_contains((string) $content, '<!--') &&
+        return strpos((string) $content, '<!--') !== false &&
             preg_match(self::$pattern, $content, $matches)
             ? $matches[1]
             : null;

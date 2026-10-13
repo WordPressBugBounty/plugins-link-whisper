@@ -22,6 +22,7 @@ class Wpil_Post
         add_action('before_delete_post', [$this, 'deleteReferences']);
         add_filter('wp_link_query_args', array(__CLASS__, 'filter_custom_link_post_types'), 10, 1);
         add_filter('wp_link_query', array(__CLASS__, 'custom_link_category_search'), 10, 2);
+        add_filter('is_protected_meta', array(__CLASS__, 'protect_meta_keys'), 10, 2);
     }
 
     /**
@@ -63,6 +64,18 @@ class Wpil_Post
         update_option('wpil_ignore_orphaned_posts', $ignored_posts, false);
 
         wp_send_json(array('success' => true));
+    }
+
+    /**
+     * Marks our meta as protected so it can't be added or changed through the Custom Fields panel or the other generic meta editors.
+     * All of our meta is saved by our own code, and letting users write to it would let them slip whatever data they like into our link stats.
+     **/
+    public static function protect_meta_keys($protected, $meta_key){
+        if(is_string($meta_key) && 0 === strpos($meta_key, 'wpil_')){
+            $protected = true;
+        }
+
+        return $protected;
     }
 
     /**
@@ -374,6 +387,10 @@ class Wpil_Post
         foreach ($fields_query as $field) {
             $name = trim($field->name);
 
+            if(in_array($name, $ignored_fields, true)){
+                continue;
+            }
+
             if ( !empty($ignored_fields_wildcards) && preg_match('/' . $ignored_fields_wildcards . '/', $name) ) {
                 continue;
             }
@@ -472,6 +489,10 @@ class Wpil_Post
                 if(!empty($fields_query)){
                     foreach ($fields_query as $field) {
                         $name = trim($field->name);
+                        if(in_array($name, $ignored_fields, true)){
+                            continue;
+                        }
+
                         if(!empty($name)){
                             $fields[] = $name;
                         }
@@ -488,6 +509,10 @@ class Wpil_Post
                     foreach($fields_query as $field){
                         if(0 === strpos($field, '_')){
                             $name = trim(substr($field, 1));
+                            if(in_array($name, $ignored_fields, true)){
+                                continue;
+                            }
+
                             if(!empty($name)){
                                 $fields[] = $name;
                             }

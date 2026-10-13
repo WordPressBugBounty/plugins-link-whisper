@@ -156,7 +156,7 @@ class Wpil_Model_Post
                     $this->links = (object)[
                         'view' => esc_url($this->getViewLink()),
                         'edit' => esc_url(admin_url('term.php?taxonomy=' . $term->taxonomy . '&post_type=post&tag_ID=' . $this->id)),
-                        'export' => esc_url(admin_url("post.php?area=wpil_export&term_id=" . $this->id)),
+                        'export' => esc_url(admin_url("post.php?area=wpil_export&term_id=" . $this->id . '&nonce=' . $this->get_post_nonce())),
                         'excel_export' => esc_url(admin_url("post.php?area=wpil_excel_export&term_id=" . $this->id)),
                         'refresh' => esc_url(admin_url("admin.php?page=link_whisper&type=post_links_count_update&term_id=" . $this->id . '&nonce=' . $this->get_post_nonce()))
                     ];
@@ -166,7 +166,7 @@ class Wpil_Model_Post
                 $this->links = (object)[
                     'view' => esc_url($this->getViewLink()),
                     'edit' => esc_url(get_edit_post_link($this->id)),
-                    'export' => esc_url(admin_url("post.php?area=wpil_export&post_id=" . $this->id)),
+                    'export' => esc_url(admin_url("post.php?area=wpil_export&post_id=" . $this->id . '&nonce=' . $this->get_post_nonce())),
                     'excel_export' => esc_url(admin_url("post.php?area=wpil_excel_export&post_id=" . $this->id)),
                     'refresh' => esc_url(admin_url("admin.php?page=link_whisper&type=post_links_count_update&post_id=" . $this->id . '&nonce=' . $this->get_post_nonce())),
                 ];
@@ -468,6 +468,7 @@ class Wpil_Model_Post
                 if(empty($content)){
                     $item = get_post($this->id);
                     $content = (!empty($item) && isset($item->post_content) && !empty($item->post_content)) ? $item->post_content: "";
+                    $content = $this->getDiviBlockContent($content);
                     $content .= $this->getAddonContent();
                     $content .= $this->maybeGetExcerpt();
                     $content .= $this->getAdvancedCustomFields($remove_unprocessable);
@@ -551,6 +552,66 @@ class Wpil_Model_Post
         $content = apply_filters('wpil_meta_content_data_get', $content, $this->id, $this->type);
 
         return $content;
+    }
+
+    /**
+     * Gets the readable content from Divi 5 blocks.
+     **/
+    function getDiviBlockContent($content){
+        if(empty($content) || false === strpos($content, '<!-- wp:divi/') || !function_exists('parse_blocks')){
+            return $content;
+        }
+
+        $blocks = parse_blocks($content);
+        if(empty($blocks) || !is_array($blocks)){
+            return $content;
+        }
+
+        $divi_content = $this->getDiviBlockText($blocks);
+        return !empty($divi_content) ? implode("\n", $divi_content) . "\n" . $content: $content;
+    }
+
+    /**
+     * Gets the text stored in Divi block attributes.
+     **/
+    function getDiviBlockText($blocks){
+        $content = [];
+
+        foreach($blocks as $block){
+            if(!is_array($block)){
+                continue;
+            }
+
+            if(!empty($block['blockName']) && 0 === strpos($block['blockName'], 'divi/')){
+                $attrs = isset($block['attrs']) && is_array($block['attrs']) ? $block['attrs']: [];
+                if(isset($attrs['content']['innerContent']) && is_array($attrs['content']['innerContent'])){
+                    $content = array_merge($content, $this->getDiviBlockValues($attrs['content']['innerContent']));
+                }
+            }
+
+            if(!empty($block['innerBlocks']) && is_array($block['innerBlocks'])){
+                $content = array_merge($content, $this->getDiviBlockText($block['innerBlocks']));
+            }
+        }
+
+        return array_values(array_unique(array_filter($content, 'is_string')));
+    }
+
+    /**
+     * Gets the responsive values from a Divi block's inner content.
+     **/
+    function getDiviBlockValues($data){
+        $values = [];
+
+        foreach($data as $key => $value){
+            if($key === 'value' && is_string($value) && $value !== ''){
+                $values[] = $value;
+            }elseif(is_array($value)){
+                $values = array_merge($values, $this->getDiviBlockValues($value));
+            }
+        }
+
+        return $values;
     }
 
     /**

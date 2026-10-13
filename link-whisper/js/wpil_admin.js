@@ -3644,6 +3644,7 @@
                 type: type,
                 post_origin: postOrigin,
                 site_url: siteUrl,
+                nonce: wpil_ajax.ignore_link_nonce,
                 action: 'wpil_add_link_to_ignore'
             }, function (response) {
                 response = $.parseJSON(response);
@@ -3712,6 +3713,7 @@
 
             $.post(ajaxurl, {
                 multiple_links: links,
+                nonce: wpil_ajax.ignore_link_nonce,
                 action: 'wpil_add_link_to_ignore'
             }, function (response) {
                 response = $.parseJSON(response);
@@ -3753,6 +3755,7 @@
     function ajax_update_expanded_details(status){
         $.post(ajaxurl, {
             action: 'wpil_update_expanded_details_toggle',
+            nonce: wpil_ajax.expanded_details_nonce,
             status: (status) ? 1: 0
         }, function (response) {});
     }

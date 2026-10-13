@@ -49,7 +49,7 @@
     $available_models = Wpil_AI::get_available_models();
 
     // get the currently open setting tab. Default to "General Settings" if no tab is selected
-    $current_tab = (isset($_GET['tab']) && !empty($_GET['tab'])) ? esc_attr($_GET['tab']): 'general-settings';
+    $current_tab = (isset($_GET['tab']) && !empty($_GET['tab'])) ? sanitize_key($_GET['tab']): 'general-settings';
 
     // get if we're highlighting a setting
     $highlight = (isset($_GET['setting_highlight']) && !empty($_GET['setting_highlight'])) ? esc_attr($_GET['setting_highlight']): '';
@@ -333,7 +333,7 @@
                                         <option value="<?php echo $language_key; ?>" <?php selected($language_key, $selected_language); ?>><?php echo $language_name; ?></option>
                                     <?php endforeach; ?>
                                 </select>
-                                <input type="hidden" id="wpil-currently-selected-language" value="<?php echo $selected_language; ?>">
+                                <input type="hidden" id="wpil-currently-selected-language" value="<?php echo esc_attr($selected_language); ?>">
                                 <input type="hidden" id="wpil-currently-selected-language-confirm-text-1" value="<?php echo esc_attr__('Changing Link Whisper\'s language will replace the current Words to be Ignored with a new list of words.', 'wpil') ?>">
                                 <input type="hidden" id="wpil-currently-selected-language-confirm-text-2" value="<?php echo esc_attr__('If you\'ve added any words to the Words to be Ignored area, this will erase them.', 'wpil') ?>">
                             </td>
@@ -965,7 +965,7 @@
                             <td scope='row' class="wpil-setting-text"><?php _e('Product Detecting ChatGPT Version', 'wpil'); ?></td>
                             <td>
                                 <div style="max-width: 150px;">
-                                <select class="wpil-ai-version-selector" name="wpil_chat_gpt_api[product-detecting]" data-wpil-ai-process-saved-state="<?php echo $chat_gpt_version['product-detecting'];?>">
+                                <select class="wpil-ai-version-selector" name="wpil_chat_gpt_api[product-detecting]" data-wpil-ai-process-saved-state="<?php echo esc_attr($chat_gpt_version['product-detecting']);?>">
                                     <?php
                                     foreach($available_models as $model_name => $model){
                                         ?>
@@ -1000,7 +1000,7 @@
                             <td scope='row' class="wpil-setting-text"><?php _e('Keyword Analysis ChatGPT Version', 'wpil'); ?></td>
                             <td>
                                 <div style="max-width: 150px;">
-                                <select class="wpil-ai-version-selector" name="wpil_chat_gpt_api[keyword-detecting]" data-wpil-ai-process-saved-state="<?php echo $chat_gpt_version['keyword-detecting'];?>">
+                                <select class="wpil-ai-version-selector" name="wpil_chat_gpt_api[keyword-detecting]" data-wpil-ai-process-saved-state="<?php echo esc_attr($chat_gpt_version['keyword-detecting']);?>">
                                     <?php
                                     foreach($available_models as $model_name => $model){
                                         ?>

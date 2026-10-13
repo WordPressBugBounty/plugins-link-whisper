@@ -108,9 +108,16 @@ class Wpil_Term
             return $fields;
         }
 
+        // get any ACF fields the user has ignored
+        $ignored_fields = Wpil_Settings::getIgnoredACFFields();
+
         $fields_query = $wpdb->get_results("SELECT SUBSTR(meta_key, 2) as `name` FROM {$wpdb->termmeta} WHERE term_id = $term_id AND meta_value LIKE 'field_%' AND SUBSTR(meta_key, 2) != ''");
         foreach ($fields_query as $field) {
             $name = trim($field->name);
+
+            if(in_array($name, $ignored_fields, true)){
+                continue;
+            }
 
             if ($name) {
                 $fields[] = $name;

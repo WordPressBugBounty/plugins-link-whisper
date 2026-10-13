@@ -574,7 +574,7 @@ class Wpil_Export
             'table_statuses' => self::get_table_data(),
             'active_plugins' => ($is_admin) ? get_option('active_plugins', array()): 'User not an admin',
             'oai_processing_status' => json_encode(Wpil_AI::get_ai_batch_processing_status()),
-            'settings' => $settings
+            'settings' => ($is_admin) ? $settings: 'User not an admin' // the settings include api keys and tokens, so only admins get them
         ];
 
         // if we're including meta in the export or ACF is active
@@ -948,7 +948,8 @@ class Wpil_Export
         // Remove any hooks that may interfere with AJAX requests
         Wpil_Base::remove_problem_hooks();
 
-        $type = !empty($_POST['type']) ? $_POST['type'] : null;
+        // only accept the export types we have, since the type goes into the export's file name
+        $type = (!empty($_POST['type']) && in_array($_POST['type'], array('links', 'links_summary', 'domains', 'domains_summary', 'error', 'clicks', 'clicks_summary'), true)) ? $_POST['type'] : null;
         $count = !empty($_POST['count']) ? $_POST['count'] : null;
         $id = !empty($_POST['id']) ? preg_replace('/[^a-zA-Z0-9]/', '', sanitize_text_field($_POST['id'])): hash('sha256', str_shuffle(time() . 'Link Whisper is Awesome!') . time()/2);
         $capability = apply_filters('wpil_filter_main_permission_check', 'manage_categories', Wpil_Base::get_current_page());
@@ -1205,6 +1206,19 @@ class Wpil_Export
     }
 
     /**
+     * Turns a value into a quoted CSV cell. Quotes are doubled up so they stay inside the cell,
+     * and text that starts like a spreadsheet formula gets a leading ' so it's shown as text instead of being run.
+     **/
+    private static function csv_value($value){
+        $value = is_scalar($value) ? (string) $value : '';
+        $value = str_replace(array("\r\n", "\r", "\n"), ' ', $value);
+        if($value !== '' && !is_numeric($value) && in_array($value[0], array('=', '+', '-', '@', "\t"), true)){
+            $value = "'" . $value;
+        }
+        return '"' . str_replace('"', '""', $value) . '"';
+    }
+
+    /**
      * Prepare clicks data for export
      *
      * @return string
@@ -1216,7 +1230,7 @@ class Wpil_Export
         foreach ($clicks['data'] as $click) {
             if (!empty($click->ID)) {
                 $post = $click->post;
-                $title = '"' . mb_convert_encoding(addslashes($click->post_title), 'UTF-8') . '"';
+                $title = self::csv_value(mb_convert_encoding($click->post_title, 'UTF-8'));
                 $url = wp_make_link_relative($post->getLinks()->view);
                 $type = $post->getType();
 
@@ -1228,14 +1242,15 @@ class Wpil_Export
                 if (!empty($click_detailed)) {
                     foreach ($click_detailed['data'] as $detail) {
                         // Extract details from each click entry
+                        // the anchor and url come from visitor clicks, so make sure they can't run as spreadsheet formulas
                         if (isset($detail->link_anchor) && !empty($detail->link_anchor)) {
-                            $link_anchor = '"' . mb_convert_encoding(addslashes($detail->link_anchor), 'UTF-8') . '"';
+                            $link_anchor = self::csv_value(mb_convert_encoding($detail->link_anchor, 'UTF-8'));
                         } else {
                             $link_anchor = '""';
                         }
 
                         if (isset($detail->link_url) && !empty($detail->link_url)) {
-                            $link_url = '"' . $detail->link_url . '"';
+                            $link_url = self::csv_value($detail->link_url);
                         } else {
                             $link_url = '""';
                         }
@@ -1285,7 +1300,7 @@ class Wpil_Export
             if (!empty($click->post_title)) {
                 //prepare data
                 $post = $click->post;
-                $title = '"' . mb_convert_encoding(addslashes($click->post_title), 'UTF-8') . '"';
+                $title = self::csv_value(mb_convert_encoding($click->post_title, 'UTF-8'));
                 $url = wp_make_link_relative($post->getLinks()->view);
                 $type = $post->getType();
                 $total_clicks = $click->clicks ?? 0;

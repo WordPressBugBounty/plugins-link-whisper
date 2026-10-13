@@ -360,12 +360,16 @@ class Wpil_Suggestion
             }
 
             //remove same suggestions on top level
-            foreach($phrase_groups as $phrases){
+            foreach($phrase_groups as $type => $phrases){
                 foreach ($phrases as $key => $phrase) {
-                    if(empty($phrase->suggestions) || !isset($phrase->suggestions[0])){
-                        unset($phrases[$key]);
+                    // unset through $phrase_groups since $phrases is only a copy
+                    if(empty($phrase->suggestions) || !is_array($phrase->suggestions)){
+                        unset($phrase_groups[$type][$key]);
                         continue;
                     }
+
+                    // addAnchors() unsets the options it can't place and leaves gaps in the keys, so make the first option left the lead
+                    $phrase->suggestions = array_values($phrase->suggestions);
 
                     if(is_a($phrase->suggestions[0]->post, 'Wpil_Model_ExternalPost')){
                         $post_key = ($phrase->suggestions[0]->post->type=='term'?'ext_cat':'ext_post') . $phrase->suggestions[0]->post->id;
@@ -385,7 +389,7 @@ class Wpil_Suggestion
                     }
 
                     if (!count($phrase->suggestions)) {
-                        unset($phrases[$key]);
+                        unset($phrase_groups[$type][$key]);
                     } else {
                         if (!empty(self::$undeletable)) {
                             $i = 1;
@@ -532,10 +536,10 @@ class Wpil_Suggestion
 
             usort($merged_phrases['internal_site'], function ($a, $b) {
                 if(!empty($a->top_ai_score) || !empty($b->top_ai_score)){
-                    if ($a->top_ai_score == $b->top_ai_score) {
-                        return 0;
+                    if ($a->top_ai_score != $b->top_ai_score) {
+                        return ($a->top_ai_score > $b->top_ai_score) ? -1 : 1;
                     }
-                    return ($a->top_ai_score > $b->top_ai_score) ? -1 : 1;
+                    // the AI score is for the post pair, so sentences that point at the same post tie here. Let the sentence score pick the best one
                 }
 
 
@@ -2182,14 +2186,7 @@ class Wpil_Suggestion
                 }
 
                 if(!empty($post_ids) && !empty(Wpil_Settings::get_suggestion_filter('link_orphaned'))){
-                    $post_ids = implode(',', $post_ids);
-
-                    if(Wpil_Settings::use_link_table_for_data()){
-                        $post_ids = $wpdb->get_col("SELECT `post_id` as 'ID' FROM {$link_report_table} WHERE `target_id` NOT IN ({$post_ids}) AND `target_type` = 'post'");
-                    }else{
-
-                        $post_ids = $wpdb->get_col("SELECT `post_id` as 'ID' FROM {$wpdb->postmeta} WHERE `post_id` IN ({$post_ids}) AND `meta_key` = 'wpil_links_inbound_internal_count' AND `meta_value` = 0");
-                    }
+                    $post_ids = self::filter_orphaned_target_ids($post_ids, 'post');
                 }elseif(!empty($post_ids) && !empty($inbound_link_limit)){
                     $filtered_post_ids = array();
 
@@ -2351,6 +2348,16 @@ class Wpil_Suggestion
 
                         foreach($result as $key => $item){
                             if(!isset($ids[$item->term_id])){
+                                unset($result[$key]);
+                            }
+                        }
+                    }
+
+                    // category pages are link targets too, so "Only Link to Orphaned Posts" has to narrow them as well
+                    if(!empty($result) && !empty(Wpil_Settings::get_suggestion_filter('link_orphaned'))){
+                        $orphaned_terms = array_flip(self::filter_orphaned_target_ids(wp_list_pluck($result, 'term_id'), 'term'));
+                        foreach($result as $key => $item){
+                            if(!isset($orphaned_terms[(int) $item->term_id])){
                                 unset($result[$key]);
                             }
                         }
@@ -2583,7 +2590,7 @@ class Wpil_Suggestion
         $statuses_query = Wpil_Query::postStatuses();
 
         $post_query = "SELECT ID FROM {$wpdb->posts} WHERE 1=1 $exclude AND post_type IN ('{$post_types}') $statuses_query {$blood_relative} {$age_string} {$user_role_ignore}" . $include;
-        $suggestion_data = $wpdb->get_results($wpdb->prepare("SELECT `post_id`, `post_type`, `sentence_post_id`, `sentence_id`, `suggestion_words`, `notes`, `target_id`, `target_type` FROM {$anchor_table} WHERE `{$post_indx}_id` = %s AND `{$post_indx}_type` = %d AND `ignore_suggestion` = 0 AND ((`{$target_indx}_type` = 'post' AND `{$target_indx}_id` IN ({$post_query})))", $search_post->id, $search_post->type));
+        $suggestion_data = $wpdb->get_results($wpdb->prepare("SELECT `post_id`, `post_type`, `sentence_post_id`, `sentence_id`, `suggestion_words`, `notes`, `target_id`, `target_type` FROM {$anchor_table} WHERE `{$post_indx}_id` = %d AND `{$post_indx}_type` = %s AND `ignore_suggestion` = 0 AND ((`{$target_indx}_type` = 'post' AND `{$target_indx}_id` IN ({$post_query})))", $search_post->id, $search_post->type));
 
         // exit now if there are no suggested anchors
         if(empty($suggestion_data)){
@@ -2598,34 +2605,20 @@ class Wpil_Suggestion
             }
         }
 
-        $suggestion_target_post_ids = array();
+        // The stored anchors go straight into suggestions without passing through the candidate list,
+        // so outbound runs have to apply the target filters here as well. Inbound runs are filtered upstream.
+        // Start from every post the stored anchors point at, and let the filters below narrow it down.
+        $post_ids = array();
         if(empty($target)){
             foreach($suggestion_data as $dat){
                 if($dat->target_type === 'post'){
-                    $suggestion_target_post_ids[] = $dat->target_id;
+                    $post_ids[] = (int) $dat->target_id;
                 }
             }
-        }else{
-            // TODO: handle cases wherre this is used for inbound suggestions.
-            // Currently, it isn't needed to because the post id filtering happens upstream,
-            // so we never need this function to handle this kind of filtering
         }
 
         if(!empty($post_ids) && !empty(Wpil_Settings::get_suggestion_filter('link_orphaned'))){
-            $post_ids = implode(',', $post_ids);
-
-            $ignore_string = '';
-            $ignored_ids = Wpil_Settings::getItemTypeIds(Wpil_Settings::getIgnoreOrphanedPosts(), 'post');
-    
-            if(!empty($ignored_ids)){
-                $ignore_string = " AND ID NOT IN ('" . implode("', '", $ignored_ids) . "')";
-            }
-    
-            $statuses_query = Wpil_Query::postStatuses('a');
-            $post_types = Wpil_Query::postTypes('a');
-
-            $ids = $wpdb->get_col("SELECT ID FROM {$wpdb->posts} a WHERE a.ID NOT IN (select distinct `target_id` from {$link_report_table} where `target_type` = 'post' and has_links > 0) {$ignore_string} {$ignore_string} {$statuses_query} {$post_types}");
-
+            $post_ids = self::filter_orphaned_target_ids($post_ids, 'post');
         }elseif(!empty($post_ids) && !empty($inbound_link_limit)){
             $filtered_post_ids = array();
 
@@ -2658,9 +2651,9 @@ class Wpil_Suggestion
         }
 
         // if we're only supposed to show links to the Yoast cornerstone content
-        if($only_show_cornerstone && !empty($suggestion_target_post_ids)){
+        if($only_show_cornerstone && !empty($post_ids)){
             // query the meta to see what posts have been set as cornerstone content
-            $result = $wpdb->get_col("SELECT `post_id` AS ID FROM {$wpdb->postmeta} WHERE `post_id` IN (" . implode(', ', $suggestion_target_post_ids) . ") AND `meta_key` = '_yoast_wpseo_is_cornerstone'");
+            $result = $wpdb->get_col("SELECT `post_id` AS ID FROM {$wpdb->postmeta} WHERE `post_id` IN (" . implode(', ', array_map('intval', $post_ids)) . ") AND `meta_key` = '_yoast_wpseo_is_cornerstone'");
         
             if(!empty($result)){
                 $post_ids = (!empty($post_ids)) ? array_intersect($post_ids, $result): $result;
@@ -2684,12 +2677,17 @@ class Wpil_Suggestion
             }
         }
 
-        // if we have ids to filter by
-        if(!empty($post_ids)){
-            // go over the suggestion data
+        // on outbound runs, only keep the stored anchors whose posts made it through the filters
+        if(empty($target)){
+            // every stored anchor points at a post, and this filter wants category pages only
+            if(!empty(Wpil_Settings::get_suggestion_filter('link_to_category_pages'))){
+                $post_ids = array();
+            }
+
+            // an empty list means nothing passed, not that nothing was filtered
+            $post_ids = array_flip(array_map('intval', $post_ids));
             foreach($suggestion_data as $d => $dat){
-                // and remove any that aren't in the filter list
-                if($dat->target_type === 'post' && !in_array($dat->target_id, $post_ids)){
+                if($dat->target_type === 'post' && !isset($post_ids[(int) $dat->target_id])){
                     unset($suggestion_data[$d]);
                 }
             }
@@ -2724,6 +2722,52 @@ class Wpil_Suggestion
         set_transient('wpil_ai_suggested_sentences' . $process_key, Wpil_Toolbox::json_compress($suggestions), MINUTE_IN_SECONDS * 15);
 
         return $suggestions;
+    }
+
+    /**
+     * Narrows candidate target ids down to the orphans, for "Only Link to Orphaned Posts".
+     * Orphan means what the Orphaned Posts report means: nothing links in to it, and it's not on the orphan ignore list.
+     *
+     * @param array $ids The candidate post or term ids
+     * @param string $type 'post' or 'term'
+     * @return array The ids that are orphaned
+     **/
+    public static function filter_orphaned_target_ids($ids, $type = 'post'){
+        global $wpdb;
+
+        $ids = array_values(array_unique(array_filter(array_map('intval', (array) $ids))));
+        if(empty($ids)){
+            return array();
+        }
+
+        $type = ('term' === $type) ? 'term': 'post';
+        $link_table = $wpdb->prefix . 'wpil_report_links';
+
+        $orphaned = array();
+        foreach(array_chunk($ids, 2000) as $batch){
+            $batch_ids = implode(',', $batch);
+
+            if(Wpil_Settings::use_link_table_for_data()){
+                // anything that something links to isn't an orphan
+                $linked = $wpdb->get_col("SELECT DISTINCT `target_id` FROM {$link_table} WHERE `target_type` = '{$type}' AND `has_links` > 0 AND `target_id` IN ({$batch_ids})");
+                $found = array_diff($batch, array_map('intval', $linked));
+            }else{
+                $meta_table = ('term' === $type) ? $wpdb->termmeta: $wpdb->postmeta;
+                $id_column = ('term' === $type) ? 'term_id': 'post_id';
+                $found = $wpdb->get_col("SELECT `{$id_column}` FROM {$meta_table} WHERE `{$id_column}` IN ({$batch_ids}) AND `meta_key` = 'wpil_links_inbound_internal_count' AND `meta_value` = 0");
+            }
+
+            if(!empty($found)){
+                $orphaned = array_merge($orphaned, array_map('intval', $found));
+            }
+        }
+
+        $ignored = Wpil_Settings::getItemTypeIds(Wpil_Settings::getIgnoreOrphanedPosts(), $type);
+        if(!empty($ignored) && !empty($orphaned)){
+            $orphaned = array_diff($orphaned, array_map('intval', $ignored));
+        }
+
+        return array_values(array_unique($orphaned));
     }
 
     public static function getExternalSiteSuggestions($post, $all = false, $keyword = null, $count = null, $process_key = 0){
@@ -3829,18 +3873,20 @@ class Wpil_Suggestion
                     }
                 }
 
+                // if the user only wants suggestions to posts with the same parent, keep the search to the post's family
+                $blood_relative = '';
+                if($post->type === 'post' && !empty(Wpil_Settings::get_suggestion_filter('same_parent'))){
+                    $related_ids = Wpil_Toolbox::get_related_post_ids($post);
+                    if(!empty($related_ids)){
+                        $blood_relative = 'AND ID IN (' . implode(',', $related_ids) . ')';
+                    }
+                }
+
                 $statuses_query = Wpil_Query::postStatuses();
-                $post_ids = $wpdb->get_col("SELECT ID FROM {$wpdb->posts} WHERE 1=1 $exclude AND post_type IN ('{$post_types}') $statuses_query " . $include);
+                $post_ids = $wpdb->get_col("SELECT ID FROM {$wpdb->posts} WHERE 1=1 $exclude AND post_type IN ('{$post_types}') $statuses_query {$blood_relative} " . $include);
 
                 if(!empty($post_ids) && !empty(Wpil_Settings::get_suggestion_filter('link_orphaned'))){
-                    $post_ids = implode(',', $post_ids);
-
-                    if(Wpil_Settings::use_link_table_for_data()){
-                        $post_ids = $wpdb->get_col("SELECT `post_id` as 'ID' FROM {$link_report_table} WHERE `target_id` NOT IN ({$post_ids}) AND `target_type` = 'post'");
-                    }else{
-
-                        $post_ids = $wpdb->get_col("SELECT `post_id` as 'ID' FROM {$wpdb->postmeta} WHERE `post_id` IN ({$post_ids}) AND `meta_key` = 'wpil_links_inbound_internal_count' AND `meta_value` = 0");
-                    }
+                    $post_ids = self::filter_orphaned_target_ids($post_ids, 'post');
                 }elseif(!empty($post_ids) && !empty($inbound_link_limit)){
                     $filtered_post_ids = array();
 
@@ -3973,6 +4019,16 @@ class Wpil_Suggestion
 
                         foreach($result as $key => $item){
                             if(!isset($ids[$item->term_id])){
+                                unset($result[$key]);
+                            }
+                        }
+                    }
+
+                    // category pages are link targets too, so "Only Link to Orphaned Posts" has to narrow them as well
+                    if(!empty($result) && !empty(Wpil_Settings::get_suggestion_filter('link_orphaned'))){
+                        $orphaned_terms = array_flip(self::filter_orphaned_target_ids(wp_list_pluck($result, 'term_id'), 'term'));
+                        foreach($result as $key => $item){
+                            if(!isset($orphaned_terms[(int) $item->term_id])){
                                 unset($result[$key]);
                             }
                         }
@@ -4783,6 +4839,30 @@ error_log(print_r($post, true));
     }
 
     /**
+     * Turns non-breaking spaces into plain spaces so the sentence tokenizers can split on them.
+     * The tokenizers only ever replaced the U+00A0 character, but sentences from the block editor
+     * carry the literal "&nbsp;" entity instead, so every word joined by one became a single token
+     * and the anchor couldn't be placed, which dropped the suggestion.
+     * Whitespace either side is absorbed so no empty word spans are produced.
+     *
+     * @param string $text
+     * @return string
+     */
+    public static function normalizeNonBreakingSpaces($text)
+    {
+        if(empty($text) || !is_string($text)){
+            return $text;
+        }
+
+        // \x{00A0} not \xC2\xA0 - under /u the latter is U+00C2 followed by U+00A0.
+        $normalized = preg_replace('/\s*(?:&nbsp;|&#0*160;|&#x0*a0;|\x{00A0})+\s*/iu', ' ', $text);
+
+        // /u returns null on malformed UTF-8, and post content is not guaranteed
+        // to be clean. Leaving the sentence untouched beats blanking it.
+        return (null === $normalized) ? $text : $normalized;
+    }
+
+    /**
      * Add anchors to sentences
      *
      * @param $sentences
@@ -4801,7 +4881,7 @@ error_log(print_r($post, true));
         $ignored_words = Wpil_Settings::getIgnoreWords();
         foreach ($phrases as $key_phrase => $phrase) {
             //prepare rooted words array from phrase
-            $words = trim(preg_replace('/\s+|'.$nbsp.'/', ' ', $phrase->text));
+            $words = trim(preg_replace('/\s+|'.$nbsp.'/', ' ', self::normalizeNonBreakingSpaces($phrase->text)));
             $words = $words_real = (!self::isAsianText()) ? array_map(function($a){ return trim($a, '():\''); /* remove the letters that going to be marked as "non-word chars" later */}, explode(' ', $words)) : mb_str_split(trim($words));
             foreach ($words as $key => $value) {
                 $value = Wpil_Word::removeEndings($value, ['[', ']', '(', ')', '{', '}', '.', ',', '!', '?', '\'', ':', '"']);
@@ -4837,7 +4917,7 @@ error_log(print_r($post, true));
 
                 //get anchors and sentence with anchor
                 $anchor = ''; // TODO: Maybe rework this so that we first insert the link in the ->src, and then insert that in the ->sentence_src. Curently, it's possible to have sentences that contain 2 of the same keyword, but split on styling tags to show up at once. To fix this now, I'll filter out the duplicates, but since the secondary sentence was found, it is something to think aobut. Also I want to remember this just in case I have to go chasing duplicate suggestions again!
-                $sentence_with_anchor = '<span class="wpil_word">' . implode('</span> <span class="wpil_word">', explode(' ', str_replace($nbsp, ' ', strip_tags($phrase->sentence_src, '<b><i><u><strong><em><code>')))) . '</span>';
+                $sentence_with_anchor = '<span class="wpil_word">' . implode('</span> <span class="wpil_word">', explode(' ', str_replace($nbsp, ' ', self::normalizeNonBreakingSpaces(strip_tags($phrase->sentence_src, '<b><i><u><strong><em><code>'))))) . '</span>';
                 $sentence_with_anchor = str_replace(
                     [   ',</span>', 
                         '<span class="wpil_word">(', 

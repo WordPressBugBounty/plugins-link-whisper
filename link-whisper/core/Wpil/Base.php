@@ -101,7 +101,10 @@ class Wpil_Base
         if (!empty($_GET['area'])) {
             switch ($_GET['area']) {
                 case 'wpil_export':
-                    Wpil_Export::getInstance()->export($post);
+                    // make sure the export link came from us and that the user can edit the item, since the export includes its meta
+                    if(!empty($post) && isset($_GET['nonce']) && $post->verify_post_nonce($_GET['nonce']) && current_user_can((($post->type === 'term') ? 'edit_term': 'edit_post'), $post->id)){
+                        Wpil_Export::getInstance()->export($post);
+                    }
                     break;
                 case 'wpil_export_sitemap_support':
                     self::verify_nonce('wpil_export_sitemap_for_support');
@@ -137,7 +140,8 @@ class Wpil_Base
             // do a version check
             $version = get_option('wpil_version_check_update', WPIL_PLUGIN_OLD_VERSION_NUMBER);
             // if the plugin update check hasn't run yet
-            if($version < WPIL_PLUGIN_VERSION_NUMBER){
+            // (version_compare so "0.9.10" counts as newer than "0.9.9", a plain string compare says it's older)
+            if(version_compare($version, WPIL_PLUGIN_VERSION_NUMBER, '<')){
                 // create any tables that need creating
                 self::createDatabaseTables();
                 // and make sure the existing tables are up to date
@@ -1026,6 +1030,11 @@ class Wpil_Base
         $script_params['dismiss_tour_widget_nonce'] = wp_create_nonce('wpil_dismiss_tour_widget');
         $script_params['popup_nonce'] = wp_create_nonce('wpil_load_popups');
         $script_params['dismiss_popup_nonce'] = wp_create_nonce('wpil_dismiss_popup');
+        $script_params['error_process_nonce'] = wp_create_nonce(get_current_user_id() . 'wpil_error_process');
+        $script_params['ignore_link_nonce'] = wp_create_nonce(get_current_user_id() . 'wpil_add_link_to_ignore');
+        $script_params['expanded_details_nonce'] = wp_create_nonce(get_current_user_id() . 'wpil_update_expanded_details_toggle');
+        $script_params['ai_notice_dismiss_nonce'] = wp_create_nonce(get_current_user_id() . 'wpil_ai_dismiss_notice');
+        $script_params['wizard_process_nonce'] = wp_create_nonce(get_current_user_id() . 'wpil_wizard_process');
 //        $script_params['telemetry_active'] = 1; //Wpil_Settings::get_if_telemetry_active();
 //        $script_params['telemetry_nonce'] = wp_create_nonce(get_current_user_id() . 'wpil-telemetry-nonce');
 //        $script_params['tours_enabled'] = Wpil_Settings::get_tours_enabled();
@@ -2775,7 +2784,7 @@ class Wpil_Base
         }
     }
 
-    public static function verify_nonce($key)
+    public static function verify_nonce($key, $check_permission = false)
     {
         $user = wp_get_current_user();
         $nonce = isset($_REQUEST['nonce']) ? $_REQUEST['nonce'] : (isset($_POST['nonce']) ? $_POST['nonce'] : '');
@@ -2784,6 +2793,16 @@ class Wpil_Base
                 'error' => array(
                     'title' => __('Data Error', 'wpil'),
                     'text'  => __('There was an error in processing the data, please reload the page and try again.', 'wpil'),
+                )
+            ));
+        }
+
+        // if we're also supposed to make sure the user is allowed to use Link Whisper, check that now
+        if($check_permission && !current_user_can(apply_filters('wpil_filter_main_permission_check', 'manage_categories', self::get_current_page()))){
+            wp_send_json(array(
+                'error' => array(
+                    'title' => __('Permission Error', 'wpil'),
+                    'text'  => __('You don\'t have permission to do that.', 'wpil'),
                 )
             ));
         }
@@ -3453,6 +3472,7 @@ class Wpil_Base
     }
 
     public static function ajax_clear_process_tracker(){
+        self::verify_nonce('wpil_wizard_process', true);
         delete_option('wpil_ai_linking_process_key');
         delete_transient('wpil_review_served_' . get_current_user_id());
         delete_transient('wpil_loading_progress_tracker');
@@ -3466,6 +3486,7 @@ class Wpil_Base
      * Set a flahg so we know that the user has run the wizard
      **/
     public static function ajax_has_run_wizard(){
+        self::verify_nonce('wpil_wizard_process', true);
         Wpil_Settings::set_run_wizard();
     }
     
@@ -3473,6 +3494,7 @@ class Wpil_Base
      * Set a flahg so we know that the user has run the wizard
      **/
     public static function ajax_set_processing_complete_flag(){
+        self::verify_nonce('wpil_wizard_process', true);
         // set the completion flag
         set_transient('wpil_wizard_has_completed', 1, HOUR_IN_SECONDS);
 
@@ -3505,6 +3527,7 @@ class Wpil_Base
     }
 
     public static function ajax_update_expanded_details_toggle(){
+        self::verify_nonce('wpil_update_expanded_details_toggle', true);
         $status = (!isset($_POST['status']) || empty($_POST['status'])) ? 0: 1;
         update_option('wpil_show_expanded_suggestion_details', $status);
         wp_send_json('updated details!');

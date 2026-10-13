@@ -572,7 +572,7 @@ class Wpil_Toolbox
             return $data;
         }elseif(!Wpil_Link::checkIfBase64ed($data, true)){
             // if the data is not base64ed, try unserializing it when we send it back
-            return maybe_unserialize($data);
+            return self::safe_unserialize($data);
         }
 
         // first un-64 the data
@@ -591,7 +591,22 @@ class Wpil_Toolbox
         }
 
         // and return our unserialized and hopefully de-compressed data
-        return maybe_unserialize($data);
+        return self::safe_unserialize($data);
+    }
+
+    /**
+     * Unserializes data just like maybe_unserialize, but only lets our data models and plain objects come back as objects.
+     * Our stored data can be reached by users who can edit post meta, so any other class that's been slipped into it comes back as an inert __PHP_Incomplete_Class instead of being built.
+     *
+     * @param mixed $data The data to be unserialized
+     * @return mixed $data
+     **/
+    public static function safe_unserialize($data){
+        if(!is_serialized($data)){
+            return $data;
+        }
+
+        return @unserialize(trim($data), array('allowed_classes' => array('stdClass', 'Wpil_Model_Post', 'Wpil_Model_Link', 'Wpil_Model_Phrase', 'Wpil_Model_Suggestion', 'Wpil_Model_Keyword')));
     }
 
     /**
@@ -671,7 +686,7 @@ class Wpil_Toolbox
         if(!empty($data) && is_string($data)){
             // do a double check just to make sure that plain serialized data hasn't been handed to us
             if(is_serialized($data)){
-                $data = maybe_unserialize($data);
+                $data = self::safe_unserialize($data);
             }else{
                 $dat = self::decompress($data);
                 if($dat !== false && $dat !== $data){
@@ -706,7 +721,7 @@ class Wpil_Toolbox
         if(!empty($data) && is_string($data)){
             // do a double check just to make sure that plain serialized data hasn't been handed to us
             if(is_serialized($data)){
-                $data = maybe_unserialize($data);
+                $data = self::safe_unserialize($data);
             }else{
                 $dat = self::decompress($data);
                 if($dat !== false && $dat !== $data){

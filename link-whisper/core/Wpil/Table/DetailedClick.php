@@ -131,11 +131,12 @@ class Wpil_Table_DetailedClick extends WP_List_Table
             case 'user_ip':
                 return '<a href="' . esc_url(admin_url("admin.php?post_id=" . urlencode($item->user_ip) . "&post_type=user_ip&page=link_whisper&type=click_details_page&ret_url=" . base64_encode($_SERVER['REQUEST_URI'] . '&direct_return=1'))) . '">' . esc_html($item->user_ip) . '</a>';
             case 'show_click_location':
-                return $item->link_location;
+                return esc_html($item->link_location);
             case 'link_created':
                 return !empty($item->link_created) ? date(get_option('date_format', 'F d, Y'), $item->link_created): __('Unknown', 'wpil');
             default:
-                return $item->$column_name;
+                // the anchor text and the other plain columns come from visitor clicks, so escape them on the way out
+                return esc_html($item->$column_name);
         }
     }
 
@@ -176,10 +177,13 @@ class Wpil_Table_DetailedClick extends WP_List_Table
         if(isset($_GET['post_type']) && $_GET['post_type'] === 'url'){
             $options['post_id'] = ['post_id', true];
         }else{
-            $options['link_url'] = ['link_url', true];
+            // The URL is text, so it reads A-Z on the first click.
+            $options['link_url'] = ['link_url', false];
         }
 
-        $options['link_anchor'] = ['link_anchor', true];
+        // Anchor text reads A-Z on the first click too; the date, the IP and the click
+        // count all open at the top of their range.
+        $options['link_anchor'] = ['link_anchor', false];
         $options['click_date']  = ['click_date', true];
         if(empty(get_option('wpil_disable_click_tracking_info_gathering', false))){
             $options['user_ip']     = ['user_ip', true];

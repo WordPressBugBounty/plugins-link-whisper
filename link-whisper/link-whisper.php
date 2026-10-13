@@ -1,11 +1,12 @@
 <?php
 /**
  * Plugin Name: Link Whisper Free
- * Version: 0.9.7
+ * Version: 0.9.8
  * Description: Quickly build smart internal links both to and from your content. Additionally, gain valuable insights with in-depth internal link reporting.
  * Author: Link Whisper
  * Author URI: https://linkwhisper.com
- * Tested up to: 7.0.2
+ * Tested up to: 7.1.3
+ * Requires PHP: 7.4
  * Text Domain: wpil
  */
 
@@ -17,16 +18,22 @@ if(is_dir($dir)){
 //autoloader
 spl_autoload_register( 'wpil_autoloader' );
 function wpil_autoloader( $class_name ) {
-    if ( false !== strpos( $class_name, 'Wpil' ) ) {
+    // our prefix only. Matching "Wpil" anywhere claimed other plugins' classes too
+    if ( 0 === strpos( $class_name, 'Wpil_' ) ) {
         $classes_dir = realpath( plugin_dir_path( __FILE__ ) ) . DIRECTORY_SEPARATOR . 'core' . DIRECTORY_SEPARATOR;
         $class_file = str_replace( '_', DIRECTORY_SEPARATOR, $class_name ) . '.php';
-        require_once $classes_dir . $class_file;
+
+        // a require_once that misses its file is an uncatchable fatal, so leave the
+        // class undefined instead and let PHP raise a catchable one
+        if ( file_exists( $classes_dir . $class_file ) ) {
+            require_once $classes_dir . $class_file;
+        }
     }
 }
 define( 'WPIL_STORE_URL', 'https://linkwhisper.com');
-define( 'WPIL_VERSION_NUMBER', '0.9.7');
-define( 'WPIL_PLUGIN_VERSION_NUMBER', '0.9.7');
-define( 'WPIL_PLUGIN_OLD_VERSION_NUMBER', '0.9.6');
+define( 'WPIL_VERSION_NUMBER', '0.9.8');
+define( 'WPIL_PLUGIN_VERSION_NUMBER', '0.9.8');
+define( 'WPIL_PLUGIN_OLD_VERSION_NUMBER', '0.9.7');
 define( 'WP_INTERNAL_LINKING_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define( 'WP_INTERNAL_LINKING_PLUGIN_URL', plugin_dir_url(__FILE__));
 define( 'WPIL_PLUGIN_NAME', plugin_basename( __FILE__ ));

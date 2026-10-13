@@ -55,7 +55,9 @@ function selectText(element) {
         if(undefined !== data.scrollLink && Object.keys(data.scrollLink).length > 1){
             var link,
                 links,
-                decoded = $('<textarea />').html(data.scrollLink.url).text();
+                // decode the url's entities by setting it straight into the textarea so it's always treated as text.
+                // We can't use .html() for this since jQuery hands anything with <style> or <link> in it to .append(), which builds live elements
+                decoded = $('<textarea />').prop('innerHTML', data.scrollLink.url).text();
 
             // if we can find the link's monitor id
             if(data.scrollLink.monitorId && $('[data-wpil-monitor-id="' +data.scrollLink.monitorId+ '"]').length > 0 && data.scrollLink.monitorId > 0){

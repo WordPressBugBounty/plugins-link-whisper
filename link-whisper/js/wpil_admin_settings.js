@@ -1182,6 +1182,7 @@
             url: ajaxurl,
             data: {
                 action: 'wpil_ai_dismiss_credit_notice',
+                nonce: wpil_ajax.ai_notice_dismiss_nonce
             },
         });
     })
@@ -1192,6 +1193,7 @@
             url: ajaxurl,
             data: {
                 action: 'wpil_ai_dismiss_api_key_decoding_error',
+                nonce: wpil_ajax.ai_notice_dismiss_nonce
             },
         });
     })

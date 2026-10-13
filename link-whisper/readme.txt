@@ -2,9 +2,9 @@ Link Whisper Free
 Contributors: sreenathlw, mattbissett, linkwhspr
 Tags: links, SEO, internal linking, link building, orphan content
 Requires at least: 4.6
-Tested up to: 7.0.4
-Stable Tag: 0.9.7
-Requires PHP: 5.6
+Tested up to: 7.1.3
+Stable Tag: 0.9.8
+Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -200,6 +200,40 @@ Please report security bugs found in the source code of the Link Whisper Free pl
 15. [Premium] The URL Changer allows you to update old links to point to new URLs.
 
 == Changelog ==
+= 0.9.8 =
+* [COMPATIBILITY] Adding support for Divi 5! The text inside Divi 5 modules is now read for the link reports and suggestions.
+* [COMPATIBILITY] Setting the minimum PHP version to 7.4 to match what the plugin needs to run.
+* [COMPATIBILITY] Making Link Whisper's class loader only load its own classes, so it can't cause a fatal error by trying to load another plugin's classes.
+* [IMPROVEMENT] Leaving email, phone, SMS and other app links (mailto:, tel:, etc.) out of the link reports and the Broken Links Report.
+* [IMPROVEMENT] Improving the YouTube link checks so Shorts, live streams and youtu.be links are checked properly, and YouTube's rate limiting no longer gets videos marked as removed.
+* [IMPROVEMENT] Improving the broken link checks for links with encoded characters and protocol-relative (//example.com) links.
+* [IMPROVEMENT] Showing each suggested post only once in the outbound suggestions, on the sentence that's the best fit for it.
+* [IMPROVEMENT] Opening the Clicks Reports with the newest posts and most clicked links first, and sorting the title, URL and anchor columns A to Z on the first click.
+* [SECURITY] Hardening the Broken Links and AI suggestion lookups so IDs are always prepared or cast to numbers.
+* [SECURITY] Hardening the Clicks Report's sorting, search and post type filters.
+* [SECURITY] Preparing the click details queries and escaping the click data shown in the click tables.
+* [SECURITY] Guarding the clicks CSV export against spreadsheet formulas, and only accepting the supported export types.
+* [SECURITY] Restricting which classes can be rebuilt from Link Whisper's stored link data.
+* [SECURITY] Protecting Link Whisper's post and term meta from being edited through generic custom field editors.
+* [SECURITY] Adding nonce and permission checks to several admin ajax actions.
+* [SECURITY] Limiting the per-post support export to users who can edit the post, and limiting the settings it includes to admins.
+* [SECURITY] Escaping saved setting values on the Settings page.
+* [SECURITY] Preparing the URL lookup when un-ignoring a broken link.
+* [SECURITY] Improving how the frontend link highlighter decodes link URLs.
+* [BUGFIX] Fixing the "Only Link to Orphaned Posts" suggestion filter so it only suggests orphaned posts.
+* [BUGFIX] Fixing the "Only Suggest Links to Posts With the Same Parent as This Post" suggestion filter when AI suggestions are turned off.
+* [BUGFIX] Fixing an issue where suggestions were missed in sentences that contain non-breaking spaces.
+* [BUGFIX] Fixing the "ACF Fields to be Ignored" setting so fields listed by their full name are skipped for posts and categories.
+* [BUGFIX] Fixing an issue where the broken link checker could treat links as ignored when there were links on the ignore list.
+* [BUGFIX] Fixing an issue where ignored broken links could lose their ignored status if a broken link scan was interrupted, and making "Stop Ignoring" take the link off the ignore list.
+* [BUGFIX] Fixing blank rows showing up in the Broken Links Report for posts that don't have any links.
+* [BUGFIX] Fixing the click details page saying "No items found" for posts and categories when "Show individual click stats" is turned on.
+* [BUGFIX] Fixing a JavaScript error on the Domains Report.
+* [BUGFIX] Fixing an issue where the Target Keyword scan could run with missing progress data.
+* [BUGFIX] Fixing a fatal error in the YOOtheme support on sites running PHP 7 with WordPress versions older than 5.9.
+* [BUGFIX] Fixing a PHP 8.1 deprecation notice when counting header and footer links.
+* [BUGFIX] Fixing the plugin's update check so it compares version numbers properly.
+
 = 0.9.7 =
 * [IMPROVEMENT] Batching the Broken Links Report's data reset so much larger sites can start a scan without timing out part way through.
 * [IMPROVEMENT] Making the Broken Links scan's progress bar report the number of posts that are actually left to process.

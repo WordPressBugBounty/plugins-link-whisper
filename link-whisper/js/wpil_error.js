@@ -199,6 +199,7 @@
             url: ajaxurl,
             data: {
                 action: 'wpil_error_process',
+                nonce: wpil_ajax.error_process_nonce
             },
             error: function (jqXHR, textStatus) {
                 globalErrorCount++;
@@ -280,6 +281,7 @@
     if (typeof error_reset_run != 'undefined' && error_reset_run) {
         $.post(ajaxurl, {
             action: 'wpil_error_process',
+            nonce: wpil_ajax.error_process_nonce,
             get_status: 1
         }, function(response){
             console.log(response);

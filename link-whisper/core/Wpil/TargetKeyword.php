@@ -848,19 +848,16 @@ class Wpil_TargetKeyword{
             self::get_estimated_keyword_posts(true);
         }
 
-        $default = array();
+        $default = array(
+            'state'              => self::determine_processing_stage('started'),
+            'gsc_row'            => 0,
+            'keywords_found'     => 0,
+            'gsc_empty_row_calls' => 0,
+        );
 
-        // set the data default state
-        $default['state'] = self::determine_processing_stage('started');
-
-        if($default['state'] === 'gsc_query'){
-            $default['gsc_row'] = 0;
-            $default['keywords_found'] = 0;
-            $default['gsc_empty_row_calls'] = 0;
-        }
-
-        // get the processing data
-        $data = get_option('wpil_target_keyword_processing_data', $default);
+        // get the processing data and restore missing fields from the defaults
+        $stored_data = get_option('wpil_target_keyword_processing_data', array());
+        $data = is_array($stored_data) ? wp_parse_args($stored_data, $default) : $default;
 
         // determine what process to perform
         switch($data['state']){
